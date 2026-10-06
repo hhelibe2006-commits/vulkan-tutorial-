@@ -1,0 +1,100 @@
+= Khronos Vulkan^®^教程
+hhelibe2006 <hhelibe2006@gmail.com>
+v1.0, 2026-10-07
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== 署名与许可
+Khronos Vulkan^®^教程基于 Alexander Overvoorde的 "https://vulkan-tutorial.com/[Vulkan教程]", 该教程根据 https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0许可]发布。
+
+以下教程由 Holochip公司编写，并根据 https://www.apache.org/licenses/LICENSE-2.0[Apache-2.0许可]发布:
+
+* https://docs.vulkan.org/tutorial/latest/ML_Inference/introduction.html[机器学习推理]
+* https://docs.vulkan.org/tutorial/latest/OpenXR_Vulkan_Spatial_Computing/introduction.html[面向XR的Vulkan]
+* https://docs.vulkan.org/tutorial/latest/AI_Assisted_Vulkan/introduction.html[LLM 辅助的 Vulkan 开发]
+* https://docs.vulkan.org/tutorial/latest/Advanced_glTF/introduction.html[glTF进阶]
+* https://docs.vulkan.org/tutorial/latest/Advanced_Vulkan_Compute/introduction.html[Vulkan计算进阶]
+* https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/introduction.html[构建简易游戏引擎]
+* https://docs.vulkan.org/tutorial/latest/Synchronization/introduction.html[同步]
+* https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.html[Opacity Micromaps迷你课程]
+
+以下课程由Arm Limited编写，并根据 https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0许可]发布。
+
+* https://docs.vulkan.org/tutorial/latest/courses/18_Ray_tracing/00_Overview.html[SIGGRAPH 2025：Vulkan 光线追踪与动态渲染实战]
+* https://docs.vulkan.org/tutorial/latest/courses/siggraph2026_vk_tutorial/00_Overview.html[SIGGRAPH 2026：如何在 2026 年编写 Vulkan 应用程序]
+
+== 与原版差异
+与原版教程相比，本版本教程讲解的是最新的概念:
+
+* 以 Vulkan 1.4为基础
+* 动态渲染代替渲染通道
+* 时间线信号量
+* https://shader-slang.org/[Slang]作为主要着色器语言
+* 现代 C++(20)
+* https://github.com/KhronosGroup/Vulkan-Hpp[Vulkan-hpp]与https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization[RAII]
+
+它还包括Vulkan的使用说明、改进的同步功能和新内容。
+
+== 关于
+本教程将教您使用 https://www.khronos.org/vulkan/[Vulkan]图形和计算 API的基础知识。Vulkan是 https://www.khronos.org/[Khronos组织]开发的 API，它对现代显卡进行了更细致的抽象。与 https://en.wikipedia.org/wiki/OpenGL[OpenGL]与 https://en.wikipedia.org/wiki/Direct3D[Direct3D] 等现有 API 相比，这种新接口允许您更清晰地描述应用程序的意图，从而带来更高的性能和更稳定的驱动程序行为。Vulkan 的设计理念与Direct3D 12和 Metal类似 ，但 Vulkan 的优势在于其完全跨平台，允许您同时开发 Windows、Linux 和 Android 应用。
+
+然而，这些优势的代价是您必须使用更加冗长且复杂的 API。与图形 API 相关的每个细节都需要您的应用程序进行设置，包括初始帧缓冲区创建以及缓冲区和纹理图像等对象的内存管理。图形驱动提供的辅助大幅减少，这意味着您需要在应用程序中完成更多工作以确保程序正常运行。
+
+在本教程中，我们会尽可能利用现代工具来简化 Vulkan 的使用和学习；但是，Vulkan 本身并不简单。
+
+这里要强调的是，Vulkan 并不适合所有人。它面向的是那些对高性能计算机图形充满热情并愿意投入大量精力的程序员。如果您对游戏开发而非计算机图形学更感兴趣，那么您可能更倾向于使用 OpenGL 或 Direct3D，它们短期内不会为了给 Vulkan 让路而被弃用。然而，您需要明白继续使用 OpenGL 的代价是，它的 API 将永远无法获得光线追踪或 AI 等最新功能。OpenGL 目前处于维护模式，而Vulkan 才是研究和新增功能的所在。另一种选择是使用像 https://en.wikipedia.org/wiki/Unreal_Engine#Unreal_Engine_4[Unreal Engine]或 https://en.wikipedia.org/wiki/Unity_(game_engine)[Unity] 这样的引擎，它们能够使用 Vulkan，同时向您暴露更高层次的 API。
+
+既然如此，接下来让我们介绍一下本教程的一些先决条件：
+
+* 兼容 Vulkan 的设备和驱动程序
+** 大多数 GPU 厂商在其消费级驱动程序中支持 Vulkan，或者在移动设备上支持 Vulkan。macOS 和 iOS 系统可通过 https://github.com/KhronosGroup/MoltenVK[MoltenVK]获得 Vulkan 支持。您可以在社区维护的 https://vulkan.gpuinfo.org/[Vulkan硬件数据库]中详细查找 Vulkan 支持信息 。
+* 具备 C++ 编程经验
+** 熟悉 RAII 和初始化列表
+* 一款对 C++20 特性有良好支持的编译器
+** Visual Studio 2017+、GCC 7+ 或 Clang 5+
+* 具备一些实时3D计算机图形方面的经验
+** 例如，OpenGL 或 Direct3D
+
+本教程不假定读者已掌握 OpenGL 或 Direct3D 的概念，但要求读者了解 3D 计算机图形学的基础知识。例如，本教程不会解释透视投影背后的数学原理。如需了解计算机图形学概念的入门知识，请参阅这本 https://paroj.github.io/gltut/[在线书籍]。其他一些优秀的计算机图形学资源包括：
+
+* https://github.com/RayTracing/raytracing.github.io[一个周末完成光线追踪]
+* https://www.pbr-book.org/[基于物理的渲染]
+
+本教程完全使用 C++ 和 Vulkan-Hpp 绑定，不提供 C 语言的对应教程。我们使用 C++ 的类和 RAII 等特性来组织逻辑和资源生命周期，因此如果您使用原始的 C 语言 Vulkan API，这里展示的代码将无法直接转换，您需要自行处理代码结构。
+
+为了方便学习使用 Vulkan，我们将使用较新的  https://github.com/KhronosGroup/Vulkan-Hpp[Vulkan-Hpp]绑定，它抽象了一些底层工作，并有助于避免某些类型的错误。我们还将使用 Vulkan RAII，并可选地使用 Vulkan C++20 模块。随附模板默认禁用模块以实现最佳兼容性，但如果您的工具链支持，我们建议您启用它们。通过这种组合，我们将展示如何直接在大型项目中使用 Vulkan，从而避免 C++ 库导致的长时间构建，同时也将展示一种让 Vulkan 的使用变得轻松愉快的方法。
+
+== 仓库许可说明
+除非另有说明，本仓库内容均采用 https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0许可]协议。您向本仓库贡献内容即表示您同意以相同地许可协议向公众发布您的贡献。
+
+== 教程结构
+我们将首先概述 Vulkan 的工作原理，以及为了在屏幕上显示第一个三角形需要完成的工作。理解了每个步骤在整个流程中的基本作用后，所有后续步骤的意义就更加清晰了。接下来，我们将搭建开发环境，包括 https://lunarg.com/vulkan-sdk/[Vulkan SDK]、 用于线性代数运算的 https://glm.g-truc.net/[GLM] 库以及用于创建窗口的 https://www.glfw.org/[GLFW] 库。本教程将介绍如何在 Windows 系统上使用 Visual Studio 以及在 Ubuntu Linux 系统上使用 GCC 进行设置。
+
+之后，我们将实现 Vulkan 程序渲染第一个三角形所需的所有基本组件。每一章大致遵循以下结构：
+
+* 介绍一个新概念及其目的
+* 使用所有相关的 API 调用将其集成到您的程序中。
+* 将其部分抽象为辅助函数
+
+虽然每一章都是前一章的延续，但也可以将它们作为独立文章阅读，分别介绍特定的 Vulkan 特性。这意味着本网站也可用作参考资料。所有 Vulkan 函数和类型都链接到规范，您可以点击它们了解更多信息。我们鼓励您向 https://github.com/KhronosGroup/Vulkan-Docs[Khronos 代码库]提交反馈。
+
+如前所述，Vulkan API 相当冗长，包含许多参数，旨在让您最大程度地控制图形硬件。这导致创建纹理等基本操作需要执行大量步骤，并且每次都必须重复。因此，在本教程中，我们将创建自己的辅助函数集。
+
+每章末尾都会附上截至该章节的完整代码清单链接。如果您对代码结构有任何疑问，或者遇到错误需要对比，都可以参考这份清单。所有代码文件均已在多家厂商的显卡上进行测试，以验证其正确性。
+
+如果您对教程和网站本身有任何疑问或反馈，请随时向 https://github.com/KhronosGroup/Vulkan-Tutorial[GitHub 代码库]提交 issue 或 pull request 。您可以关注该代码库，以便及时收到教程更新的通知。
+
+在你完成在屏幕上绘制第一个 Vulkan 三角形的仪式之后，我们将开始扩展程序，使其包含线性变换、纹理和 3D 模型。
+
+如果你之前接触过图形API，就会知道在屏幕上显示第一个几何体之前可能需要很多步骤。Vulkan 也包含许多这样的初始步骤，但你会发现每个步骤都易于理解，而且不会让人觉得重复。同样重要的是，一旦你得到了那个看起来有点普通的三角形，绘制完整的3D纹理模型并不需要花费太多额外的工作，而且之后的每一步都会带来更大的成就感。
+
+如果在学习教程的过程中遇到任何问题，请先查看常见问题解答，看看您的问题及其解决方案是否已在其中列出。如果之后仍然无法解决，请随时在 https://github.com/KhronosGroup/Vulkan-Tutorial[GitHub 代码库]中寻求帮助。
+
+准备好探索高性能图形 API 的未来了吗？ xref:概述.adoc[出发吧！]
+
+== 高级主题
+除了教授如何使用 Vulkan 的基本教程外，还有专门的章节介绍高级主题，您可以在掌握基础知识后深入学习：
+
+
+

@@ -1,0 +1,25 @@
+= 概述
+hhelibe2006 <hhelibe2006@gmail.com>
+v1.0, 2026-10-07
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+本章首先介绍 Vulkan 及其解决的问题。之后，我们将探讨构成第一个三角形所需的要素。这将帮助您更好地理解后续章节的内容。最后，我们将介绍 Vulkan API 的结构和常见用法。
+
+== Vulkan的起源
+与之前的图形API一样，Vulkan也被设计成基于 https://en.wikipedia.org/wiki/Graphics_processing_unit[GPU]的跨平台抽象层。这些API的共同问题在于，它们设计之初的图形硬件功能大多是可配置的固定功能。程序员必须以标准格式提供顶点数据，并且在光照和着色选项方面完全受制于GPU制造商。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
