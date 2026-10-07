@@ -1,0 +1,129 @@
+= 基础代码
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== Vulkan-hpp 和指定的初始化程序
+NOTE: 我们将使用 C++ 20 中引入的指定初始化器。默认情况下，Vulkan-hpp 使用不同的初始化方式，我们需要通过VULKAN_HPP_NO_STRUCT_CONSTRUCTORS定义显式启用它。
+
+这有助于更好地理解每个选项在我们所依赖的结构中扮演的角色。在本教程中，该定义已在CMake 构建设置中声明。
+
+如果您使用不同的构建设置或想要从头开始编写代码，则需要在代码文件包含 Vulkan-hpp 头文件之前手动定义此项，如下所示：
+[source,c++]
+----
+#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS // 这个宏定义可以让vulkan库里的结构体不生成默认的构造函数
+#include <vulkan/vulkan.hpp>
+// 或
+#include <vulkan/vulkan_raii.hpp>
+----
+
+== 总体结构
+在上一章中，您创建了一个包含所有正确配置的 Vulkan 项目，并使用示例代码进行了测试。在本章中，我们将从头开始，使用以下代码：
+
+[source,c++]
+----
+#include <vulkan/vulkan_raii.hpp>
+#include <GLFW/glfw3.h>
+
+#include <iostream>
+#include <stdexcept>
+#include <cstdlib>
+
+class HelloTriangleApplication
+{
+    public:
+    void run() {
+        initVulkan();
+        mainLoop();
+        cleanup();
+    }
+
+private:
+    void initVulkan() {
+
+    }
+
+    void mainLoop() {
+
+    }
+
+    void cleanup() {
+
+    }
+};
+
+int main()
+{
+    try{
+        HelloTriangleApplication app;
+        app.run();
+    }catch (const std::exception& e){
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+----
+
+包括``stdexcept``和``iostream``头文件是为了报告和传输错误。``cstdlib``该头文件提供了``EXIT_FAILURE``和``EXIT_SUCCESS``宏
+
+程序本身被封装在一个类中，我们将 Vulkan 对象作为私有类成员存储，并添加初始化每个对象的函数``initVulkan``，这些函数将从主函数中调用。一切准备就绪后，我们进入主循环开始渲染帧。我们将完善该``mainLoop`` 函数，使其包含一个循环，该循环会一直迭代直到窗口关闭。窗口关闭并``mainLoop``返回后，我们将通过``cleanup``函数确保释放使用的资源。
+
+如果在执行过程中发生任何类型的致命错误，我们将抛出一个 ``std::runtime_error``包含描述性消息的异常，该消息会传播回main函数并打印到命令提示符。为了处理各种标准异常类型，我们还会捕获更通用的异常 `std::exception`。我们很快会遇到的一个错误示例是发现某个必需的扩展不受支持。
+
+此后的每一章大致都会添加一个新函数，该函数将从``initVulkan``调用，并且一个或多个新的 Vulkan 对象会添加到私有类成员中，这些成员需要``cleanup``在最后被释放。
+
+== 资源管理
+正如用 `malloc` 分配的每一块内存都需要调用 `free` 一样，我们创建的每个 Vulkan 对象在不再需要时也都必须显式销毁。在 C++ 中，可以使用  https://en.wikipedia.org/wiki/Resource_Acquisition_Is_Initialization[RAII] 或 `<memory>` 头文件中提供的智能指针来实现自动资源管理。本教程试图让 Vulkan 更易于使用，并演示现代 Vulkan 编程。本教程不仅会使用 RAII，还会尽力展示最新的方法和扩展，希望能让使用 Vulkan 成为一种享受。仅仅因为我们喜欢使用底层图形 API，也不应该把学习如何使用它的门槛设得太高。在适当的地方，我们会讨论释放资源时资源管理方面需要注意的问题。不过，就本教程而言，我们将展示：用一个基本的析构函数来清理工作后的资源，我们就能走得很远。
+
+Vulkan 对象可以直接使用 `vkCreateXXX` 等函数创建，也可以通过另一个对象使用 `vkAllocateXXX` 等函数分配。确保对象不再被使用后，需要使用相应的 `vkDestroyXXX` 和 `vkFreeXXX` 函数将其销毁。这些函数的参数通常会因对象类型而异，但它们都共享一个参数：`pAllocator`。这是一个可选参数，允许您为自定义内存分配器指定回调函数。在本教程中，我们将忽略此参数，并始终将其作为参数传递nullptr
+
+使用Vulkan_hpp RAII头文件，我们可以依赖该库处理``vkCreateXXX``、``vkAllocateXXX``、 ``vkDestroyXXX``、`vkFreeXXX`之类的代码块：
+[source,c++]
+----
+VkInstance instance;
+VkApplicationInfo appInfo{};
+appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+appInfo.pApplicationName = "Hello Triangle";
+appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+appInfo.pEngineName = "No Engine";
+appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+appInfo.apiVersion = VK_API_VERSION_1_0;
+
+VkInstanceCreateInfo createInfo{};
+createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+createInfo.pApplicationInfo = &appInfo;
+createInfo.enabledExtensionCount = 0;
+createInfo.ppEnabledExtensionNames = nullptr;
+createInfo.enabledLayerCount = 0;
+createInfo.ppEnabledLayerNames = nullptr;
+
+if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create instance!");
+}
+
+vkDestroyInstance(instance, nullptr);
+----
+可以被替换成：
+[source,c++]
+----
+constexpr vk::ApplicationInfo appInfo{
+    .pApplicationName   = "Hello Triangle",
+    .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+    .pEngineName        = "No Engine",
+    .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+    .apiVersion         = vk::ApiVersion14};
+
+vk::InstanceCreateInfo createInfo{
+    .pApplicationInfo = &appInfo
+};
+
+instance = vk::raii::Instance(context, createInfo);
+----
+
+== 整合GLFW
+如果你想用 Vulkan 做离屏渲染，那么即使不创建窗口，它也完全能正常工作；不过，能真正显示点东西出来还是要有趣得多！首先，我们来添加 GLFW：
+
+注意：我们会继续使用 GLFW_INCLUDE_VULKAN，因为 GLFW 的设计目的就是获取 Vulkan Surface，但它直接使用的是 C 的 surface。除了这个用途之外，我们可以使用 GLFW_INCLUDE_NONE，或者不做这个宏定义，其他所有功能都能正常工作。
+
