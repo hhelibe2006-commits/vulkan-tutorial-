@@ -1,0 +1,99 @@
+= 实例
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== 创建实例
+首先，你需要通过创建一个**实例**来初始化 Vulkan 库。该实例是你的应用程序与 Vulkan 库之间的连接，创建实例需要向驱动程序指定一些关于你的应用程序的详细信息。
+
+首先添加一个``createInstance``函数，然后在函数``initVulkan``中调用它。
+
+[source,c++]
+----
+void initVulkan() {
+    createInstance();
+}
+
+void createInstance() {
+
+}
+----
+
+此外，添加一个数据成员来保存实例句柄和 raii 上下文：
+
+[source,c++]
+----
+private:
+    vk::raii::Context context;
+    vk::raii::Instance instance = nullptr;
+----
+
+现在，要创建一个实例，我们首先需要填充一个结构体，其中包含一些关于我们应用程序的信息。这些数据在技术上是可选的，但它可以为驱动程序提供一些有用的信息，以优化我们的特定应用程序（例如，因为它使用了一个具有某些特殊行为的知名图形引擎）。这个结构体名为``vk::ApplicationInfo``：
+
+[source,c++]
+----
+void createInstance() {
+    constexpr vk::ApplicationInfo appInfo {
+        .pApplicationName = "Vulkan",
+        .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+        .pEngineName = "No Engine"
+        .apiVersion = vk::ApiVersion14
+    };
+}
+----
+
+虽然 vk::ApiVersion10 或 Vulkan 1.0 确实存在，但有些功能比较旧，无法很好地配合 RAII 使用，或者——正如我们稍后会在 xref:../图形管线基础知识/着色器模块.adoc[着色器模块]文章中讨论的那样——无法很好地配合 Slang 语言使用，因此我们以 1.4 作为基线来展示。如果我们使用 C API，就需要指定 sType 和 pNext，而且会写得非常冗长。你在其他使用 C API 的 Vulkan 项目中很可能会看到这种写法。而使用现代 C++ 模块时，这些都会为你处理好。
+
+Vulkan 中的很多信息是通过结构体而不是函数参数传递的，我们还必须再填写一个结构体，以提供创建实例所需的足够信息。接下来这个结构体不是可选的，它告诉 Vulkan 驱动程序我们想要使用哪些全局扩展和验证层。这里的“全局”意味着它们作用于整个程序，而不是某个特定设备；这一点在接下来几章中会变得清楚。
+
+[source,c++]
+----
+vk::InstanceCreateInfo createInfo {
+    .pApplicationInfo = &appInfo
+};
+----
+
+该结构体包含一个名为 `flags` 的成员，我们将在本章后面部分进行处理。成员 `pApplicationInfo` 指向我们刚刚创建的 `appInfo`。接下来是一个请求的层数组，最后一个成员是一个所需的全局扩展数组。正如概述章节中所述，Vulkan 是一个平台无关的 API，这意味着您需要一个扩展才能与窗口系统交互。GLFW 提供了一个方便的内置函数，该函数会返回所需的扩展，我们可以将该扩展传递给结构体：
+
+[source,c++]
+----
+uint32_t glfwExtensionCount = 0;
+auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+auto extensionProperties = context.enumerateInstanceExtensionProperties();
+for (uint32_t i = 0; i < gfwExtensionCount; i++) {
+    if (std::ranges::none_of(extensionProperties,
+        [glfwExtension = glfwExtensions[i]](auto const& extensionProperty) {
+            return strcmp(extensionProperty.extensionName, glfwExtension);
+        })) {
+        throw std::runtime_error("所需GLFW扩展不支持：" +
+            std::string(glfwExtensions[i]));
+    }
+}
+
+vk::InstanceCreateInfo createInfo {
+    .pApplicationInfo = &appInfo,
+    .enabledExtensionCount = glfwExtensionCount,
+    .ppEnabledExtensionNames = glfwExtensions
+};
+----
+
+另一个缺失的部分是要启用的图层。这里我们将讨论如何启用验证图层，这是任何项目中最有用、最重要的图层之一。我们将在下一章更深入地探讨这一点，所以现在先留空。
+
+现在我们已经指定了 Vulkan 创建实例所需的一切，终于可以创建 vk::raii::Instance 了：
+
+[source,c++]
+----
+instance = vk::raii::Instance(context, createInfo);
+----
+
+你会发现，Vulkan 中对象创建函数参数遵循的一般模式是：
+
+* 指向构造函数所依赖的设备、实例或上下文的指针
+* 指向包含创建信息的结构体的指针
+* 指向自定义分配器回调的指针，在本教程中始终忽略，因为如果您使用默认分配器，则它是可选的。
+* 返回指向 raii 构造对象的指针。
+
+
+
+
