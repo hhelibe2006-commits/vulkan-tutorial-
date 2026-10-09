@@ -1,0 +1,367 @@
+= 验证层
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== 什么是验证层？
+Vulkan API 的设计理念是尽可能减少驱动程序开销，而这一理念的一个体现就是 API 默认的错误检查非常有限。即使是像将枚举值设置为错误值或将空指针传递给必需参数这样简单的错误，通常也不会在 C++ 类型检查之外进行显式处理，只会导致程序崩溃或出现未定义行为。由于 Vulkan 要求你非常明确地说明你所做的每一件事，因此很容易犯一些小错误，例如使用新的 GPU 功能却忘记在创建逻辑设备时请求它。
+
+然而，这并不意味着不能将这些检查添加到 API 中。Vulkan 为此引入了一个优雅的系统，称为**验证层**。验证层是可选组件，它们会挂钩到 Vulkan 函数调用中以应用额外的操作。验证层中的常见操作包括：
+
+* 对照规范检查参数值，以检测误用情况
+* 追踪对象的创建和销毁以查找资源泄漏
+* 通过跟踪调用发起线程来检查线程安全性
+* 将每次调用及其参数记录到标准输出
+* 追踪 Vulkan 调用以进行性能分析和重放
+
+以下是诊断验证层中函数实现的一个示例：
+
+[source,c++]
+----
+VkResult vkCreateInstance(
+    const VkInstanceCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkInstance* instance
+) {
+    if (pCreateInfo == nullptr || instance == nullptr) {
+        log("Null pointer passed to required parameter!");
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    return real_vkCreateInstance(pCreateInfo, pAllocator, instance);
+}
+----
+这些验证层可以自由堆叠，以包含您感兴趣的所有调试功能。您可以为调试版本启用验证层，并为发布版本完全禁用它们，从而兼顾两者的优点！
+
+Vulkan 本身没有内置任何验证层，但 LunarG Vulkan SDK 提供了一套完善的验证层，用于检查常见错误。这些验证层完全 https://github.com/KhronosGroup/Vulkan-ValidationLayers[开源]，因此您可以查看它们检查的错误类型并做出贡献。使用这些验证层是避免应用程序因意外依赖未定义行为而在不同的驱动程序上出现故障的最佳方法。
+
+验证层只有在系统上安装后才能使用。例如，LunarG 验证层仅适用于安装了 Vulkan SDK 的 PC。
+
+还有其他层，我们建议您加以利用。至于如何发现和尝试其他层，就留给读者自行探索吧。不过，我们建议您参考最佳实践，以获取更多关于如何以更新的方式使用 Vulkan 的帮助和建议。
+
+Vulkan 以前有两种不同的验证层：实例验证层和设备验证层。实例验证层只检查与全局 Vulkan 对象（例如实例）相关的调用，而设备验证层只检查与特定 GPU 相关的调用。现在设备验证层已被弃用，这意味着实例验证层适用于所有 Vulkan 调用。
+
+== 使用验证层
+在本节中，我们将了解如何启用 Vulkan SDK 提供的标准诊断层。与扩展一样，验证层也需要通过指定其名称来启用。所有有用的标准验证都打包在 SDK 中包含的一个层中，该层被称为``VK_LAYER_KHRONOS_validation``。
+
+首先，我们向程序添加两个配置变量，分别用于指定要启用的层以及是否启用它们。我们选择根据程序是否在调试模式下编译来决定启用或禁用它们的值。宏``NDEBUG``是 C++ 标准的一部分，表示“非调试”。
+
+[source,c++]
+----
+constexpr uint32_t WIDTH = 800;
+constexpr uint32_t HEIGHT = 600;
+
+const std::vector<char const*> validationLayers = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
+#ifdef NDEBUG
+constexpr bool enableValidationLayers = false;
+#else
+constexpr bool enableValidationLayers = true;
+#endif
+----
+
+我们将检查所有请求的层是否可用。我们需要遍历请求的层，并验证 Vulkan 实现是否支持所有必需的层。此检查直接在函数`` createInstance``中执行：
+
+[source,c++]
+----
+void createInstance() {
+    ...
+
+    std::vector<char const*> requiredLayers;
+    if (enableValidationLayers) {
+        requiredLayers.assign(validationLayers.begin(),
+            validationLayers.end());
+    }
+
+    auto layerProperties = context.enumerateInstanceLayerProperties();
+    auto unsupportedLayerIt = std::ranges::find_if(requiredLayers,
+        [&layerProperties](auto const& requiredLayer) {
+            return std::ranges::none_of(layerProperties,
+                [requiredLayer](auto const& layerProperty) {
+                    return strcmp(layerProperty.layerName, requiredLayer) == 0;
+                }
+            );
+        })
+    if (unsupportedLayerIt != requiredLayers.end()) {
+        throw std::runtime_error("所需层不受支持：" +
+            std::string(*unsupportedLayerIt));
+    }
+    ...
+}
+----
+
+== 使用扩展程序
+如上所述，扩展程序也需要通过名称启用。但这里需要区分实例扩展程序和设备扩展程序。
+
+我们首先创建一个 ``getRequiredInstanceExtensions``函数，该函数将返回所需实例扩展的列表。
+
+[source,c++]
+----
+std::vector<const char*> getRequiredInstanceExtensions() {
+    uint32 glfwExtensionCount = 0;
+    auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+    std::vector extensions(glfwExtension, glfwExtension + glfwExtensionCount);
+
+    return extensions;
+}
+----
+
+由于我们使用 GLFW 依赖项进行窗口化，因此始终需要 GLFW 指定的扩展。
+
+我们将检查所有必需的扩展是否可用。首先，我们使用``vk::raii::Context::enumerateInstanceExtensionProperties``函数获取所有受支持的实例扩展的列表 ，并检查所有必需的扩展是否都列在该列表中。此检查也直接在``createInstance``函数中执行：
+
+[source,c++]
+----
+void createInstance() {
+    ...
+    auto requiredExtensions = getRequiredInstanceExtensions();
+
+    auto extensionProperties = context.enumerateInstanceExtensionProperties();
+    auto unsupportedPropertyIt =
+        std::ranges::find_if(requiredExtensions,
+            [&extensionProperties](auto const& requiredExtension)) {
+        return std::ranges::none_of(extensionProperties,
+            [&requiredExtension](auto const& extensionProperty)) {
+            return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
+        }
+    }
+    if (unsupportedPropertyIt != requiredExtensions.end()) {
+        throw std::runtime_error("不受支持的扩展：" + std::string(*unsupportedPropertyIt));
+    }
+}
+----
+
+现在以调试模式运行程序，确保不会出现错误。如果出现错误，请查看常见问题解答。
+
+最后，修改``vk::InstanceCreateInfo``结构体实例化，使其包含验证层名称和扩展名称：
+
+[source,c++]
+----
+void createInstance{
+    vk::InstanceCreateInfo createInfo{
+        .pApplicationInfo = &appInfo,
+        .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size());
+        .ppEnabledLayerNames = requiredLayers.data(),
+        .enableExtensionCount = static_cast(requiredExtensions.size()),
+        .ppEnabledExtensionNames = requiredExtensions.data()
+    };
+    instance = vk::raii::Instance(context, createInfo);
+}
+----
+
+如果检查成功，``vk::raii::Instance``构造函数不应抛出``vk::Result::eErrorLayerNotPresent``错误。但是，系统上可用的层集合在检查和调用之间（或在程序的不同运行之间）可能会发生变化，因此您仍然应该运行程序以确保万无一失。
+
+== 消息回调
+
+默认情况下，验证层会将调试信息打印到标准输出，但我们也可以通过在程序中提供显式回调来自行处理这些信息。这样，您还可以决定要查看哪些类型的消息，因为并非所有消息都是（致命）错误。如果您现在不想进行此操作，则可以跳到本章的最后一节。
+
+要在程序中设置回调来处理消息和相关细节，我们必须使用 ``VK_EXT_debug_utils``扩展程序设置一个带有回调的调试消息传递程序。
+
+我们首先在``getRequiredInstanceExtensions``里根据验证层是否启用来扩展该功能：
+
+[source,c++]
+----
+std::vector<const char*> getRequiredInstanceExtensions() {
+    uint32 glfwExtensionCount = 0;
+    auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+    std::vector extensions(glfwExtension, glfwExtension + glfwExtensionCount);
+    if (enableValidationLayers) {
+        extensions.push_back(vk::EXTDebugUtilsExtensionName);
+    }
+    return extensions;
+}
+----
+
+调试消息传递扩展程序是按需添加的。请注意，这里我们使用了 ``vk::EXTDebugUtilsExtensionName``宏，它等于字符串“VK_EXT_debug_utils”。使用此宏可以避免拼写错误。
+
+现在我们来看看调试回调函数是什么样的。添加一个新的静态成员函数``debugCallback``，并为其指定``PFN_vkDebugUtilsMessengerCallbackEXT`` 原型。``VKAPI_ATTR``和``VKAPI_CALL``修饰确保该函数具有 Vulkan 可以调用的正确签名。
+
+[source,c++]
+----
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    vk::DebugUtilsMessageSeverityFllagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT type,
+    const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData
+) {
+    std::cerr << "验证层：类型" << to_string(type) << " 消息：" << pCallbackData->pMessage << std::endl;
+
+    return vk::False;
+}
+----
+
+第一个参数指定消息的严重程度，它是以下标志之一：
+
+* ``vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose``来自 Vulkan 组件（例如加载器、层和驱动程序）的诊断消息
+* `vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo` 信息性消息，例如资源的创建
+* `vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning`：此消息描述的是一种行为，不一定是错误，但很可能是应用程序中的一个缺陷。
+* `vk::DebugUtilsMessageSeverityFlagBitsEXT::eError` ：关于无效行为并可能导致崩溃的消息
+
+此枚举的值设置方式使得您可以使用比较操作来检查消息是否等于或低于某个严重级别，例如：
+
+[source,c++]
+----
+if (severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
+
+}
+----
+
+将``debugCallback``方法应用到我们的系统中，我们可以过滤掉所有比警告级别低的信息，从而避免冗长且信息性的消息使输出变得杂乱无章：
+
+[source,c++]
+----
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    vk::DebugUtilsMessageSeverityFllagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT type,
+    const vk::DebugUtilsMessengerCalllbackDataEXT* pCallbackData,
+    void* pUserData
+) {
+    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+    || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError){
+        std::cerr << "验证层：类型" << to_string(type) << " 消息：" << pCallbackData->pMessage << std::endl;
+    }
+
+    return vk::False;
+}
+----
+
+注意，这里的 `severity` 可以直接用 `==` 来比较，而不需要用按位 `&`。它的类型是 `vk::DebugUtilsMessageSeverityFlagBitsEXT`，而不是 `vk::DebugUtilsMessageSeverityFlagsEXT`：`FlagBits` 后缀表示它是一个枚举，其中的值是单独的位；并且 Vulkan 会针对每个严重级别位调用一次回调，所以在任意一次调用中，`severity` 总是恰好保存其中一个位。相比之下，`Flags` 值是一个普通整数，可以保存多个 `FlagBits` 组合在一起，这时你就需要用 `&` 来测试其中某一个位是否被设置。
+
+该``messageType``参数可以具有以下值：
+
+* `vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral` 发生了一些与规范或性能无关的事件
+* ``vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation``发生了违反规范或表明可能存在错误的情况。
+* `vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformanceVulkan` 的潜在非最佳使用方式
+
+该``pCallbackData``参数指的是一个``vk::DebugUtilsMessengerCallbackDataEXT``结构体，其中包含消息本身的详细信息，其中最重要的成员包括：
+
+* `pMessage` 调试信息以空字符结尾的字符串形式呈现
+* `pObjects` 与消息相关的 Vulkan 对象句柄数组
+* `objectCount` 数组中的对象数量
+
+最后，该``pUserData``参数包含在回调设置期间指定的指针，允许您将自己的数据传递给它。
+
+回调函数返回一个布尔值，指示是否应中止触发验证层消息的 Vulkan 调用。如果回调函数返回 true，则调用将中止并返回``vk::Result::eErrorValidationFailedEXT``错误。这通常仅用于测试验证层本身，因此您应该始终返回 `vk::False`。
+
+现在剩下的就是告诉 Vulkan 关于回调函数的信息。这种回调函数是**调试信息传递机制**的一部分，你可以根据需要添加任意数量的回调函数。在``instance``定义代码块下方添加一个用于存储此句柄的类成员：
+
+[source,c++]
+----
+vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+----
+
+现在添加一个函数``setupDebugMessenger``，该函数将在initVulkan里的createInstance后面立即被调用：
+
+[source,c++]
+----
+void initVulkan() {
+    createInstance();
+    setupDebugMessenger();
+}
+
+void setupDebugMessenger() {
+    if constexpr(enableValidationLayers)
+        return;
+}
+----
+
+我们需要填写一个结构体，其中包含有关消息传递程序及其回调函数的详细信息：
+
+[source,c++]
+----
+void setupDebugMessenger() {
+    ...
+    vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+        | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+    );
+    vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral
+        | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+        | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
+    );
+    vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
+        .messageSeverity = severityFlags,
+        .messageType = messageTypeFlags,
+        .pfnUserCallback = &debugCallback
+    };
+    debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
+}
+----
+
+该``messageSeverity``字段允许您指定所有需要触发回调的严重级别类型。我们只对提示应用程序问题且可能需要修复的消息感兴趣。因此，我们需要相应的``eWarning``和``eError``标志。
+
+同样，该``messageType``字段允许您筛选回调函数接收哪些类型的消息通知。我们这里启用了所有类型。如果您觉得某些类型没用，可以随时禁用它们。
+
+最后，该``pfnUserCallback``字段指定指向回调函数的指针。您可以选择性地传递一个指向该``pUserData``字段的指针，该指针将通过参数传递给回调函数。 例如，``pUserData``您可以使用此方法传递指向类``HelloTriangleApplication``的指针。
+
+请注意，配置验证层消息和调试回调的方法还有很多，但这对于本教程来说是一个很好的入门设置。 有关更多功能，请参阅 https://docs.vulkan.org/spec/latest/chapters/debugging.html#VK_EXT_debug_utils[扩展规范]。
+
+完整的``createInstance``函数如下所示：
+
+[source,c++]
+----
+void createInstance() {
+    constexpr vk::ApplicationInfo appInfo {
+        .pApplicationName = "Vulkan",
+        .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+        .pEngineName = "No Engine",
+        .EngineVersion = VK_MAKE_VERSION(1, 0, 0),
+    };
+
+    std::vector<char const*> requiredLayers;
+    if (enableValidationLayers) {
+        requiredLayers.assign(validationLayers,begin(), validationLayers.end());
+    }
+
+    auto layerProperties = context.enumerateInstanceLayerProperties();
+    auto unsupportedLayerIt = std::ranges::find_if(requiredLayers,
+        [&layerProperties](auto const& requiredLayer) {
+            return std::ranges::none_of(layerProperties,
+                [&requiredLayer](auto const& layerProperty) {
+                    return strcmp(requiredLayer.layerName, requiredLayer) == 0;
+                });
+        }
+    );
+    if (unsupportedLayerIt != requiredLayers.end()) {
+        throw std::runtime_error("不支持的扩展：" +
+            std::string(*unsupportedLayerIt));
+    }
+
+    auto requiredExtensions = getRequiredInstanceExtensions()
+
+    auto extensionProperties = context.enumerateInstanceExtensionProperties();
+    auto unsupportedPropertyIt = std::ranges::find_if(requiredExtensions,
+        [&extensionProperties](auto const& requiredExtension) {
+            return std::ranges::none_of(extensionProperties,
+                [&requiredExtension](auto const& extensionProperty) {
+                    return strcmp(extensionProperty.extensionName, requiredExtension);
+                });
+        });
+    if (unsupportedPropertyIt != requiredExtensions.end()) {
+        throw std::runtime_error("不支持的扩展：" +
+            std::string(*unsupportedPropertyIt));
+    }
+
+    vk::InstanceCreateInfo createInfo {
+        .pApplicationInfo = &appInfo,
+        .enabledExtensionCount = glfwExtensionCount,
+        .ppEnabledExtensionNames = glfwExtensions
+    };
+
+    instance = vk::raii::Instance(context, createInfo);
+}
+----
+
+== 配置
+除了结构体中指定的标志之外，验证层``vk::DebugUtilsMessengerCreateInfoEXT``的行为还有很多其他设置。请浏览 Vulkan SDK 并进入``Config``相应的目录。在那里，您会找到一个 ``vk_layer_settings.txt``文件，其中解释了如何配置这些层。
+
+要为您的应用程序配置图层设置，请将文件复制到 项目的 ``Debug``和 `Release` 目录中，并按照说明设置所需的行为。不过，在本教程的其余部分，我们将假设您使用的是默认设置。
+
+在本教程中，我们将故意犯一些错误，以向您展示验证层在捕获这些错误方面的作用，并让您了解在使用 Vulkan 时准确了解自己正在做什么的重要性。现在，让我们来看看系统中的 xref:物理设备和队列.adoc[Vulkan 设备]。
+
+xref:../../../code/验证层.cpp[C++]

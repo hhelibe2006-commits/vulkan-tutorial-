@@ -1,0 +1,57 @@
+= 物理设备和队列
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== 选择物理设备
+通过 vk::raii::Instance 初始化 Vulkan 库后，我们需要在系统中查找并选择一块支持所需功能的显卡。实际上，我们可以选择任意数量的显卡并同时使用它们，但本教程中我们将只选择第一块符合我们需求的显卡。
+
+我们将添加一个函数``pickPhysicalDevice``，并在``initVulkan``函数中添加对该函数的调用 。
+
+[source,c++]
+----
+void initVulkan() {
+    createInstance();
+    setupDebugMessenger();
+    pickPhysicalDevice();
+}
+
+void pickPhysicalDevice() {
+
+}
+----
+
+我们最终选择的显卡将存储在作为新类成员添加的 vk::raii::PhysicalDevice 中。
+
+[source,c++]
+----
+vk::raii::PhysicalDevice physicalDevice = nullptr;
+----
+
+列出显卡信息与列出扩展程序信息非常相似，都是从查询编号开始。
+
+[source,c++]
+----
+auto physicalDevices = instance.enumeratePhysicalDevices();
+----
+
+如果没有支持 Vulkan 的设备，那么继续下去就没有意义了。
+
+[source,c++]
+----
+if (physicalDevices.empty()) {
+    throw std::runtime_error("未找到支持Vulkan的GPU");
+}
+----
+
+现在我们需要对每张显卡进行评估，检查它们是否适合我们想要执行的操作，因为并非所有显卡都性能相同。我们将检查是否有任何物理设备满足我们添加到该函数中的要求。
+
+
+
+
+
+
+
+
+
+

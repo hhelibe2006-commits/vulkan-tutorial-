@@ -190,7 +190,7 @@ constexpr uint32_t HEIGHT = 600;
 
 [source,c++]
 ----
-window = glfwWindowCreate(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 ----
 
 这时你应该得到的``initWindow``是一个类似如下的函数：

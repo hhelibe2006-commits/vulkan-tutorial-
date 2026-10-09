@@ -1,7 +1,7 @@
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw.h>
+#include <GLFW/glfw3.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -25,10 +25,10 @@ private:
     void initWindow() {
         glfwInit();
 
-        glfwWindowHind(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHind(GLFW_RESIZEALE, GLFW_FALSE);
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        window = glfwWindowCreate(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
     }
 
     void initVulkan() {
