@@ -70,7 +70,7 @@ void createInstance() {
     ...
 
     std::vector<char const*> requiredLayers;
-    if (enableValidationLayers) {
+    if constexpr(!enableValidationLayers) {
         requiredLayers.assign(validationLayers.begin(),
             validationLayers.end());
     }
@@ -103,7 +103,7 @@ std::vector<const char*> getRequiredInstanceExtensions() {
     uint32 glfwExtensionCount = 0;
     auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    std::vector extensions(glfwExtension, glfwExtension + glfwExtensionCount);
+    std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
     return extensions;
 }
@@ -122,11 +122,12 @@ void createInstance() {
     auto extensionProperties = context.enumerateInstanceExtensionProperties();
     auto unsupportedPropertyIt =
         std::ranges::find_if(requiredExtensions,
-            [&extensionProperties](auto const& requiredExtension)) {
-        return std::ranges::none_of(extensionProperties,
-            [&requiredExtension](auto const& extensionProperty)) {
-            return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
-        }
+            [&extensionProperties](auto const& requiredExtension) {
+                return std::ranges::none_of(extensionProperties,
+                    [&requiredExtension](auto const& extensionProperty) {
+                        return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
+                    });
+            });
     }
     if (unsupportedPropertyIt != requiredExtensions.end()) {
         throw std::runtime_error("不受支持的扩展：" + std::string(*unsupportedPropertyIt));
@@ -140,12 +141,12 @@ void createInstance() {
 
 [source,c++]
 ----
-void createInstance{
+void createInstance() {
     vk::InstanceCreateInfo createInfo{
         .pApplicationInfo = &appInfo,
-        .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size());
+        .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
         .ppEnabledLayerNames = requiredLayers.data(),
-        .enableExtensionCount = static_cast(requiredExtensions.size()),
+        .enableExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
         .ppEnabledExtensionNames = requiredExtensions.data()
     };
     instance = vk::raii::Instance(context, createInfo);
@@ -165,11 +166,11 @@ void createInstance{
 [source,c++]
 ----
 std::vector<const char*> getRequiredInstanceExtensions() {
-    uint32 glfwExtensionCount = 0;
+    uint32_t glfwExtensionCount = 0;
     auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    std::vector extensions(glfwExtension, glfwExtension + glfwExtensionCount);
-    if (enableValidationLayers) {
+    std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    if constexpr(!enableValidationLayers) {
         extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
     return extensions;
@@ -178,12 +179,12 @@ std::vector<const char*> getRequiredInstanceExtensions() {
 
 调试消息传递扩展程序是按需添加的。请注意，这里我们使用了 ``vk::EXTDebugUtilsExtensionName``宏，它等于字符串“VK_EXT_debug_utils”。使用此宏可以避免拼写错误。
 
-现在我们来看看调试回调函数是什么样的。添加一个新的静态成员函数``debugCallback``，并为其指定``PFN_vkDebugUtilsMessengerCallbackEXT`` 原型。``VKAPI_ATTR``和``VKAPI_CALL``修饰确保该函数具有 Vulkan 可以调用的正确签名。
+现在我们来看看调试回调函数是什么样的。添加一个新的静态成员函数``debugCalback``，并为其指定``PFN_vkDebugUtilsMessengerCallbackEXT`` 原型。``VKAPI_ATTR``和``VKAPI_CALL``修饰确保该函数具有 Vulkan 可以调用的正确签名。
 
 [source,c++]
 ----
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
-    vk::DebugUtilsMessageSeverityFllagBitsEXT severity,
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCalback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
     vk::DebugUtilsMessageTypeFlagsEXT type,
     const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData
@@ -210,12 +211,12 @@ if (severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
 }
 ----
 
-将``debugCallback``方法应用到我们的系统中，我们可以过滤掉所有比警告级别低的信息，从而避免冗长且信息性的消息使输出变得杂乱无章：
+将``debugCalback``方法应用到我们的系统中，我们可以过滤掉所有比警告级别低的信息，从而避免冗长且信息性的消息使输出变得杂乱无章：
 
 [source,c++]
 ----
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
-    vk::DebugUtilsMessageSeverityFllagBitsEXT severity,
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCalback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
     vk::DebugUtilsMessageTypeFlagsEXT type,
     const vk::DebugUtilsMessengerCalllbackDataEXT* pCallbackData,
     void* pUserData
@@ -264,7 +265,7 @@ void initVulkan() {
 }
 
 void setupDebugMessenger() {
-    if constexpr(enableValidationLayers)
+    if constexpr(!enableValidationLayers)
         return;
 }
 ----
@@ -287,7 +288,7 @@ void setupDebugMessenger() {
     vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
         .messageSeverity = severityFlags,
         .messageType = messageTypeFlags,
-        .pfnUserCallback = &debugCallback
+        .pfnUserCallback = &debugCalback
     };
     debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
 }
@@ -314,8 +315,8 @@ void createInstance() {
     };
 
     std::vector<char const*> requiredLayers;
-    if (enableValidationLayers) {
-        requiredLayers.assign(validationLayers,begin(), validationLayers.end());
+    if constexpr(!enableValidationLayers) {
+        requiredLayers.assign(validationLayers.begin(), validationLayers.end());
     }
 
     auto layerProperties = context.enumerateInstanceLayerProperties();
@@ -323,7 +324,7 @@ void createInstance() {
         [&layerProperties](auto const& requiredLayer) {
             return std::ranges::none_of(layerProperties,
                 [&requiredLayer](auto const& layerProperty) {
-                    return strcmp(requiredLayer.layerName, requiredLayer) == 0;
+                    return strcmp(layerProperty.layerName, requiredLayer) == 0;
                 });
         }
     );
@@ -332,14 +333,14 @@ void createInstance() {
             std::string(*unsupportedLayerIt));
     }
 
-    auto requiredExtensions = getRequiredInstanceExtensions()
+    auto requiredExtensions = getRequiredInstanceExtensions();
 
     auto extensionProperties = context.enumerateInstanceExtensionProperties();
     auto unsupportedPropertyIt = std::ranges::find_if(requiredExtensions,
         [&extensionProperties](auto const& requiredExtension) {
             return std::ranges::none_of(extensionProperties,
                 [&requiredExtension](auto const& extensionProperty) {
-                    return strcmp(extensionProperty.extensionName, requiredExtension);
+                    return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
                 });
         });
     if (unsupportedPropertyIt != requiredExtensions.end()) {
@@ -360,7 +361,7 @@ void createInstance() {
 == 配置
 除了结构体中指定的标志之外，验证层``vk::DebugUtilsMessengerCreateInfoEXT``的行为还有很多其他设置。请浏览 Vulkan SDK 并进入``Config``相应的目录。在那里，您会找到一个 ``vk_layer_settings.txt``文件，其中解释了如何配置这些层。
 
-要为您的应用程序配置图层设置，请将文件复制到 项目的 ``Debug``和 `Release` 目录中，并按照说明设置所需的行为。不过，在本教程的其余部分，我们将假设您使用的是默认设置。
+要为您的应用程序配置层设置，请将文件复制到 项目的 ``Debug``和 `Release` 目录中，并按照说明设置所需的行为。不过，在本教程的其余部分，我们将假设您使用的是默认设置。
 
 在本教程中，我们将故意犯一些错误，以向您展示验证层在捕获这些错误方面的作用，并让您了解在使用 Vulkan 时准确了解自己正在做什么的重要性。现在，让我们来看看系统中的 xref:物理设备和队列.adoc[Vulkan 设备]。
 

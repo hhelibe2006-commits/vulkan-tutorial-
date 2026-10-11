@@ -46,9 +46,212 @@ if (physicalDevices.empty()) {
 
 现在我们需要对每张显卡进行评估，检查它们是否适合我们想要执行的操作，因为并非所有显卡都性能相同。我们将检查是否有任何物理设备满足我们添加到该函数中的要求。
 
+[source,c++]
+----
+for (auto physicalDevice : physicalDevices) {
+    break;
+}
+----
 
+== 基本设备适用性检查
+为了评估设备的适用性，我们可以先查询一些详细信息。可以使用 vk::raii::PhysicalDevice::getProperties 查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本。
 
+[source,c++]
+----
+auto deviceProperties = physicalDevice.getProperties();
+----
 
+可以使用 vk::raii::PhysicalDevice::getFeatures 查询对纹理压缩、64 位浮点数和多视口渲染（对 VR 很有用）等可选功能的支持情况：
+
+[source,c++]
+----
+auto deviceFeatures = physicalDevice.getFeatures();
+----
+
+还可以从设备查询更多详细信息，我们将在后面讨论有关设备内存和队列族的信息（见下一节）。
+
+例如，假设我们认为我们的应用程序仅适用于支持几何着色器的独立显卡。那么该``isDeviceSuitable`` 函数将如下所示：
+
+[source,c++]
+----
+bool isDeviceSuitable() {
+    auto deviceProperties = physicalDevice.getProperties();
+    auto deviceFeatures = physicalDevice.getFeatures();
+
+    if (deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu
+        && deviceFeatures.geometryShader
+        ) {
+        return true;
+    }
+
+    return false;
+}
+----
+
+除了简单地检查设备是否合适并选择第一个之外，你还可以给每个设备打分，然后选择分数最高的。这样，你可以通过给独立显卡更高的分数来优先选择它，但如果只有集成显卡可用，则可以退而求其次。这需要一种方法 ``std::multimap``来按分数对候选设备进行排序，因此需要在文件顶部添加一个新的头部。你可以按如下方式实现：
+
+[source,c++]
+----
+#include <map>
+...
+void pickPhysicalDevice() {
+    auto physicalDevices = instance.enumeratePhysicalDevices();
+    if (physicalDevices.empty()) {
+        throw std::runtime_error("找不到支持Vulkan的显卡");
+    }
+
+    std::multimap<int, vk::raii::PhysicalDevice> candidates;
+
+    for (const auto& pd : physicalDevices) {
+        auto deviceProperties = pd.getProperties();
+        auto deviceFeatures = pd.getFeatures();
+        uint32_t score = 0;
+
+        if (deviceProperties.deviceType == vk::PhysicallDeviceType::eDiscreteGpu) {
+            score += 1000;
+        }
+
+        score += deviceProperties.llimits.maxImageDimension2D;
+
+        if (!deviceFeatures.geometryShader) {
+            continue;
+        }
+        candidates.insert(std::make_pair(score, pd));
+    }
+
+    if (!candidates.empty() && candidates.rbegin()->first > 0) {
+        physicalDevice = candidates.rbegin()->second;
+    }else {
+        throw std::runtime_error("未能找到合适的GPU");
+    }
+}
+----
+
+本教程不需要你完全实现所有这些功能，但这样做是为了让你了解如何设计设备选择流程。当然，你也可以显示选项名称并允许用户选择。
+
+在本教程中，我们将使用物理设备必须满足的四个标准才能被选中：
+
+* 支持 Vulkan 1.3
+* 支持图形操作的队列族
+* 支持所有必需的扩展（这里我们只需要 `vk::KHRSwapchainExtensionName`）
+* 支持所有必需的功能。
+
+=== API版本检查
+要检查是否支持 Vulkan 1.3，可以查看物理设备属性中的 apiVersion：
+
+[source,c++]
+----
+bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
+----
+
+=== 队列族检查
+前面已经简要提到过，Vulkan 中的几乎所有操作，从绘图到上传纹理，都需要将命令提交到队列中。队列类型多种多样，它们源自不同的 *队列族*，而每个队列族只允许处理一部分命令。例如，可能存在一个队列族只允许处理计算命令，或者一个队列族只允许处理与内存传输相关的命令。
+
+我们需要检查设备支持哪些队列族，以及其中哪个队列系列支持我们想要使用的命令。目前我们只查找支持图形命令的队列，因此代码可能如下所示：
+
+[source,c++]
+----
+auto queueFamilies = physicalDevice.getQueueFamillyProperties();
+bool supportsGraphics = std::ranges::any_of(queueFamilies,
+    [](auto const &qfp) {
+        return static_cast<bool>(
+            qfp.queueFlags
+            & vk::QueueFlagBits::eGraphics
+        );
+    });
+----
+
+=== 进行扩展检查
+目前，我们只需要一个扩展：vk::KHRSwapchainExtensionName。但无论我们需要多少个扩展，我们都必须验证每个必需的设备扩展是否确实受物理设备支持：
+
+[source,c++]
+----
+std::vector<const char*> requiredDeviceExtension = {
+    vk::KHRSwapchainExtensionName
+};
+
+auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensions();
+bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
+    [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
+        return std::range::any_of(availableDeviceExtensions,
+            [&requiredDeviceExtension](auto const& availableDeviceExtension) {
+                return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
+            });
+    });
+----
+
+=== 必需功能检查
+最后，我们需要检查所有可选支持的必需功能是否都实际得到支持：
+
+[source,c++]
+----
+auto features = physicalDevice.getFeatures2<
+    vk::PhysicalDeviceFeatures2,
+    vk::PhysicalDeviceVulkan11Features,
+    vk::PhysicalDeviceVulkan13Features,
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+&& features.get<vk::PhysicalDeviceVulkan11Features>().dynamicRendering
+&& features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+----
+
+== 完整功能
+我们将所有这些部分组合在一起，就得到了用于选择物理设备的函数：
+
+[source,c++]
+----
+std::vector<const char*> requiredDeviceExtension = {
+    vk::KHRSwapchainExtensionName
+};
+
+bool isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
+    bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion > vk::ApiVersion13;
+
+    auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+    bool supportsGraphics = std::ranges::any_of(queueFamilies,
+        [](auto const& qfp) {
+            return static_cast<bool>(qfp.queueFlags & vk::QueueFlagBits::eGraphics);
+        });
+
+    auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensions();
+    bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
+        [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
+            return std::ranges::none_of(availableDeviceExtensions,
+                [&requiredDeviceExtension](auto const& availableDeviceExtension) {
+                    return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
+                });
+        });
+    auto features = physicalDevice.getFeatuFeatures2<
+        vk::PhysicalDeviceFeatures2,
+        vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+    && features.get<vk::PhysicalDeviceVulkan11Features>().dynamicRendering
+    && features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+
+    return supportsVulkan1_3
+    && supportsGraphics
+    && supportsAllRequiredExtensions
+    && supportsRequiredFeatures;
+}
+
+void pickPhysicalDevice() {
+    std::vector<vk::raii::PhysicalDevice> physicalDevices =
+        instance.enumeratePhysicalDevices();
+
+    auto const devIter = std::ranges::find_if(physicalDevices,
+        [&](auto const& physicalDevice) {
+            return isDeviceSuitable(physicalDevice);
+        });
+    if (devIter == physicalDevices.end()) {
+        throw std::runtime_error("未找到合适的GPU");
+    }
+    physicalDevice = *devIter;
+}
+----
+
+太好了，现在我们只需要这些信息就能找到合适的物理设备了！下一步是创建一个 xref:逻辑设备与队列.adoc[逻辑设备]来与之连接。
 
 
 

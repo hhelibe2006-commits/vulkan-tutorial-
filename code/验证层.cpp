@@ -69,7 +69,7 @@ private:
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
             .messageSeverity = severityFlags,
             .messageType = messageTypeFlags,
-            .pfnUserCallback = &debugCallback
+            .pfnUserCallback = &debugCalback
         };
         debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
     }
@@ -83,7 +83,7 @@ private:
         };
 
         std::vector<char const*> requiredLayers;
-        if constexpr (enableValidationLayers) {
+        if constexpr (!enableValidationLayers) {
             requiredLayers.assign(validationLayers.begin(), validationLayers.end());
         }
 
@@ -133,21 +133,21 @@ private:
 
         std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
-        if (enableValidationLayers) {
+        if constexpr(!enableValidationLayers) {
             extensions.push_back(vk::EXTDebugUtilsExtensionName);
         }
         return extensions;
     }
 
-    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCalback(
         vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
         vk::DebugUtilsMessageTypeFlagsEXT type,
-        const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+        const vk::DebugUtilsMessengerCalbackDataEXT* pCalbackData,
         void* pUserData
     ) {
         if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
             || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-            std::cerr << "验证层：类型" << to_string(type) << "消息：" << pCallbackData->pMessage <<std::endl;
+            std::cerr << "验证层：类型" << to_string(type) << "消息：" << pCalbackData->pMessage <<std::endl;
         }
 
         return vk::False;

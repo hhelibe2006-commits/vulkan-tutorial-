@@ -53,7 +53,7 @@ private:
         for (uint32_t i = 0; i < glfwExtensionCount; i++) {
             if (std::ranges::none_of(extensionProperties,
                 [glfwExtension = glfwExtensions[i]](auto const& extensionProperty) {
-                    return strcmp(extensionProperty.extensionName, glfwExtension);
+                    return strcmp(extensionProperty.extensionName, glfwExtension) == 0;
                 })) {
                 throw std::runtime_error("所需GLFW扩展不支持" +
                     std::string(glfwExtensions[i]));

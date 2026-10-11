@@ -1,4 +1,4 @@
-= 概述
+= 开发环境
 :toc:
 :toclevels: 3
 :toc-title: 目录
@@ -47,7 +47,7 @@ git clone https://github.com/KhronosGroup/Vulkan-Tutorial
 
 此目录中还有一个对开发有用的程序。这个slangc命令行程序用于将人类可读的 https://shader-slang.org/slang/user-guide/[Slang 着色器语言]编译成字节码。我们将在 xref:画一个三角形/图形管线基础知识/着色器模块.adoc[着色器模块章节]中详细介绍 。该bin目录还包含 Vulkan 加载器和验证层的二进制文件，而该lib目录则包含库文件。
 
-最后，还有一个include包含 Vulkan 头文件的目录。您可以随意浏览其他文件，但本教程不需要用到它们。
+最后，还有一个include目录，其中包含 Vulkan 头文件。您可以随意浏览其他文件，但本教程不需要用到它们。
 
 为了自动设置 VulkanSDK 用于简化 CMake 项目配置和其他工具的环境变量，我们建议在 Linux 系统上使用setup-env脚本。您可以将此脚本添加到终端的启动项或 IDE 设置中，以确保这些环境变量在所有会话中都可用。
 
@@ -56,7 +56,7 @@ git clone https://github.com/KhronosGroup/Vulkan-Tutorial
 === CMake
 尽管在跨平台项目开发存在诸多不足，但是CMake 已成为业界的标配工具。它允许开发者创建项目范围的构建描述文件，该文件负责设置和配置创建任何项目所需的所有支持工具。其他构建系统，例如 Bazel，也具备类似的功能，但没有哪个系统能像 CMake 那样被广泛使用和接受。本教程篇幅有限，无法详细介绍 CMake 的使用方法，但您可以在 http://www.cmake.org/[CMake 网站]上找到更多相关信息。
 
-Vulkan SDK 支持使用 `find_package`。要在你的项目中使用它，你可以将 `*-config.cmake` 的搜索路径添加到 `find_package` 配置调用的 `HINTS` 部分，即：
+Vulkan SDK 支持使用 `find_package`。要在项目中使用它，可以将 `*-config.cmake` 的搜索路径添加到 `find_package` 配置调用的 `HINTS` 部分，即：
 
 [source,cmake]
 ----
@@ -124,9 +124,9 @@ target_link_libraries (${PROJECT_NAME} Vulkan::cppm)
 === 窗口管理
 如前所述，Vulkan 本身是一个平台无关的 API，并不包含用于创建窗口以显示渲染结果的工具。为了充分利用 Vulkan 的跨平台优势，我们将使用 http://www.glfw.org/[GLFW] 库来创建窗口，该库支持 Windows、Linux 和 macOS。虽然还有其他库可以实现此功能，例如 https://www.libsdl.org/[SDL]，但 GLFW 的优势在于，除了窗口创建之外，它还抽象化了 Vulkan 中一些其他平台特定的细节。
 
-一个令人遗憾的是，GLFW 无法在 Android 或 iOS 系统上运行；它仅适用于桌面平台。SDL 的确提供了移动端支持；然而，移动窗口支持的最佳实现方式是通过与操作系统交互，例如在 Android 中使用 JNI。
+一个令人遗憾的缺点是，GLFW 无法在 Android 或 iOS 系统上运行；它仅适用于桌面平台。SDL 的确提供了移动端支持；然而，移动窗口支持的最佳实现方式是通过与操作系统交互，例如在 Android 中使用 JNI。
 
-=== 广义线性模型
+=== GLM
 与 DirectX 12 不同，Vulkan 没有包含线性代数运算库，所以我们需要下载一个。 http://glm.g-truc.net/[GLM]是一个不错的库，它专为图形 API 设计，也常用于 OpenGL。
 
 === 纹理库
@@ -156,9 +156,9 @@ vcpkg install glfw3
 
 在本教程中，我们将使用 64 位二进制文件，但您当然也可以选择以 32 位模式构建。在这种情况下，请确保链接到Lib32目录中的 Vulkan SDK 二进制文件，而不是其他Lib目录。下载完成后，将压缩包解压到方便的位置。我们选择在 Visual Studio 目录下的“文档”文件夹中创建一个Libraries目录。
 
-image::../images/Libraries.png[Logo]
+image::../images/Libraries.png[]
 
-=== 广义线性模型
+=== GLM
 
 作为纯图形 API，Vulkan 不包含线性代数运算库，因此我们需要下载一个。GLM 也可以使用 vcpkg 安装，如下所示：
 
@@ -169,7 +169,7 @@ vcpkg install glm
 
 因为GLM是一个仅包括头文件的库，所以也可以单独下载专门为图形API设计的 https://glm.g-truc.net/[GLM]库，它也常用于OpenGL。
 
-image::../images/glm.png[Logo]
+image::../images/glm.png[]
 
 === tinyobjloader
 可以使用vcpkg安装Tinyobjloader，如下所示：
@@ -179,7 +179,7 @@ vcpkg install tinyobjloader
 ----
 
 == Linux
-这些说明主要针对 Ubuntu、Fedora 和 Arch Linux 用户，但您也可以通过将包管理器特定的命令替换为适用于您系统的命令来继续操作。您需要一个支持 C++20 的编译器（GCC 7+ 或 Clang 5+）。您还需要一些其他工具cmake。其中大部分可以通过 build-essentials 等大型软件包安装。
+这些说明主要针对 Ubuntu、Fedora 和 Arch Linux 用户，但您也可以通过将包管理器特定的命令替换为适用于您系统的命令来继续操作。您需要一个支持 C++20 的编译器（GCC 7+ 或 Clang 5+）。您还需要cmake等其他工具。其中大部分可以通过 build-essentials 等大型软件包安装。
 
 我们建议使用 CLion 或其他 IDE；但是，与 Linux 中的大多数事物一样，图形用户界面完全是可选的。
 
@@ -268,7 +268,7 @@ sudo cp $VULKAN_SDK/share/vulkan/explicit_layer.d/VkLayer_*.json /usr/local/shar
 
 你现在已经为 https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/00_Setup/00_Base_code.html[真正的冒险]做好了准备。
 
-== MacOS
+== macOS
 这些说明假设您正在使用 Xcode 和 https://brew.sh/[Homebrew] 包管理器。此外，请注意，您至少需要 macOS 10.11 版本，并且您的设备需要支持 https://en.wikipedia.org/wiki/Metal_(API)#Supported_GPUs[Metal API]。
 
 === Vulkan SDK
@@ -292,7 +292,7 @@ image::../images/Mac_vkcube.png[Logo]
 brew install glfw
 ----
 
-=== 广义线性模型
+=== GLM
 这是一个仅包含头文件的库，可以通过软件包安装``glm``：
 
 [source,bash]
@@ -347,4 +347,4 @@ cd attachments
 cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=[vcpkg 路径]\scripts\buildsystems\vcpkg.cmake
 ----
 
-恭喜，您已做好使用  xref:画一个三角形/设置/基础代码.adoc[Vulkan 的准备]！
+恭喜，您已经准备好开始  xref:画一个三角形/设置/基础代码.adoc[体验Vulkan]了！
