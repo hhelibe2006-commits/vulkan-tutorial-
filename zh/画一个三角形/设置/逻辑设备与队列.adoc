@@ -4,7 +4,7 @@
 :toc-title: 目录
 
 == 介绍
-选择要使用的物理设备后，我们需要设置一个**逻辑设备**与之连接。逻辑设备的创建过程与实例创建过程类似，需要描述我们想要使用的功能并创建。在查询了可用的队列系列之后，我们还需要指定要创建的队列。如果需求各不相同，您甚至可以从同一物理设备创建多个逻辑设备。
+选择要使用的物理设备后，我们需要设置一个**逻辑设备**与之连接。逻辑设备的创建过程与实例创建过程类似，需要描述我们想要使用的功能并创建。在查询了可用的队列族之后，我们还需要指定要创建的队列。如果需求各不相同，您甚至可以从同一物理设备创建多个逻辑设备。
 
 首先添加一个新的类成员来存储逻辑设备句柄。
 [source,c++]
@@ -33,8 +33,9 @@ std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
     physicalDevice.getQueueFamilyProperties();
 auto graphicsQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties,
     [](auto const&qfp) {
-        return qfp.queueFlags & vk::QueueFlagBits::eGraphics != static_cast<vk::QueueFlags>(0);
+        return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
     });
+auto graphicsIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
 vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
     .queueFamilyIndex = graphicsIndex
 };
@@ -83,11 +84,11 @@ vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
 . 对于链中的每个结构，我们都提供一个初始化器：
 
 * 第一个结构体（vk::PhysicalDeviceFeatures2）留空。
-* 在第二种结构中，我们启用了shaderDrawParametersVulkan 1.1 中的功能。
-* 在第三种结构中，我们启用了dynamicRenderingVulkan 1.3 中的功能。
-* 在第四种结构中，我们extendedDynamicState通过扩展启用该功能。
+* 在第二种结构中，我们启用了sVulkan 1.1 中的``shaderDrawParameter``功能。
+* 在第三种结构中，我们启用了kan 1.3 中的``dynamicRenderingVul``功能。
+* 在第四种结构中，我们通过扩展启用``extendedDynamicState``功能。
 
-模板``vk::StructureChain``会自动建立这些结构``pNext``之间的指针连接起来，省去了我们手动将每个结构链接到下一个结构的麻烦。
+模板``vk::StructureChain``会自动通过``pNext``指针将这些结构连接起来，省去了我们手动将每个结构链接到下一个结构的麻烦。
 
 稍后创建逻辑设备时，我们将传递指向此链中第一个结构的指针，这将使 Vulkan 能够看到我们想要启用的所有功能。
 
@@ -99,7 +100,7 @@ std::vector<const char*> requiredDeviceExtension = {
     vk::KHRSwapchainExtensionName
 };
 ----
-该``VK_KHR_swapchain``扩展程序用于在窗口中显示渲染后的图像。其他扩展程序提供了一些附加功能，我们将在本教程的后续部分中使用。
+该``VK_KHR_swapchain``扩展用于在窗口中显示渲染后的图像。其他扩展提供了一些附加功能，我们将在本教程的后续部分中使用。
 
 == 创建逻辑设备
 所有必要信息准备就绪后，我们现在可以创建逻辑设备了。我们需要填充``vk::DeviceCreateInfo``结构并将我们的功能链连接到它上面：
@@ -108,9 +109,9 @@ std::vector<const char*> requiredDeviceExtension = {
 vk::DeviceCreateInfo deviceCreateInfo{
     .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
     .queueCreateInfoCount = 1,
-    .pQueueCreateInfo = &deviceQueueCreateInfo,
+    .pQueueCreateInfos = &deviceQueueCreateInfo,
     .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
-    .ppEnabledExtensionNames = requiredDevice.data()
+    .ppEnabledExtensionNames = requiredDeviceExtension.data()
 };
 ----
 回顾我们如何将功能链与设备创建流程连接起来：
@@ -125,7 +126,7 @@ vk::DeviceCreateInfo deviceCreateInfo{
 
 例如，设备特定扩展``VK_KHR_swapchain``允许你将来自该设备的渲染图像显示到窗口。系统中可能存在一些 Vulkan 设备不具备此功能，例如，因为它们仅支持计算操作。我们将在交换链章节中再次讨论此扩展。
 
-之前的 Vulkan 实现区分实例特定验证层和设备特定验证层，但现在``vk::DeviceCreateInfo``不再如此。这意味着最新的实现会忽略实例``enabledLayerCount``和设备特定验证``ppEnabledLayerNames``层。
+之前的 Vulkan 实现区分实例特定验证层和设备特定验证层，但现在``vk::DeviceCreateInfo``不再如此。这意味着最新的实现会忽略``vk::DeviceCreateInfo``的``enabledLayerCount``和``ppEnabledLayerNames``字段。
 
 填写完毕``vk::DeviceCreateInfo``后，我们现在可以继续创建逻辑设备了。
 [source,c++]

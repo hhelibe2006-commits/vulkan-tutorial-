@@ -92,8 +92,8 @@ void createInstance() {
 }
 ----
 
-== 使用扩展程序
-如上所述，扩展程序也需要通过名称启用。但这里需要区分实例扩展程序和设备扩展程序。
+== 使用扩展
+如上所述，扩展也需要通过名称启用。但这里需要区分实例扩展和设备扩展。
 
 我们首先创建一个 ``getRequiredInstanceExtensions``函数，该函数将返回所需实例扩展的列表。
 
@@ -159,7 +159,7 @@ void createInstance() {
 
 默认情况下，验证层会将调试信息打印到标准输出，但我们也可以通过在程序中提供显式回调来自行处理这些信息。这样，您还可以决定要查看哪些类型的消息，因为并非所有消息都是（致命）错误。如果您现在不想进行此操作，则可以跳到本章的最后一节。
 
-要在程序中设置回调来处理消息和相关细节，我们必须使用 ``VK_EXT_debug_utils``扩展程序设置一个带有回调的调试消息传递程序。
+要在程序中设置回调来处理消息和相关细节，我们必须使用 ``VK_EXT_debug_utils``扩展设置一个带有回调的调试消息传递程序。
 
 我们首先在``getRequiredInstanceExtensions``里根据验证层是否启用来扩展该功能：
 
@@ -177,7 +177,7 @@ std::vector<const char*> getRequiredInstanceExtensions() {
 }
 ----
 
-调试消息传递扩展程序是按需添加的。请注意，这里我们使用了 ``vk::EXTDebugUtilsExtensionName``宏，它等于字符串“VK_EXT_debug_utils”。使用此宏可以避免拼写错误。
+调试消息传递扩展是按需添加的。请注意，这里我们使用了 ``vk::EXTDebugUtilsExtensionName``宏，它等于字符串“VK_EXT_debug_utils”。使用此宏可以避免拼写错误。
 
 现在我们来看看调试回调函数是什么样的。添加一个新的静态成员函数``debugCalback``，并为其指定``PFN_vkDebugUtilsMessengerCallbackEXT`` 原型。``VKAPI_ATTR``和``VKAPI_CALL``修饰确保该函数具有 Vulkan 可以调用的正确签名。
 

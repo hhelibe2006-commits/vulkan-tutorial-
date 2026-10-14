@@ -5,7 +5,7 @@
 
 由于 Vulkan 是一个平台无关的 API，它本身并不直接与窗口系统交互。为了建立 Vulkan 与窗口系统之间的连接，并将结果呈现在屏幕上，我们需要使用 WSI（窗口系统集成）扩展。本章将讨论第一个 WSI 扩展``VK_KHR_surface``。它公开了一个 ``VkSurfaceKHR``对象，该对象代表一种抽象的表面类型，用于显示渲染后的图像。在我们的程序中，该表面将由我们已经使用 GLFW 打开的窗口提供支持。
 
-该``VK_KHR_surface``扩展是实例级扩展，我们实际上已经启用了它，因为它包含在返回的列表中 `glfwGetRequiredInstanceExtensions`。该列表还包含一些其他的 WSI 扩展，我们将在接下来的几章中使用它们。
+该``VK_KHR_surface``扩展是实例级扩展，我们实际上已经启用了它，因为它包含在``glfwGetRequiredInstanceExtensions``返回的列表中 。该列表还包含一些其他的 WSI 扩展，我们将在接下来的几章中使用它们。
 
 窗口表面需要在实例创建后立即创建，因为它实际上会影响物理设备的选择。我们之所以推迟这一步骤，是因为窗口表面是渲染目标和呈现这一更大主题的一部分，而对此的解释会使基本设置变得复杂。还应该注意的是，如果您只需要离屏渲染，那么窗口表面在 Vulkan 中是完全可选的组件。Vulkan 允许您无需创建不可见窗口（OpenGL 需要这样做）等技巧即可实现离屏渲染。Vulkan 还允许您从非呈现 GPU 或通过互联网进行远程渲染，或者在没有渲染或呈现目标的情况下运行 AI 计算加速。
 
@@ -17,9 +17,9 @@
 ----
 vk::raii::SurfaceKHR surface = nullptr;
 ----
-虽然该``VkSurfaceKHR``对象及其用法与平台无关，但它的创建却与平台有关，因为它依赖于窗口系统细节。例如，在 Windows 系统上，它需要 `HWND` 和`HMODULE` 句柄。因此，扩展程序中有一个特定于平台的附加项，在 Windows 系统上称为 `VK_KHR_win32_surface` ，并且也会自动包含在 `glfwGetRequiredInstanceExtensions` 列表中 。
+虽然该``VkSurfaceKHR``对象及其用法与平台无关，但它的创建却与平台有关，因为它依赖于窗口系统细节。例如，在 Windows 系统上，它需要 `HWND` 和`HMODULE` 句柄。因此，扩展中有一个特定于平台的附加项，在 Windows 系统上称为 `VK_KHR_win32_surface` ，并且也会自动包含在 `glfwGetRequiredInstanceExtensions` 列表中 。
 
-我将演示如何使用这个平台特定的扩展在 Windows 上创建 Surface，但本教程中我们不会用到它。既然已经使用了像 GLFW 这样的库，却还要使用平台特定的代码，那就毫无意义了。GLFW 实际上已经glfwCreateWindowSurface为我们处理了平台差异。不过，在真正依赖它之前，了解它在幕后是如何运作的还是很有必要的。
+我将演示如何使用这个平台特定的扩展在 Windows 上创建 Surface，但本教程中我们不会用到它。既然已经使用了像 GLFW 这样的库，却还要使用平台特定的代码，那就毫无意义了。GLFW 实际上已经通过``glfwCreateWindowSurface``为我们处理了平台差异。不过，在真正依赖它之前，了解它在幕后是如何运作的还是很有必要的。
 
 要访问原生平台功能，您需要更新顶部的包含文件：
 [source,c++]
@@ -35,7 +35,7 @@ vk::raii::SurfaceKHR surface = nullptr;
 ----
 vk::Win32SurfaceCreateInfoKHR createInfo{
     .hinstance = GetModuleHandle(nullptr),
-    .hwnd = glfwGetWin32Window(window);
+    .hwnd = glfwGetWin32Window(window)
 };
 ----
 该``glfwGetWin32Window``函数用于从 GLFW 窗口对象中获取原始数据``HWND``。``GetModuleHandle``调用该函数会返回当前进程的句柄``HINSTANCE``。
@@ -47,7 +47,7 @@ surface = instance.createWin32SurfaceKHR(createInfo);
 ----
 对于其他平台（例如 Linux），该过程类似， 使用 X11 时，``vk::raii::Instance::createXcbSurfaceKHR``会接受 XCB 连接和窗口作为创建详细信息；或者，如果您在 Wayland 下运行，``vk::raii::Instance::createWaylandSurfaceKHR``则会接受一个``wl_display``和另一个``wl_surface``。
 
-该``glfwCreateWindowSurface``函数正是执行此操作，但针对每个平台采用不同的实现方式。现在，我们将把它集成到我们的程序中。``initVulkan``的``setupDebugMessenger``后添加一个函数``createSurface``，该函数将在实例创建后立即调用。
+该``glfwCreateWindowSurface``函数正是执行此操作，但针对每个平台采用不同的实现方式。现在，我们将把它集成到我们的程序中。在``initVulkan``的``setupDebugMessenger``后添加一个函数``createSurface``，该函数将在实例创建后立即调用。
 [source,c++]
 ----
 void initVulkan() {
@@ -77,12 +77,12 @@ void createSurface() {
 
 参数包括``VkInstance``、GLFW 窗口指针、自定义分配器和指向``VkSurfaceKHR``变量的指针。它只是简单地将相关平台调用中的参数传递过去并返回``VkResult``。GLFW 没有提供专门用于销毁 Surface 的函数，但将其包装在我们的 SurfaceKHR raii 对象中，Vulkan RAII 就会为我们处理这个问题。
 
-== 查询呈现功能支持
-尽管 Vulkan 实现可能支持窗口系统集成，但这并不意味着系统中的每个设备都支持它。因此，我们需要在``createLogicalDevice``进行扩展，以确保设备能够将图像呈现到我们创建的表面上。由于图像呈现是队列特有的功能，因此问题实际上在于找到一个支持将图像呈现到我们创建的表面上的队列族。
+== 查询呈现支持
+尽管 Vulkan 实现可能支持窗口系统集成，但这并不意味着系统中的每个设备都支持它。因此，我们需要扩展``createLogicalDevice``，以确保设备能够将图像呈现到我们创建的表面上。由于图像呈现是队列特有的功能，因此问题实际上在于找到一个支持将图像呈现到我们创建的表面上的队列族。
 
 支持图形命令的队列族和支持呈现的队列族完全不重叠的可能性虽然存在，但非常小。为了简化起见，我们假设存在这样的队列族，如果不存在则直接退出。
 
-也就是说，接下来，我们将寻找一个既支持图形操作又能将内容呈现到窗口表面的队列族。用于检查当前是否支持的函数是 `vk::raii::PhysicalDevice::getSurfaceSupportKHR` ，它接受队列族索引和窗口表面作为参数：
+也就是说，接下来，我们将寻找一个既支持图形操作又能将内容呈现到窗口表面的队列族。用于检查呈现支持的函数是 `vk::raii::PhysicalDevice::getSurfaceSupportKHR` ，它接受队列族索引和窗口表面作为参数：
 [source,c++]
 ----
 uint32_t queueIndex = ~0;
@@ -135,12 +135,15 @@ void createLogicalDevice() {
         .pQueuePriorities = &queuePriority
     };
     vk::DeviceCreateInfo deviceCreateInfo{
-        .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>();
+        .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &deviceQueueCreateInfo,
-        enableExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
-        ppEnablEExtensionNames = requiredDeviceExtension.data()
+        enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
+        ppEnabledExtensionNames = requiredDeviceExtension.data()
     };
+
+    device = vk::raii::Device( physicalDevice, deviceCreateInfo );
+    queue  = vk::raii::Queue(device, queueIndex, 0);
 }
 ----
 xref:交换链.adoc[下一章]，我们将研究交换链以及它们如何使我们能够将图像呈现到表面上。

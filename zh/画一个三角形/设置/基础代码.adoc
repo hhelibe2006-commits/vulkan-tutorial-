@@ -6,12 +6,12 @@
 == Vulkan-hpp 和指定初始化器
 NOTE: 我们将使用 C++ 20 中引入的指定初始化器。默认情况下，Vulkan-hpp 使用不同的初始化方式，我们需要通过VULKAN_HPP_NO_STRUCT_CONSTRUCTORS定义显式启用它。
 
-这有助于更好地理解每个选项在我们所依赖的结构中扮演的角色。在本教程中，该定义已在CMake 构建设置中声明。
+这有助于更好地理解每个选项在我们所依赖的结构中扮演的角色。在本教程中，该定义已在 xref:../../开发环境.adoc#CMake[CMake 构建设置]中声明。
 
 如果您使用不同的构建设置或想要从头开始编写代码，则需要在代码文件包含 Vulkan-hpp 头文件之前手动定义此项，如下所示：
 [source,c++]
 ----
-#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS // 这个宏定义可以让vulkan库里的结构体不生成默认的构造函数
+#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS // 禁用 Vulkan-Hpp 为结构体生成的构造函数，使其成为聚合类型，从而支持 C++20 指定初始化器
 #include <vulkan/vulkan.hpp>
 // 或
 #include <vulkan/vulkan_raii.hpp>
@@ -19,7 +19,6 @@ NOTE: 我们将使用 C++ 20 中引入的指定初始化器。默认情况下，
 
 == 总体结构
 在上一章中，您创建了一个包含所有正确配置的 Vulkan 项目，并使用示例代码进行了测试。在本章中，我们将从头开始，使用以下代码：
-
 [source,c++]
 ----
 #include <vulkan/vulkan_raii.hpp>
@@ -63,10 +62,9 @@ int main(){
     return EXIT_SUCCESS;
 }
 ----
-
 包括``stdexcept``和``iostream``头文件是为了报告和传播错误。``cstdlib``该头文件提供了``EXIT_FAILURE``和``EXIT_SUCCESS``宏
 
-程序本身被封装在一个类中，我们将 Vulkan 对象作为私有类成员存储，并添加初始化每个对象的函数``initVulkan``，这些函数将从``initVulkan``函数中调用。一切准备就绪后，我们进入主循环开始渲染帧。我们将完善该``mainLoop`` 函数，使其包含一个循环，该循环会一直迭代直到窗口关闭。窗口关闭并``mainLoop``返回后，我们将通过``cleanup``函数确保释放使用的资源。
+程序本身被封装在一个类中，我们将 Vulkan 对象作为私有类成员存储，并添加初始化每个对象的函数，这些函数将从``initVulkan``函数中调用。一切准备就绪后，我们进入主循环开始渲染帧。我们将完善该``mainLoop`` 函数，使其包含一个循环，该循环会一直迭代直到窗口关闭。窗口关闭并``mainLoop``返回后，我们将通过``cleanup``函数确保释放使用的资源。
 
 如果在执行过程中发生任何类型的致命错误，我们将抛出一个 ``std::runtime_error``包含描述性消息的异常，该消息会传播回main函数并打印到命令提示符。为了处理各种标准异常类型，我们还会捕获更通用的异常 `std::exception`。我们很快会遇到的一个错误示例是发现某个必需的扩展不受支持。
 
@@ -119,20 +117,16 @@ vk::InstanceCreateInfo createInfo {
 
 instance = vk::raii::Instance(context, createInfo);
 ----
-
 == 整合GLFW
 如果你想用 Vulkan 做离屏渲染，那么即使不创建窗口，它也完全能正常工作；不过，能真正显示点东西出来还是要有趣得多！首先，我们来添加 GLFW：
 
 注意：我们会继续使用 GLFW_INCLUDE_VULKAN，因为 GLFW 的设计目的就是获取 Vulkan Surface，但它直接使用的是 C 的 surface。除了这个用途之外，我们可以使用 GLFW_INCLUDE_NONE，或者不做这个宏定义，其他所有功能都能正常工作。
-
 [source,c++]
 ----
 #define GLFW_INCLUDE_VULKAN
 #include<GLFW/glfw3.h>
 ----
-
 这样，GLFW 就会包含它自己的定义，并自动加载 Vulkan C 头文件。添加一个函数``initWindow``，并在``run``里的其他函数调用之前调用该函数。我们将使用该函数来初始化 GLFW 并创建一个窗口。
-
 [source,c++]
 ----
     void run() {
@@ -178,7 +172,7 @@ window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
 
 前三个参数分别指定窗口的宽度、高度和标题。第四个参数允许您指定窗口所在的显示器，最后一个参数仅与OpenGL有关。
 
-因为在后面我们会多次使用``长度和宽度``，所以我们在``HelloTriangleApplication``类定义上方添加了以下几行代码：
+因为在后面我们会多次使用``宽度和长度``，所以我们在``HelloTriangleApplication``类定义上方添加了以下几行代码：
 
 [source,c++]
 ----
@@ -201,7 +195,7 @@ void initWindow() {
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZEABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 }

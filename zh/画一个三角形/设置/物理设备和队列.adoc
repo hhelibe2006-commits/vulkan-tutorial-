@@ -28,7 +28,7 @@ void pickPhysicalDevice() {
 vk::raii::PhysicalDevice physicalDevice = nullptr;
 ----
 
-列出显卡信息与列出扩展程序信息非常相似，都是从查询编号开始。
+枚举显卡信息与枚举扩展信息非常相似，都是从直接枚举开始。
 
 [source,c++]
 ----
@@ -44,7 +44,7 @@ if (physicalDevices.empty()) {
 }
 ----
 
-现在我们需要对每张显卡进行评估，检查它们是否适合我们想要执行的操作，因为并非所有显卡都性能相同。我们将检查是否有任何物理设备满足我们添加到该函数中的要求。
+现在我们需要对每张显卡进行评估，检查它们是否适合我们想要执行的操作，因为并非所有显卡都一样。我们将检查是否有任何物理设备满足我们添加到该函数中的要求。
 
 [source,c++]
 ----
@@ -74,7 +74,7 @@ auto deviceFeatures = physicalDevice.getFeatures();
 
 [source,c++]
 ----
-bool isDeviceSuitable() {
+bool isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
     auto deviceProperties = physicalDevice.getProperties();
     auto deviceFeatures = physicalDevice.getFeatures();
 
@@ -88,7 +88,7 @@ bool isDeviceSuitable() {
 }
 ----
 
-除了简单地检查设备是否合适并选择第一个之外，你还可以给每个设备打分，然后选择分数最高的。这样，你可以通过给独立显卡更高的分数来优先选择它，但如果只有集成显卡可用，则可以退而求其次。这需要一种方法 ``std::multimap``来按分数对候选设备进行排序，因此需要在文件顶部添加一个新的头部。你可以按如下方式实现：
+除了简单地检查设备是否合适并选择第一个之外，你还可以给每个设备打分，然后选择分数最高的。这样，你可以通过给独立显卡更高的分数来优先选择它，但如果只有集成显卡可用，则可以退而求其次。这需要使用``std::multimap``来按分数对候选设备进行排序，因此需要在文件顶部添加一个新的头文件。你可以按如下方式实现：
 
 [source,c++]
 ----
@@ -107,11 +107,11 @@ void pickPhysicalDevice() {
         auto deviceFeatures = pd.getFeatures();
         uint32_t score = 0;
 
-        if (deviceProperties.deviceType == vk::PhysicallDeviceType::eDiscreteGpu) {
+        if (deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
             score += 1000;
         }
 
-        score += deviceProperties.llimits.maxImageDimension2D;
+        score += deviceProperties.limits.maxImageDimension2D;
 
         if (!deviceFeatures.geometryShader) {
             continue;
@@ -147,11 +147,11 @@ bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVer
 === 队列族检查
 前面已经简要提到过，Vulkan 中的几乎所有操作，从绘图到上传纹理，都需要将命令提交到队列中。队列类型多种多样，它们源自不同的 *队列族*，而每个队列族只允许处理一部分命令。例如，可能存在一个队列族只允许处理计算命令，或者一个队列族只允许处理与内存传输相关的命令。
 
-我们需要检查设备支持哪些队列族，以及其中哪个队列系列支持我们想要使用的命令。目前我们只查找支持图形命令的队列，因此代码可能如下所示：
+我们需要检查设备支持哪些队列族，以及其中哪个队列族支持我们想要使用的命令。目前我们只查找支持图形命令的队列，因此代码可能如下所示：
 
 [source,c++]
 ----
-auto queueFamilies = physicalDevice.getQueueFamillyProperties();
+auto queueFamilies = physicalDevice.getQueueFamilyProperties();
 bool supportsGraphics = std::ranges::any_of(queueFamilies,
     [](auto const &qfp) {
         return static_cast<bool>(
@@ -161,7 +161,7 @@ bool supportsGraphics = std::ranges::any_of(queueFamilies,
     });
 ----
 
-=== 进行扩展检查
+=== 必需扩展检查
 目前，我们只需要一个扩展：vk::KHRSwapchainExtensionName。但无论我们需要多少个扩展，我们都必须验证每个必需的设备扩展是否确实受物理设备支持：
 
 [source,c++]
@@ -170,10 +170,10 @@ std::vector<const char*> requiredDeviceExtension = {
     vk::KHRSwapchainExtensionName
 };
 
-auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensions();
+auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
     [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
-        return std::range::any_of(availableDeviceExtensions,
+        return std::ranges::any_of(availableDeviceExtensions,
             [&requiredDeviceExtension](auto const& availableDeviceExtension) {
                 return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
             });
@@ -191,11 +191,11 @@ auto features = physicalDevice.getFeatures2<
     vk::PhysicalDeviceVulkan13Features,
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
-&& features.get<vk::PhysicalDeviceVulkan11Features>().dynamicRendering
+&& features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
 && features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 ----
 
-== 完整功能
+== 完整函数
 我们将所有这些部分组合在一起，就得到了用于选择物理设备的函数：
 
 [source,c++]
@@ -205,7 +205,7 @@ std::vector<const char*> requiredDeviceExtension = {
 };
 
 bool isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
-    bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion > vk::ApiVersion13;
+    bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
 
     auto queueFamilies = physicalDevice.getQueueFamilyProperties();
     bool supportsGraphics = std::ranges::any_of(queueFamilies,
@@ -213,15 +213,15 @@ bool isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
             return static_cast<bool>(qfp.queueFlags & vk::QueueFlagBits::eGraphics);
         });
 
-    auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensions();
+    auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
     bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension,
         [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
-            return std::ranges::none_of(availableDeviceExtensions,
+            return std::ranges::any_of(availableDeviceExtensions,
                 [&requiredDeviceExtension](auto const& availableDeviceExtension) {
                     return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0;
                 });
         });
-    auto features = physicalDevice.getFeatuFeatures2<
+    auto features = physicalDevice.getFeatures2<
         vk::PhysicalDeviceFeatures2,
         vk::PhysicalDeviceVulkan11Features,
         vk::PhysicalDeviceVulkan13Features,
