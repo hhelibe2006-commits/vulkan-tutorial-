@@ -243,10 +243,67 @@ void createGraphicsPipeline() {
 
 }
 ----
-该函数将以字节码为参数的缓冲区为输入，并 ``vk::raii::ShaderModule``从中创建一个对象。
+该函数将以字节码为参数的缓冲区为输入，并 从中创建一个``vk::raii::ShaderModule``对象。
 
+创建着色器模块非常简单，我们只需要指定指向包含字节码的缓冲区的指针及其长度。这些信息存储在一个vk::ShaderModuleCreateInfo结构体中。需要注意的是，字节码的大小以字节为单位指定，但字节码指针本身是一个``uint32_t``指针，而不是一个``char``指针。因此，我们需要进行类型转换``reinterpret_cast``， 如下所示。执行此类类型转换时，还需要确保数据满足对齐要求``uint32_t``。幸运的是，数据存储在一个默认分配器``std::vector``中，已经确保数据满足最坏情况下的对齐要求的缓冲区中。
+[source,c++]
+----
+vk::ShaderModuleCreateInfo createInfo{
+    .codeSize = code.size() * sizeof(char),
+    .pCode = reinterpret_cast<const uint32_t*>(code.data())
+};
+----
+然后可以通过vk::raii::ShaderModule构造函数创建它：
+[source,c++]
+----
+vk::raii::ShaderModule shaderModule{device, createInfo};
+----
+参数与之前的对象创建函数相同：逻辑设备和对创建信息结构的引用。包含代码的缓冲区可以在创建着色器模块后立即释放。请记住返回已创建的着色器模块：
+[source,c++]
+----
+return shaderModule;
+----
+着色器模块只是对我们之前从文件中加载的着色器字节码及其定义的函数的简单封装。SPIR-V 字节码编译并链接到 GPU 执行的机器码，只有在图形管线创建完成后才会进行。这意味着一旦管线创建完成，我们就可以销毁着色器模块，因此我们将其设为函数 `createGraphicsPipeline` 中的局部变量，而不是类成员。
+[source,c++]
+----
+void createGraphicsPipeline() {
+    vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/slang.spv"));
+}
+----
+== 创建管线着色器
+要真正使用着色器，我们需要在实际的管线创建过程中，通过结构体 `vk::PipelineShaderStageCreateInfo` 将它们分配给特定的管线阶段。
 
+我们将首先在函数 `createGraphicsPipeline` 中填充顶点着色器的结构 。
+[source,c++]
+----
+vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
+    .stage = vk::ShaderStageFlagBits::eVertex,
+    .module = shaderModule,
+    .pName = "vertMain"
+};
+----
+第一个参数是我们当前所在的阶段。接下来的两个参数分别指定包含代码的着色器模块和要调用的函数，即入口点。这意味着可以将多个片段着色器合并到一个着色器模块中，并使用不同的入口点来区分它们的行为。
 
+还有一个（可选的）成员 `pSpecializationInfo` ，我们这里不会用到它，但值得一提。它允许你为着色器常量指定值。你可以使用一个着色器模块，在创建渲染管线时，通过为其中使用的常量指定不同的值来配置其行为。这比在渲染时使用变量配置着色器更高效，因为编译器可以进行一些优化，例如消除 `if` 这类依赖于这些值的语句。如果你没有任何这样的常量，那么你可以将该成员设置为 `nullptr` ，我们的结构体初始化会自动执行此操作。
+
+修改结构以适应片段着色器很容易：
+[source,c++]
+----
+vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
+    .stage = vk::ShaderStageFlagBits::eFragment,
+    .module = shaderModule,
+    .pName = "fragMain"
+};
+----
+最后定义一个包含这两个结构的数组，我们稍后将在实际的管道创建步骤中使用该数组来引用它们。
+[source,c++]
+----
+vk::PipelineShaderStageCreateInfo shaderStages[] = {
+    vertShaderStageInfo,
+    fragShaderStageInfo
+};
+----
+以上就是流水线可编程阶段的全部描述。xref:固定功能.adoc[下一章]，我们将探讨固定功能阶段。
 
 
 

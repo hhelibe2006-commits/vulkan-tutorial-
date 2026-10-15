@@ -1,0 +1,64 @@
+= 结论
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+现在我们可以将前几章中提到的所有结构和对象组合起来，创建图形管线！以下是目前我们拥有的对象类型，简单回顾一下：
+
+* 着色器阶段：定义图形管线可编程阶段功能的着色器模块。
+* 固定功能状态：定义流程中固定功能阶段的所有结构，例如输入组装、光栅化器、视口和颜色混合。
+* 管线布局：着色器引用的可在绘制时更新的 uniform 和 push 值
+* 动态渲染：渲染过程中将使用的附件格式
+
+所有这些结合起来就完全定义了图形管线的功能，所以我们现在可以开始填充函数 `createGraphicsPipeline` 末尾的结构 `vk::GraphicsPipelineCreateInfo` 了。
+[source,c++]
+----
+vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {{
+    .stageCount = 2,
+    .pStages = shaderStages
+----
+我们首先引用 `vk::PipelineShaderStageCreateInfo` 结构体数组。
+[source,c++]
+----
+     .pVertexInputState = &vertexInputInfo,
+     .pInputAssemblyState = &inputAssembly,
+     .pViewportState = &viewportState,
+     .pRasterizationState = &rasterizer,
+     .pMultisampleState = &multisampling,
+     .pColorBlendState = &colorBlending,
+     .pDynamicState = &dynamicState,
+----
+然后我们引用描述固定功能阶段的所有结构。
+[source,c++]
+----
+     .layout = pipelineLayout,
+----
+接下来是管道布局，它是一个 Vulkan 句柄，而不是一个结构体指针。
+[source,c++]
+----
+     .renderPass          = nullptr
+},
+    {.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChainSurfaceFormat.format
+    }
+};
+----
+请注意，我们使用的是动态渲染而不是传统的渲染通道，因此我们将参数 `renderPass` 设置为 `nullptr` 并在其中包含一个结构 `vk::PipelineRenderingCreateInfo`。该结构指定了渲染期间将使用的附件格式 `vk::StructureChain`。
+
+实际上，`vk::GraphicsPipelineCreateInfo` 中还有两个成员：`basePipelineHandle` 和 `basePipelineIndex`。Vulkan 允许您通过继承现有管道来创建新的图形管道。管道派生的理念是，当新管道与现有管道的功能有很多共同之处时，设置新管道的成本会更低，而且从同一父管道切换管道的速度也会更快。您可以使用 `basePipelineHandle` 指定现有管道的句柄，或者使用 `basePipelineIndex` 引用即将创建的另一个管道（通过索引） 。这些值仅在 `vk::PipelineCreateFlagBits::eDerivativeflags` 字段中同时指定了 `vk::GraphicsPipelineCreateInfo` 标志时才会使用。目前只有一个管道，因此我们将忽略这些成员。
+
+现在准备进行最后一步，创建一个类成员来保存该 `vk::raii::Pipeline` 对象：
+[source,c++]
+----
+vk::raii::Pipeline graphicsPipeline = nullptr;
+----
+最后，创建图形管线：
+[source,c++]
+----
+graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+----
+
+第二个参数（我们已为其传递了实参 `nullptr` ）引用了一个可选 `vk::raii::PipelineCache` 对象。管道缓存 `vk::raii::Pipeline` 可用于存储和重用与管道创建相关的数据，以便在多次构造函数调用之间，甚至在程序执行过程中（如果缓存存储在文件中）都能重复使用。这使得后续管道创建速度显著提升。我们将在管道缓存章节中详细介绍这一点。
+
+图形管线是所有常见绘图操作所必需的。
+
+现在运行你的程序，确认所有这些努力都已成功创建了流程！我们已经非常接近看到屏幕上出现一些内容了。在xref:../渲染/动态渲染.adoc[接下来的几章]中， 我们将为交换链图像设置动态渲染，并准备绘制命令。

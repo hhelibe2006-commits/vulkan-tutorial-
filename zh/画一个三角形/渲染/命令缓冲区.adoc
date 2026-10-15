@@ -1,0 +1,88 @@
+= 命令缓冲区
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+在 Vulkan 中，诸如绘图操作和内存传输之类的命令并非直接通过函数调用执行。您需要将所有要执行的操作记录到命令缓冲区对象中。这样做的好处是，当我们准备好告诉 Vulkan 我们想要做什么时，所有命令都会一起提交。由于所有命令都同时可用，Vulkan 可以更高效地处理它们。此外，如果需要，这还允许在多个线程中记录命令。
+
+== 命令池
+我们必须先创建命令池，才能创建命令缓冲区。命令池管理用于存储缓冲区的内存，命令缓冲区从中分配。添加一个新的类成员 `vk::raii::CommandPool` 来存储：
+[source,c++]
+----
+vk::raii::CommandPool commandPool = nullptr;
+----
+然后创建一个新函数 `createCommandPool`，并在 `initVulkan` 图形管线创建完成后调用它。
+[source,c++]
+----
+void initVulkan() {
+    createInstance();
+    setupDebugMessenger();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createSwapChain();
+    createImageViews();
+    createGraphicsPipeline();
+    createCommandPool();
+}
+...
+void createCommandPool() {
+
+}
+----
+命令池的创建只需要两个参数：
+[source,c++]
+----
+vk::CommandPoolCreateInfo poolInfo{
+    .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+    .queueFamilyIndex = queueIndex
+};
+----
+命令池有两种可能的标志：
+
+* `vk::CommandPoolCreateFlagBits::eTransient` 提示：命令缓冲区会频繁地用新命令重新记录（可能会改变内存分配行为）。
+* `vk::CommandPoolCreateFlagBits::eResetCommandBuffer` 允许单独重新记录命令缓冲区，如果没有此标志，则所有缓冲区必须一起重置。
+
+我们将每帧记录一个命令缓冲区，因此我们需要能够重置并重新记录它。所以，我们需要 `vk::CommandPoolCreateFlagBits::eResetCommandBuffer` 为命令池设置标志位。
+
+NOTE: 在前面的章节中，图形队列族索引（queueIndex）是一个局部变量。从本章开始，我们将在多个地方需要用到这个索引，因此它已成为应用程序类的成员。
+
+命令缓冲区通过提交到设备队列（例如我们之前提到的图形队列和显示队列）来执行。每个命令池只能分配提交到特定类型队列的命令缓冲区。我们将记录用于绘制的命令，因此选择了图形队列系列。
+[source,c++]
+----
+commandPool = vk::raii::CommandPool(device, poolInfo);
+----
+使用构造函数 `vk::raii::CommandPool` 完成命令池的创建。它没有任何特殊参数。程序将使用这些命令在屏幕上绘制图形。
+
+== 命令缓冲区分配
+现在我们可以开始分配命令缓冲区了。
+
+创建一个 `vk::raii::CommandBuffer` 对象作为类成员。命令缓冲区会在其命令池销毁时自动释放，因此我们不需要显式清理。
+[source,c++]
+----
+vk::raii::CommandBuffer commandBuffer = nullptr;
+----
+现在我们将开始编写一个 `createCommandBuffer` 函数，用于从命令池中分配单个命令缓冲区。
+[source,c++]
+----
+void initVulkan() {
+    createInstance();
+    setupDebugMessenger();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createSwapChain();
+    createImageViews();
+    createGraphicsPipeline();
+    createCommandPool();
+    createCommandBuffer();
+}
+...
+void createCommandBuffer() {
+
+}
+----
+
+
+
+
