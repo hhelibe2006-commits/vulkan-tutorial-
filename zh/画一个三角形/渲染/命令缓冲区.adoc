@@ -82,7 +82,189 @@ void createCommandBuffer() {
 
 }
 ----
+命令缓冲区通过构造函数 `vk::raii::CommandBuffers` 进行分配，该构造函数接受一个 `vk::CommandBufferAllocateInfo` 结构体作为参数，该结构体指定命令池和要分配的缓冲区数量：
+[source,c++]
+----
+vk::CommandBufferAllocateInfo allocInfo{
+    .commandPool = commandPool,
+    .level = vk::CommandBufferLevel::ePrimary,
+    .commandBufferCount = 1
+};
 
+commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front())
+----
+该 `level` 参数指定分配的命令缓冲区是主命令缓冲区还是辅助命令缓冲区。
 
+* `vk::CommandBufferLevel::ePrimary`：可以提交到队列中执行，但不能从其他命令缓冲区调用。
 
+* `vk::CommandBufferLevel::eSecondary`：不能直接提交，但可以从主命令缓冲区调用。
 
+这里我们不会使用辅助命令缓冲区功能，但你可以想象，重用主命令缓冲区中的常用操作是有帮助的。
+
+由于我们只分配一个命令缓冲区，因此 `commandBufferCount` 参数也为1。 `vk::raii::CommandBuffers` 构造函数会生成一个数组 `std::vector<vk::raii::CommandBuffer>` ，但我们这里只需要一个，所以我们将其从该向量中移到一个单独的变量中。
+
+== 命令缓存区记录
+现在我们将开始编写将要执行的命令写入命令缓冲区的函数 `recordCommandBuffer`。`vk::raii::CommandBuffer` 使用的命令将作为参数传入，同时传入的还有要写入的当前交换链镜像的索引。
+
+我们总是通过给 `vk::raii::CommandBuffer::begin` 传入一个小型结构体 `vk::CommandBufferBeginInfo` 作为参数来开始记录命令缓冲区，该结构体指定有关此特定命令缓冲区使用的一些详细信息。
+[source,c++]
+----
+commandBuffer.begin({});
+----
+`vk::CommandBufferBeginInfo` 的flags成员指定了我们将如何使用命令缓冲区。以下是可用值：
+
+* `vk::CommandBufferUsageFlagBits::eOneTimeSubmit` 命令缓冲区会在执行一次后立即重新记录。
+`vk::CommandBufferUsageFlagBits::eRenderPassContinue` 这是一个辅助命令缓冲区，它将完全在一个渲染过程中完成。
+`vk::CommandBufferUsageFlagBits::eSimultaneousUse` 即使命令缓冲区已经处于待执行状态，也可以重新提交该命令缓冲区。
+
+这些值目前都不适用于我们。
+
+`vk::CommandBufferBeginInfo` 的该 `pInheritanceInfo` 成员仅与辅助命令缓冲区相关。它指定要从调用的主命令缓冲区继承哪个状态。
+
+如果命令缓冲区已被记录过一次，则调用该函数 `vk::raii::CommandBuffer::begin` 会隐式地重置它。之后无法向缓冲区追加命令。
+
+== 图像布局过渡
+在开始渲染图像之前，我们需要将其布局转换为适合渲染的布局。在 Vulkan 中，图像可以采用不同的布局，这些布局针对不同的操作进行了优化。例如，图像可以采用最适合屏幕显示的布局，也可以采用最适合用作颜色附件的布局。
+
+我们将使用管道屏障将图像布局从一种 `vk::ImageLayout::eUndefined` 状态过渡到另一种状态 `vk::ImageLayout::eColorAttachmentOptimal`：
+[source,c++]
+----
+void transition_image_layout(
+    uint32_t imageIndex,
+    vk::ImageLayout old_layout,
+    vk::ImageLayout new_layout,
+    vk::AccessFlags2 src_access_mask,
+    vk::AccessFlags2 dst_access_mask,
+    vk::PipelineStageFlags2 src_stage_mask,
+    vk::PipelineStageFlags2 dst_stage_mask
+) {
+    vk::ImageMemoryBarrier2 barrier = {
+        .srcStageMask = src_stage_mask,
+        .srcAccessMask = src_access_mask,
+        .dstStageMask = dst_stage_mask,
+        .dstAccessMask = dst_access_mask,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUEFAMILY_IGNORED,
+        .image = swapChainImages[imageIndex],
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .baseMipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+    vk::DependencyInfo dependencyInfo = {
+        .dependencyFlags = {},
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = &barrier
+    };
+    commandBuffer.pipelineBarrier2(dependencyInfo);
+}
+----
+该函数将用于在渲染前后过渡图像布局。
+
+== 开始动态渲染
+使用动态渲染，我们不需要创建渲染通道或帧缓冲区。相反，我们在开始渲染时直接指定附件：
+[source,c++]
+----
+transition_image_layout(
+    imageIndex,
+    vk::ImageLayout::eUndefined,
+    vk::ImageLayout::eColorAttachmentOptimal,
+    {},
+    vk::AccessFlagBits2::eColorAttachmentWrite,
+    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    vk::PipelineStageFlagBits2::eColorAttachmentOutput
+);
+----
+首先，我们将图像布局转换为 `vk::ImageLayout::eColorAttachmentOptimal`。然后，我们设置颜色附件：
+[source,c++]
+----
+vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+vk::RenderingAttachmentInfo attachmentInfo = {
+    .imageView = swapChainImageViews[imageIndex],
+    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .loadOp = vk::AttachmentLoadOp::eClear,
+    .storeOp = vk::AttachmentStoreOp::eStore,
+    .clearValue = clearColor
+};
+----
+该 `imageView` 参数指定要渲染到的图像视图。该 `imageLayout` 参数指定图像在渲染期间的布局。该 `loadOp` 参数指定渲染前对图像的处理方式，该 `storeOp` 参数指定渲染后对图像的处理方式。我们使用 `vk::AttachmentLoadOp::eClear` 参数在渲染前将图像清除为黑色，并将 `vk::AttachmentStoreOp::eStore` 渲染后的图像存储起来以供后续使用。
+
+接下来，我们设置渲染信息：
+[source,c++]
+----
+vk::RenderingInfo renderingInfo = {
+    .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &attachmentInfo
+};
+----
+该 `renderArea` 参数定义渲染区域的大小，类似于渲染通道中的渲染区域。该 `layerCount` 参数指定要渲染到的图层数，对于非分层图像，该值为 1。`colorAttachmentCount` 和 `pColorAttachments` 参数指定要渲染到的颜色附件。
+
+现在我们可以开始渲染了：
+[source,c++]
+----
+commandBuffer.beginRendering(renderingInfo);
+----
+所有记录命令的函数都会返回 `void`，因此在记录完成之前不会进行错误处理。
+
+`beginRendering` 命令的参数是我们刚刚设置的渲染信息，它指定要渲染到的附件和渲染区域。
+
+== 基本绘图命令
+现在我们可以绑定图形管线了：
+[source,c++]
+----
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+----
+第一个参数指定管线对象是图形管线还是计算管线。现在我们已经告诉 Vulkan 图形管线中要执行哪些操作，以及片段着色器中要使用哪个附件。
+
+如 xref:../图形管线基础知识/固定功能.adoc[固定功能章节]所述，我们已将此管线的视口和裁剪状态指定为动态的。因此，我们需要在发出绘制命令之前在命令缓冲区中设置它们：
+[source,c++]
+----
+commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f,
+        static_cast<float>(swapChainExtent.width),
+        static_cast<float>(swapChainExtent.higth),
+        0.0f, 1.0f));
+commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+----
+现在我们可以发出绘制三角形的命令了：
+[source,c++]
+----
+commandBuffer.draw(3, 1, 0, 0);
+----
+实际的vk::raii::CommandBuffer::draw函数实现起来有点平淡无奇，但由于我们事先指定了所有信息，所以非常简单。它有以下参数：
+
+* `vertexCount`：即使我们没有顶点缓冲区，但从技术上讲，我们仍然有 3 个顶点需要绘制。
+* `instanceCount`：用于实例化渲染，如果您不使用实例化渲染，请使用 `1`。
+* `firstVertex`：用作顶点缓冲区中的偏移量，定义最小值 `SV_VertexId`。
+* `firstInstance`：用作实例化渲染的偏移量，定义最小值 `SV_InstanceID`。
+
+== 即将结束
+渲染工作现在可以结束了：
+[source,c++]
+----
+commandBuffer.endRendering();
+----
+渲染完成后，我们需要将图像布局转换回初始状态 `vk::ImageLayout::ePresentSrcKHR`，以便将其呈现在屏幕上：
+[source,c++]
+----
+transition_image_layout(
+    imageIndex,
+    vk::ImageLayout::eColorAttachmentOptimal,
+    vk::ImageLayout::ePresentSrcKHR,
+    vk::AccessFlagBits2::eColorAttachmentWrite,
+    {},
+    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    vk::PipelineStageFlagBits2::eBottomOfPipe
+);
+----
+命令缓冲区录制完毕：
+[source,c++]
+----
+commandBuffer.end();
+----
+xref:渲染与呈现.adoc[下一章]我们将编写主循环的代码，该循环将从交换链中获取图像，记录并执行命令缓冲区，然后将完成的图像返回到交换链。
