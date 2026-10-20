@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 
 #include <iostream>
-#include <stdexcept>
+#include<stdexcept>
 #include <cstdlib>
 
 constexpr uint32_t WIDTH = 800;
@@ -38,12 +38,24 @@ private:
         createInstance();
     }
 
+    void mainLoop() {
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+        }
+    }
+
+    void cleanup() {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
     void createInstance() {
         constexpr vk::ApplicationInfo appInfo {
             .pApplicationName = "Vulkan",
             .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
             .pEngineName = "No Engine",
-            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+            .engineVersion = VK_MAKE_VERSION(1, 0 ,0),
+            .apiVersion = vk::ApiVersion14
         };
 
         uint32_t glfwExtensionCount = 0;
@@ -55,9 +67,9 @@ private:
                 [glfwExtension = glfwExtensions[i]](auto const& extensionProperty) {
                     return strcmp(extensionProperty.extensionName, glfwExtension) == 0;
                 })) {
-                throw std::runtime_error("所需GLFW扩展不支持" +
+                throw std::runtime_error("所需GLFW扩展不支持：" +
                     std::string(glfwExtensions[i]));
-            }
+                }
         }
 
         vk::InstanceCreateInfo createInfo {
@@ -68,18 +80,6 @@ private:
 
         instance = vk::raii::Instance(context, createInfo);
     }
-
-    void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-        }
-    }
-
-    void cleanup() {
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
-    }
 };
 
 int main() {
@@ -87,7 +87,7 @@ int main() {
         HelloTriangleApplication app;
         app.run();
     }catch (const std::exception& e) {
-        std::cerr << e.what() <<std::endl;
+        std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 

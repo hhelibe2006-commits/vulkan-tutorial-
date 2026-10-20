@@ -1,0 +1,43 @@
+= 创建顶点缓冲区
+:toc:
+:toclevels: 3
+:toc-title: 目录
+
+== 介绍
+Vulkan 中的缓冲区是用于存储任意数据的内存区域，这些数据可以被显卡读取。它们可以用来存储顶点数据（我们将在本章中介绍），还可以用于许多其他用途，我们将在后续章节中探讨。与我们之前讨论的 Vulkan 对象不同，缓冲区不会自动分配内存。前几章的内容表明，Vulkan API 几乎将所有控制权都交给了程序员，内存管理就是其中之一。
+
+== 创建缓冲区
+创建一个新函数 `createVertexBuffer`，并在 `initVulkan` 的 `createCommandBuffers` 前面调用它。
+[source,c++]
+----
+void initVulkan(){
+    createInstance();
+    setupDebugMessenger();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createSwapChain();
+    createImageViews();
+    createGraphicsPipeline();
+    createCommandPool();
+    createVertexBuffer();
+    createCommandBuffers();
+    createSyncObjects();
+}
+...
+void createVertexBuffer(){
+
+}
+----
+创建缓冲区需要我们填充 `vk::BufferCreateInfo` 结构。
+[source,c++]
+----
+
+----
+
+
+
+
+
+
+

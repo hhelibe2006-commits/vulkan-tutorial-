@@ -1,11 +1,10 @@
-
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 #include <iostream>
-#include <stdexcept>
+#include<stdexcept>
 #include <cstdlib>
 
 constexpr uint32_t WIDTH = 800;
@@ -52,10 +51,87 @@ private:
         setupDebugMessenger();
     }
 
-    void setupDebugMessenger() {
-        if constexpr(!enableValidationLayers) {
-            return;
+    void mainLoop() {
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
         }
+    }
+
+    void cleanup() {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
+    void createInstance() {
+        constexpr vk::ApplicationInfo appInfo {
+            .pApplicationName = "Vulkan",
+            .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+            .pEngineName = "No Engine",
+            .engineVersion = VK_MAKE_VERSION(1, 0 ,0),
+            .apiVersion = vk::ApiVersion14
+        };
+
+        std::vector<char const*> requiredLayers;
+        if constexpr (enableValidationLayers) {
+            requiredLayers.assign(validationLayers.begin(), validationLayers.end());
+        }
+
+        auto layerProperties = context.enumerateInstanceLayerProperties();
+
+        auto requiredExtensions = getRequiredInstanceExtensions();
+
+        auto extensionProperties = context.enumerateInstanceExtensionProperties();
+        auto unsupportedPropertyIt = std::ranges::find_if(requiredExtensions,
+            [&extensionProperties](auto const& requiredExtension) {
+                return std::ranges::none_of(extensionProperties,
+                    [&requiredExtension](auto const& extensionProperty) {
+                        return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
+                    });
+            });
+        if (unsupportedPropertyIt != requiredExtensions.end()) {
+            throw std::runtime_error("不受支持的扩展：" +
+                std::string(*unsupportedPropertyIt));
+        }
+
+        vk::InstanceCreateInfo createInfo {
+            .pApplicationInfo = &appInfo,
+            .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
+            .ppEnabledLayerNames = requiredLayers.data(),
+            .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
+            .ppEnabledExtensionNames = requiredExtensions.data()
+        };
+
+        instance = vk::raii::Instance(context, createInfo);
+    }
+
+    std::vector<const char*> getRequiredInstanceExtensions() {
+        uint32_t glfwExtensionCount = 0;
+        auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+        std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+        if constexpr (enableValidationLayers) {
+            extensions.push_back(vk::EXTDebugUtilsExtensionName);
+        }
+        return extensions;
+    }
+
+    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+        vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+        vk::DebugUtilsMessageTypeFlagsEXT type,
+        const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+        void* pUserData
+        ) {
+        if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+            || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError){
+            std::cerr << "验证层：类型" << to_string(type) << " 消息：" << pCallbackData->pMessage << std::endl;
+            }
+
+        return vk::False;
+    }
+
+    void setupDebugMessenger() {
+        if constexpr (enableValidationLayers)
+            return;
 
         vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(
             vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
@@ -69,99 +145,9 @@ private:
         vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
             .messageSeverity = severityFlags,
             .messageType = messageTypeFlags,
-            .pfnUserCallback = &debugCalback
+            .pfnUserCallback = &debugCallback
         };
         debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
-    }
-
-    void createInstance() {
-        constexpr vk::ApplicationInfo appInfo {
-            .pApplicationName = "Vulkan",
-            .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-            .pEngineName = "No Engine",
-            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        };
-
-        std::vector<char const*> requiredLayers;
-        if constexpr (!enableValidationLayers) {
-            requiredLayers.assign(validationLayers.begin(), validationLayers.end());
-        }
-
-        auto layerProperties = context.enumerateInstanceLayerProperties();
-        auto unsupportedLayerIt = std::ranges::find_if(requiredLayers,
-            [&layerProperties](auto const& requiredLayer) {
-                return std::ranges::none_of(layerProperties,
-                    [&requiredLayer](auto const& layerProperty) {
-                        return strcmp(layerProperty.layerName, requiredLayer) == 0;
-                    });
-            });
-        if (unsupportedLayerIt != requiredLayers.end()) {
-            throw std::runtime_error("所需层不受支持：" +
-                std::string(*unsupportedLayerIt));
-        }
-
-        auto requiredExtensions = getRequiredInstanceExtensions();
-
-        auto extensionProperties = context.enumerateInstanceExtensionProperties();
-        auto unsupportedPropertyIt =
-            std::ranges::find_if(requiredExtensions,
-                [&extensionProperties](auto const& requiredExtension) {
-                    return std::ranges::none_of(extensionProperties,
-                        [&requiredExtension](auto const& extensionProperty) {
-                            return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
-                        });
-                });
-        if (unsupportedLayerIt != requiredExtensions.end()) {
-            throw std::runtime_error("不受支持的扩展" +
-                std::string(*unsupportedPropertyIt));
-        }
-
-        vk::InstanceCreateInfo createInfo {
-            .pApplicationInfo = &appInfo,
-            .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
-            .ppEnabledLayerNames = requiredLayers.data(),
-            .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
-            .ppEnabledExtensionNames = requiredExtensions.data(),
-        };
-
-        instance = vk::raii::Instance(context, createInfo);
-    }
-
-    std::vector<const char*> getRequiredInstanceExtensions() {
-        uint32_t glfwExtensionCount = 0;
-        auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-        std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-
-        if constexpr(!enableValidationLayers) {
-            extensions.push_back(vk::EXTDebugUtilsExtensionName);
-        }
-        return extensions;
-    }
-
-    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCalback(
-        vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-        vk::DebugUtilsMessageTypeFlagsEXT type,
-        const vk::DebugUtilsMessengerCalbackDataEXT* pCalbackData,
-        void* pUserData
-    ) {
-        if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
-            || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-            std::cerr << "验证层：类型" << to_string(type) << "消息：" << pCalbackData->pMessage <<std::endl;
-        }
-
-        return vk::False;
-    }
-    void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-        }
-    }
-
-    void cleanup() {
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
     }
 };
 
@@ -170,7 +156,7 @@ int main() {
         HelloTriangleApplication app;
         app.run();
     }catch (const std::exception& e) {
-        std::cerr << e.what() <<std::endl;
+        std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 

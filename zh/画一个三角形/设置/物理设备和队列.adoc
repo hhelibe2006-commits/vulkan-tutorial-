@@ -227,7 +227,7 @@ bool isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
         vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
-    && features.get<vk::PhysicalDeviceVulkan11Features>().dynamicRendering
+    && features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
     && features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
     return supportsVulkan1_3
@@ -253,8 +253,4 @@ void pickPhysicalDevice() {
 
 太好了，现在我们只需要这些信息就能找到合适的物理设备了！下一步是创建一个 xref:逻辑设备与队列.adoc[逻辑设备]来与之连接。
 
-
-
-
-
-
+xref:../../../code/画一个三角形/设置/物理设备和队列.cpp[C++]

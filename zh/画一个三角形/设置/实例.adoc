@@ -13,7 +13,7 @@
 void initVulkan() {
     createInstance();
 }
-
+...
 void createInstance() {
 
 }
@@ -156,6 +156,7 @@ constexpr vk::ApplicationInfo appInfo {
     .engineVersion = VK_MAKE_VERSION(1, 0, 0),
     .apiVersion = vk::ApiVersion14
 }
+
 vk::InstanceCreateInfo createInfo {
     .flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
     .pApplicationInfo = &appInfo,
@@ -163,6 +164,7 @@ vk::InstanceCreateInfo createInfo {
     vk::KHRPortabilityEnumerationExtensionName
     }
 };
+
 instance = vk::raii::Instance(context, createInfo);
 ----
 

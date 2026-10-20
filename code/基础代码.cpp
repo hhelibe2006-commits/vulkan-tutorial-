@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 
 #include <iostream>
-#include <stdexcept>
+#include<stdexcept>
 #include <cstdlib>
 
 constexpr uint32_t WIDTH = 800;
@@ -43,7 +43,6 @@ private:
 
     void cleanup() {
         glfwDestroyWindow(window);
-
         glfwTerminate();
     }
 };
@@ -53,7 +52,7 @@ int main() {
         HelloTriangleApplication app;
         app.run();
     }catch (const std::exception& e) {
-        std::cerr << e.what() <<std::endl;
+        std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 

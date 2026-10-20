@@ -151,3 +151,5 @@ vk::raii::Queue graphicsQueue = nullptr;
 graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
 ----
 有了逻辑设备和队列句柄，我们现在就可以真正开始使用显卡来执行任务了！在 xref:../呈现/窗口表面.adoc[接下来的几章]中，我们将设置资源，以便将结果呈现给窗口系统。
+
+xref:../../../code/画一个三角形/设置/逻辑设备与队列.cpp[C++]

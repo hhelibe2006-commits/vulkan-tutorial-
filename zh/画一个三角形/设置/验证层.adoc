@@ -55,7 +55,7 @@ const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
-#ifdef NDEBUG
+#if NDEBUG
 constexpr bool enableValidationLayers = false;
 #else
 constexpr bool enableValidationLayers = true;
@@ -70,9 +70,8 @@ void createInstance() {
     ...
 
     std::vector<char const*> requiredLayers;
-    if constexpr(!enableValidationLayers) {
-        requiredLayers.assign(validationLayers.begin(),
-            validationLayers.end());
+    if constexpr (!enableValidationLayers) {
+        requiredLayers.assign(validationLayers.begin(),validationLayers.end());
     }
 
     auto layerProperties = context.enumerateInstanceLayerProperties();
@@ -170,7 +169,7 @@ std::vector<const char*> getRequiredInstanceExtensions() {
     auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    if constexpr(!enableValidationLayers) {
+    if constexpr (enableValidationLayers) {
         extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
     return extensions;
