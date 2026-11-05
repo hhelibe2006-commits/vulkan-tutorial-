@@ -193,7 +193,7 @@ for (const auto& extension : extensions) {
 
 在实例创建之后继续执行更复杂的步骤之前，是时候通过检查 xref:验证层.adoc[验证层]来评估我们的调试选项了。
 
-xref:../../../code/实例.cpp[C++代码]
+xref:../../../code/设置/实例.cpp[C++代码]
 
 
 

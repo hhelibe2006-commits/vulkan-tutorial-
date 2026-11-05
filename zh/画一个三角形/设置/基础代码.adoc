@@ -233,4 +233,4 @@ NOTE: 在 Wayland 环境下，合成器只有在第一个缓冲区呈现后才�
 
 现在我们已经有了Vulkan程序的框架，让我们创建第一个 xref:实例.adoc[Vulkan对象]吧！
 
-xref:../../../code/基础代码.cpp[C++代码]
+xref:../../../code/设置/基础代码.cpp[C++代码]
