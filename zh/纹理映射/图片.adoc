@@ -335,6 +335,102 @@ commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, {}, barrier
 
 == 将缓冲区复制到图像
 
+在我们继续 `createTextureImage` 之前，我们还要编写另一个辅助函数 `copyBufferToImage`：
 
+[source,c++]
+----
+void copyBufferToImage(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Buffer &buffer, vk::raii::Image &image, uint32_t width, uint32_t height)
+{
+}
+----
+
+与缓冲区复制类似，您需要指定要将缓冲区的哪一部分复制到图像的哪一部分。这可以通过 `vk::BufferImageCopy` 结构体来实现：
+
+[source,c++]
+----
+vk::BufferImageCopy region{.bufferOffset      = 0,
+                           .bufferRowLength   = 0,
+                           .bufferImageHeight = 0,
+                           .imageSubresource  = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+                           .imageOffset       = {0, 0, 0},
+                           .imageExtent       = {width, height, 1}};
+----
+
+== 准备纹理图像
+
+现在我们已经拥有完成纹理图像设置所需的所有工具，所以我们回到之前的 `createTextureImage` 函数。我们最后一步是创建纹理图像。下一步是将暂存缓冲区复制到纹理图像。这包括两个步骤：
+
+- 将纹理图像过渡到 `vk::ImageLayout::eTransferDstOptimal`
+- 执行缓冲区到图像的复制操作
+
+利用我们刚刚创建的函数，这很容易实现：
+
+[source,c++]
+----
+vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+copyBufferToImage(commandBuffer, stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+----
+
+该图像是使用布局创建的 `vk::ImageLayout::eUndefined`，因此在切换布局时应将其指定为旧布局 `textureImage`。请记住，我们可以这样做，因为在执行复制操作之前，我们并不关心其内容。
+
+为了能够在着色器中开始对纹理图像进行采样，我们需要进行最后一次转换，使其准备好供着色器访问。最后，单次命令缓冲区即可结束。
+
+[source,c++]
+----
+transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+endSingleTimeCommands(std::move(commandBuffer));
+----
+
+== 过渡屏障面具
+
+如果您现在启用验证层运行应用程序，您会发现它会报错，提示访问掩码和管道阶段 `transitionImageLayout` 无效。我们仍然需要根据转换中的布局来设置这些参数。
+
+我们需要处理两个过渡阶段：
+
+- 未定义 → 传输目标：无需等待任何操作的传输写入
+- 传输目标 → 着色器读取：着色器读取操作应等待传输写入操作，特别是片段着色器中的着色器读取操作，因为我们将在那里使用纹理。
+
+这些规则使用以下访问掩码和管道阶段进行指定：
+
+[source,c++]
+----
+vk::PipelineStageFlags sourceStage;
+vk::PipelineStageFlags destinationStage;
+
+if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+{
+  barrier.srcAccessMask = {};
+  barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+  sourceStage      = vk::PipelineStageFlagBits::eTopOfPipe;
+  destinationStage = vk::PipelineStageFlagBits::eTransfer;
+}
+else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+{
+  barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+  barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+  sourceStage      = vk::PipelineStageFlagBits::eTransfer;
+  destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+}
+else
+{
+  throw std::invalid_argument("unsupported layout transition!");
+}
+commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+----
+
+如上表所示，传输写入操作必须发生在流水线传输阶段。由于写入操作无需等待任何条件，您可以为屏障前操作指定一个空的访问掩码 `vk::PipelineStageFlagBits::eTopOfPipe` 和最早的流水线阶段。需要注意的是，这 `vk::PipelineStageFlagBits::eTransfer` 并非图形和计算流水线中的实际阶段，而更像是一个伪阶段，传输操作在此阶段进行。有关更多信息和其他伪阶段示例，请参阅 https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VkPipelineStageFlagBits[文档]。
+
+图像将在同一管线阶段写入，随后由片段着色器读取，这就是为什么我们在片段着色器管线阶段指定着色器读取访问权限的原因。
+
+如果将来需要添加更多过渡效果，我们会扩展该功能。目前应用程序应该可以成功运行，当然，目前还没有任何视觉变化。
+
+需要注意的是，`vk::AccessFlagBits::eHostWrite` 命令缓冲区提交会在开始时进行隐式同步。由于 `transitionImageLayout` 函数仅使用单个命令执行命令缓冲区，因此您可以利用这种隐式同步，并在布局转换中需要 `srcAccessMask` 依赖关系时进行 `vk::AccessFlagBits::eHostWrite` 设置。是否显式地进行同步取决于您，但我个人不太喜欢依赖这些类似 OpenGL 的“隐藏”操作。
+
+实际上有一种特殊的 `vk::ImageLayout::eGeneral` 图像布局支持所有操作。但是，除非使用某些扩展（本教程中未使用），否则使用通用布局可能会降低性能，因为它可能会禁用某些 GPU 上的某些优化。在某些特殊情况下，例如将图像同时用作输入和输出，或者在图像离开预初始化布局后读取图像时，必须使用通用布局。
+
+图像现在包含了纹理，但我们仍然需要一种方法从图形管线中访问它。我们将在 xref:图像视图和采样器.adoc[下一章]中解决这个问题。
 
 
