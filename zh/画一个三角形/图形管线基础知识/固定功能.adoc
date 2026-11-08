@@ -214,7 +214,7 @@ vk::PipelineColorBlendAttachmentState colorBlendAttachment{
     .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
     .colorBlendOp = vk::BlendOp::eAdd,
     .srcAlphaBlendFactor = vk::BlendOp::eOne,
-    dstAlphaBlendFactor = vk::BlendFactor::eZero,
+    .dstAlphaBlendFactor = vk::BlendFactor::eZero,
     .alphaBlendOp = vk::BlendOp::eAdd,
     .colorWriteMask = vk::ColorComponentFlagBits::eR
     | vk::ColorComponentFlagBits::eG
