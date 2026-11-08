@@ -131,7 +131,7 @@ vk::PipelineRasterizationStateCreateInfo rasterizer{
     .cullMode = vk::CullModeFlagBits::eBack,
     .frontFace = vk::FrontFace::eClockwise,
     .depthBiasEnable = vk::False,
-    lineWidth = 1.0f
+    .lineWidth = 1.0f
 };
 ----
 如果depthClampEnable设置为 `vk::True`，则超出近平面和远平面的片段将被限制在这两个平面内，而不是被丢弃。这在某些特殊情况下（例如阴影贴图）非常有用。使用此功能需要启用 GPU 特性。
