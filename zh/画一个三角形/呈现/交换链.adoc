@@ -186,7 +186,7 @@ void createSwapChain() {
 ----
 uint32_t minImageCount = surfaceCapabilities.minImageCount;
 ----
-然而，仅仅坚持这个最小值意味着我们有时可能需要等待驱动程序完成内部操作才能获取另一张图像进行渲染。实际上，通常会请求比严格最小值多几张图像，以便留出一些余地——下面的辅助函数至少请求三张图像，同时确保不超过实现支持的最大图像数，其中 ``0``是一个特殊值，表示没有最大值：
+然而，仅仅坚持这个最小值意味着我们有时可能需要等待驱动程序完成内部操作才能获取另一张图像进行渲染。实际上，通常会请求比严格最小值多几张图像，以便留出一些余地——下面的辅助函数至少请求三张图像，同时确保不超过实现支持的最大图像数，其中 `0` 是一个特殊值，表示没有最大值：
 [source,c++]
 ----
 uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
@@ -239,7 +239,7 @@ vk::SwapchainCreateInfo swapChainCreateInfo{
 ----
     .preTransform = surfaceCapabilities.currentTransform,
 ----
-我们可以指定在交换链中对图像应用特定的变换（如果支持``supportedTransforms``的``capabilities``），例如顺时针旋转 90 度或水平翻转。要指定不需要任何变换，只需指定当前的变换即可。
+我们可以指定在交换链中对图像应用特定的变换（如果支持 `supportedTransforms` 的 `capabilities` ），例如顺时针旋转 90 度或水平翻转。要指定不需要任何变换，只需指定当前的变换即可。
 [source,c++]
 ----
     .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaqur,
@@ -279,7 +279,7 @@ image:../../../images/Swapchain报错.png[]
 交换链已经创建完成，接下来只需获取``vk::Image``其中包含的对象的句柄即可。我们将在后续章节的渲染操作中引用这些句柄。
 [source,c++]
 ----
-std::vector<vk::Image> swapChainImages = swapChain->getImages();
+std::vector<vk::Image> swapChainImages = swapChain -> getImages();
 ----
 最后一点，请将我们为交换链图像选择的格式和范围存储在成员变量中。我们将在后续章节中用到它们。
 [source,c++]
