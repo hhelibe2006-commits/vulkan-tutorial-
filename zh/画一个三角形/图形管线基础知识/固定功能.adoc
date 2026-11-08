@@ -43,7 +43,7 @@ vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 * `vk::PrimitiveTopology::eTriangleList`：从任意三个顶点构成三角形，且不重复使用
 * `vk::PrimitiveTopology::eTriangleStrip` 每个三角形的第二个和第三个顶点都用作下一个三角形的前两个顶点。
 
-通常情况下，顶点会按索引顺序从顶点缓冲区加载，但使用元素缓冲区时，您可以自行指定要使用的索引。这允许您执行诸如重用顶点之类的优化。如果您将成员设置 `primitiveRestartEnable` 为 `vk::True` ，则可以通过使用特殊索引 `0xFFFF` 或 `0xFFFFFFFF`来在拓扑模式 `Strip` 下拆分线和三角形。
+通常情况下，顶点会按索引顺序从顶点缓冲区加载，但使用元素缓冲区时，您可以自行指定要使用的索引。这允许您执行诸如重用顶点之类的优化。如果您将成员设置 `primitiveRestartEnable` 为 `vk::True` ，则可以通过使用特殊索引 `0xFFFF` 或 `0xFFFFFFFF` 来在拓扑模式 `Strip` 下拆分线和三角形。
 
 在本教程中，我们将始终绘制三角形，因此我们将使用以下数据来构建结构：
 [source,c++]
