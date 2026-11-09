@@ -1,0 +1,26 @@
+:pp: {plus}{plus}
+= OpenXR 与 Vulkan 1.3 握手：简介
+
+在把第一个像素渲染到 XR 头显之前，我们必须先在应用程序、OpenXR 运行时与 Vulkan 图形驱动之间建立起一次「握手」。这并不像创建一个标准 Vulkan 实例再把它交给某个库那么简单；它需要扩展协商与硬件验证之间的一次协同配合。
+
+在本章中，我们来看看一次成功的空间握手的三大支柱：
+
+1.  **系统集成**：如何扩展引擎的 `VulkanContext` 以支持必需的 OpenXR 扩展，具体来说是 `XR_KHR_vulkan_enable2`。
+2.  **硬件对齐**：使用 OpenXR 运行时从 `xrGetVulkanGraphicsDevice2KHR` 返回的那个确切的 `VkPhysicalDevice` 句柄，确保 OpenXR 和 Vulkan 面对的是同一块物理 GPU。运行时强制执行这一选择，因此不需要你做任何匹配——直接用它给你的句柄即可。这对跨进程的内存可见性与性能至关重要。
+3.  **Vulkan 1.3 要求**：启用现代特性——例如时间线信号量、动态渲染和同步 2——让我们的空间管线以尽可能低的延迟运行。
+
+== 握手的概念
+
+在标准桌面应用中，你的引擎是主导者。它创建实例、选择设备，并拥有交换链。而在 OpenXR 中，这种关系更像是一种合作。**XR 运行时**（驱动头显的软件，例如 SteamVR 或 Oculus 服务）需要确切知道你的 Vulkan 实例是如何配置的，这样才能安全地把它自己的合成器层注入你的渲染流。
+
+如果你没有正确地完成这次握手，可能会发现 XR 会话根本无法初始化，或者更糟：硬件被迫在不同的 GPU 内存上下文之间拷贝图像，导致性能大幅下降。
+
+== Vulkan 1.3 在 OpenXR 应用中的优势
+
+*   **低延迟同步**：CPU 模拟与 GPU 合成器之间。
+*   **单趟渲染**：通过 multiview 实现。
+*   **直接提交到显示**：没有传统渲染通道状态的开销。
+
+到本章结束时，你已经把引擎的初始化代码改造成完全具备空间感知能力，为后续的预测性帧循环和由运行时拥有的交换链打下了基础。
+
+xref:OpenXR_Vulkan_Spatial_Computing/introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc[下一页]

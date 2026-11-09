@@ -1,0 +1,387 @@
+:pp: {plus}{plus}
+
+= Vulkan 计算管线回顾
+
+== 简介
+
+你以前用过 Vulkan 计算管线，知道如何创建计算着色器、派发工作组、同步操作。但 ML 推理有区别于典型计算工作负载的特定模式与要求。本章以 ML 为重心回顾 Vulkan 计算管线，重点讲对神经网络运算最重要的那些方面。
+
+把这看作一次有重点的复习。我们不是从零讲 Vulkan 计算，而是告诉你当目标是跑 ML 推理时该如何看待计算管线。你在这里学到的模式会适用于你实现的每一个 ML 运算。
+
+== ML 计算工作负载
+
+在深入 Vulkan 的具体细节之前，先弄清楚 ML 推理与其他计算工作负载有何不同。
+
+=== ML 运算的特征
+
+ML 推理有一些鲜明的特征，它们决定了我们如何使用 Vulkan 计算：
+
+*数据量大且规整*：神经网络处理的是张量——多维数字数组。一张 224×224×3 的图像就是 150,528 个浮点数。中间激活值可能还要大得多。这些数据高度规整、结构清晰，正适合 GPU 并行。
+
+*高度并行的运算*：许多 ML 运算是逐元素的，或者元素之间依赖极小。ReLU 激活对每个元素独立应用同一个函数。矩阵乘法有已被充分理解的并行化模式。正是这种并行性让 GPU 在 ML 上如此高效。
+
+*顺序依赖*：尽管运算内部可以并行，神经网络仍是一串相互依赖的运算。第 2 层必须等第 1 层完成才能开始。这就产生了一种张力：既要最大化运算内部的并行度，又要管理运算之间的依赖。
+
+*内存密集*：ML 推理要搬运大量数据。权重从内存加载、输入被读取、中间结果被写入、输出被产生。瓶颈往往不是计算，而是内存带宽。高效的内存访问模式至关重要。
+
+*访问模式可预测*：与某些内存访问不规整的计算工作负载不同，ML 运算通常有可预测、有结构的访问模式。卷积从规整的窗口中读取，矩阵乘法按部就班地访问行与列。这种可预测性让有效优化成为可能。
+
+=== 对 Vulkan 实现的影响
+
+这些特征指导我们的 Vulkan 实现决策：
+
+我们会用较大的工作组来最大化运算内部的并行度。我们会仔细管理内存布局以保证合并访问。我们会用管线屏障强制运算之间的依赖，同时允许运算内部并行。我们会积极地复用内存以减小占用。
+
+理解这些模式能帮你在我们实现具体运算时做出有依据的决策。
+
+== 面向张量的描述符集布局
+
+着色器通过描述符集访问 GPU 内存。对 ML 推理来说，我们需要能高效表示张量和权重的描述符布局。
+
+=== 基本模式
+
+一个典型的 ML 运算读取输入张量、读取权重、写出输出张量。描述符集布局就反映这一点：
+
+[source,cpp]
+----
+vk::DescriptorSetLayoutBinding bindings[] = {
+    // Binding 0: Input tensor (read-only)
+    {
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eCompute
+    },
+    // Binding 1: Weights (read-only)
+    {
+        .binding = 1,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eCompute
+    },
+    // Binding 2: Output tensor (write)
+    {
+        .binding = 2,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eCompute
+    }
+};
+----
+
+我们用存储缓冲区而不是统一缓冲区，因为张量很大——常常是数 MB。统一缓冲区有大小限制（通常 64KB），而存储缓冲区可以达到 GB 级。
+
+=== 多输入与多输出
+
+有些运算有多个输入或多个输出。批归一化要读取输入、权重、偏置、滑动均值和滑动方差。残差连接要把两个张量相加。你的描述符布局需要容纳这些模式：
+
+[source,cpp]
+----
+// For operations with multiple inputs (e.g., residual add)
+vk::DescriptorSetLayoutBinding bindings[] = {
+    {.binding = 0, ...},  // Input tensor 1
+    {.binding = 1, ...},  // Input tensor 2
+    {.binding = 2, ...}   // Output tensor
+};
+----
+
+关键在于：描述符布局应当与运算的数据流一致。每个输入张量对应一个绑定，每个输出张量对应一个绑定，权重也各有绑定。保持简单、明确。
+
+=== 用推送常量传元数据
+
+张量有形状——定义其结构的各个维度。一张 224×224×3 的图像有 height=224、width=224、channels=3。着色器需要这些信息才能正确地对张量做索引。
+
+推送常量非常适合承载这类元数据：
+
+[source,cpp]
+----
+struct TensorMetadata {
+    uint32_t height;
+    uint32_t width;
+    uint32_t channels;
+    uint32_t batch_size;
+};
+
+vk::PushConstantRange pushConstantRange = {
+    .stageFlags = vk::ShaderStageFlagBits::eCompute,
+    .offset = 0,
+    .size = sizeof(TensorMetadata)
+};
+----
+
+推送常量很快——它们直接嵌在命令缓冲区里。对于张量形状这类小数据，它们非常理想。
+
+== 工作组尺寸
+
+工作组尺寸是你要做的最重要的性能决策之一。它影响并行度、资源占用和内存访问模式。
+
+=== 基础
+
+工作组是一组一起执行的着色器调用，它们可以通过共享内存共享数据。派发计算着色器时，你指定要启动多少个工作组，以及每个工作组里有多少个调用。
+
+对 ML 运算来说，通常希望每个调用计算一个或多个输出元素。工作组尺寸决定了有多少个调用一起运行。
+
+=== ML 运算的典型尺寸
+
+对于逐元素运算（ReLU、sigmoid 等），常见写法是：
+
+[source,slang]
+----
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+----
+
+这创建了包含 256 个调用的工作组。为什么是 256？因为它是个不错的平衡点：
+
+- 足够大，能让 GPU 保持忙碌（现代 GPU 可以同时运行数千个调用）
+- 足够小，不超出硬件限制（大多数 GPU 每个工作组至少支持 1024 个调用）
+- 是 2 的幂，通常与硬件架构对得比较齐
+
+对于卷积这类 2D 运算，你可能会用：
+
+[source,slang]
+----
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+----
+
+这为每个工作组创建 16×16 = 256 个调用，按 2D 排布，与图像的 2D 结构相吻合。
+
+=== 派发尺寸
+
+派发工作时，你指定要启动多少个工作组。对一个有 N 个元素、工作组尺寸为 256 的张量，你需要：
+
+[source,cpp]
+----
+uint32_t numWorkGroups = (N + 255) / 256;  // Round up
+commandBuffer.dispatch(numWorkGroups, 1, 1);
+----
+
+向上取整保证有足够的调用覆盖所有元素。你的着色器需要做边界检查，避免处理超出张量大小的部分：
+
+[source,slang]
+----
+uint globalID = gl_GlobalInvocationID.x;
+if (globalID >= tensorSize) return;  // Bounds check
+----
+
+=== 优化工作组尺寸
+
+最优工作组尺寸取决于你的运算和硬件。一般性建议：
+
+*逐元素运算*：128-256 个调用效果不错。这类运算简单，所以要让调用数量足够多以保持 GPU 忙碌。
+
+*使用共享内存的运算*：尺寸取决于你需要多少共享内存。如果每个调用需要 4 字节共享内存，而你可用 48KB，那么每个工作组最多能有 12,288 个调用。但实际限制更低——1024 是常见的上限。
+
+*2D 运算*：16×16 或 32×32 效果不错。它们与图像的 2D 结构吻合，并提供良好的并行度（256 或 1024 个调用）。
+
+性能分析必不可少。试不同的尺寸并测量性能。最优尺寸随 GPU 架构和运算复杂度而变化。
+
+== 内存访问模式
+
+内存访问方式会极大地影响性能。GPU 是为合并访问设计的——相邻线程访问相邻的内存位置。违反这一模式可能让性能下降到原来的十分之一甚至更低。
+
+=== 合并访问
+
+想象 32 个线程（在 NVIDIA GPU 上是 warp，在 AMD 上是 wavefront）一起执行。如果线程 0 读地址 0、线程 1 读地址 4、线程 2 读地址 8……那么 GPU 可以把这些合并成一次内存事务。这很快。
+
+如果线程访问的是随机地址，每次访问都会变成独立的事务。这很慢。
+
+对 ML 运算来说，合并访问通常意味着：
+
+*逐元素运算*：每个线程处理一个元素，且各线程处理连续的元素：
+
+[source,slang]
+----
+uint idx = gl_GlobalInvocationID.x;
+float value = inputBuffer[idx];  // Coalesced: consecutive threads read consecutive addresses
+float result = relu(value);
+outputBuffer[idx] = result;      // Coalesced: consecutive threads write consecutive addresses
+----
+
+*矩阵运算*：访问模式取决于布局。行主序矩阵在行内连续，列主序矩阵在列内连续。你的访问模式应当与布局一致。
+
+=== 张量布局
+
+张量可以用不同的布局存储。对一个 4D 张量（batch、channels、height、width），常见布局有：
+
+*NCHW（通道在前）*：元素按 batch、channels、height、width 的顺序排列。通道 0 的所有值排在最前，然后是通道 1 的所有值，依此类推。
+
+*NHWC（通道在后）*：元素按 batch、height、width、channels 的顺序排列。位置 (0,0) 的所有通道排在最前，然后是位置 (0,1) 的所有通道，依此类推。
+
+布局会影响访问模式。对卷积来说，NCHW 往往更好，因为你要在每个空间位置上读取所有通道。对逐元素运算，布局的影响较小。
+
+选定一种布局，并在整条推理管线中坚持使用它。在布局之间转换代价很高。
+
+=== 用共享内存复用数据
+
+有些运算会多次读取同一份数据。卷积读取相互重叠的窗口——同一个输入像素会贡献给多个输出像素。把数据一次性载入共享内存再复用，比反复从全局内存读取快得多。
+
+共享内存很快（在片上），但容量有限（通常每个工作组 48-96KB）。把它用于在工作组内部会被复用的数据：
+
+[source,slang]
+----
+shared float sharedData[256];
+
+// Load data into shared memory
+uint localID = gl_LocalInvocationID.x;
+sharedData[localID] = inputBuffer[globalID];
+
+// Synchronize to ensure all threads have loaded
+barrier();
+
+// Now all threads can access sharedData quickly
+float value = sharedData[someIndex];
+----
+
+实现卷积时我们会看到具体例子。
+
+== 管线创建
+
+为 ML 运算创建计算管线遵循标准的 Vulkan 模式，但有一些 ML 特有的考量。
+
+=== 管线缓存
+
+ML 推理常常用到许多不同的运算，每个都有自己的管线。创建管线代价不低。用管线缓存来摊薄这项开销：
+
+[source,cpp]
+----
+vk::PipelineCacheCreateInfo cacheInfo{};
+vk::raii::PipelineCache pipelineCache(device, cacheInfo);
+
+// Create all pipelines with the cache
+vk::ComputePipelineCreateInfo pipelineInfo{
+    // ... pipeline configuration ...
+};
+vk::raii::Pipeline pipeline(device, *pipelineCache, pipelineInfo);
+// RAII handles cleanup automatically
+----
+
+你甚至可以把缓存保存到磁盘，在后续运行时加载，从而加快启动。
+
+=== 特化常量
+
+有些着色器参数在创建管线时就已知，但会因管线而异。特化常量让你无需重新编译就能把着色器参数化：
+
+[source,slang]
+----
+layout(constant_id = 0) const uint WORK_GROUP_SIZE = 256;
+layout(local_size_x_id = 0) in;  // Use specialization constant for work group size
+----
+
+[source,cpp]
+----
+vk::SpecializationMapEntry entry = {
+    .constantID = 0,
+    .offset = 0,
+    .size = sizeof(uint32_t)
+};
+
+uint32_t workGroupSize = 256;
+vk::SpecializationInfo specInfo = {
+    .mapEntryCount = 1,
+    .pMapEntries = &entry,
+    .dataSize = sizeof(uint32_t),
+    .pData = &workGroupSize
+};
+
+vk::ComputePipelineCreateInfo pipelineInfo{
+    // ...
+    .stage = {
+        // ...
+        .pSpecializationInfo = &specInfo
+    }
+};
+----
+
+这样你就能从同一个着色器创建多个工作组尺寸不同的管线，而无需重新编译。
+
+== 命令缓冲区录制
+
+为 ML 推理录制命令遵循一个模式：绑定管线、绑定描述符集、推送常量、派发、屏障、重复。
+
+=== 基本模式
+
+[source,cpp]
+----
+// Begin command buffer
+vk::CommandBufferBeginInfo beginInfo{
+    .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+};
+commandBuffer.begin(beginInfo);
+
+// Layer 1: Convolution
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *convPipeline);
+commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                 *pipelineLayout, 0, *convDescriptorSet, nullptr);
+commandBuffer.pushConstants(*pipelineLayout, vk::ShaderStageFlagBits::eCompute,
+                           0, sizeof(metadata), &metadata);
+commandBuffer.dispatch(numWorkGroupsX, numWorkGroupsY, 1);
+
+// Barrier: ensure convolution completes before activation
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+commandBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, barrier, nullptr, nullptr);
+
+// Layer 2: ReLU activation
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *reluPipeline);
+commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                 *pipelineLayout, 0, *reluDescriptorSet, nullptr);
+commandBuffer.dispatch(numWorkGroupsX, 1, 1);
+
+// ... more layers ...
+
+commandBuffer.end();
+----
+
+这一模式对每一层重复：绑定、派发、屏障、下一层。
+
+=== 最小化开销
+
+命令缓冲区录制有开销。对推理来说，通常是录制一次、多次重放：
+
+[source,cpp]
+----
+// Record once
+vk::raii::CommandBuffer inferenceCommandBuffer = recordInferencePipeline();
+
+// Execute many times
+for (int frame = 0; frame < numFrames; frame++) {
+    // Update input data
+    updateInputTensor(inputData[frame]);
+
+    // Submit the same command buffer
+    vk::SubmitInfo submitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*inferenceCommandBuffer
+    };
+    computeQueue.submit(submitInfo, *fence);
+    auto result = device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+
+    // Read output
+    readOutputTensor(outputData[frame]);
+}
+----
+
+这样就把录制开销分摊到了多次推理上。
+
+== 小结
+
+本章以 ML 为重心回顾了 Vulkan 计算管线。要点如下：
+
+ML 运算的特征是：数据量大且规整、运算内部高度并行、运算之间存在顺序依赖、访问模式内存密集、以及访问可预测。这些特征指导我们的 Vulkan 实现。
+
+ML 的描述符集通常为输入张量、权重和输出张量各设绑定，大数据用存储缓冲区，张量形状这类元数据用推送常量。
+
+工作组尺寸对性能影响极大。典型尺寸为逐元素运算 128-256，2D 运算 16×16 或 32×32。要找到最优尺寸，性能分析必不可少。
+
+内存访问模式决定性能。合并访问（相邻线程访问相邻内存）至关重要。张量布局（NCHW 与 NHWC）会影响访问模式。共享内存让频繁访问的数据得以复用。
+
+管线创建遵循标准 Vulkan 模式，但能受益于管线缓存和特化常量。命令缓冲区录制遵循「绑定-派发-屏障」模式，对每一层重复。
+
+有了这个基础，我们就可以实现具体的 ML 运算了。下一章讲逐元素运算——最简单的 ML 运算，也是上手实现的好起点。
+
+xref:ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc[上一篇：简介] | xref:ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc[下一篇：逐元素运算]

@@ -1,0 +1,58 @@
+:pp: {plus}{plus}
+= 可见性与刷新：精通一致性
+
+== 理解主机与设备之间的同步
+
+使用**主机图像拷贝**时，你本质上是在 CPU 与 GPU 之间做一次直接内存拷贝。这非常高效，但引入了新的一类同步挑战。我们必须确保在主机（CPU）上写入的数据在 GPU 开始使用之前对它是**可见的**，并且在开始主机拷贝之前，之前所有的 GPU 工作都已**可用**。
+
+在 **Synchronization 2** 的世界里，我们使用 `vk::MemoryBarrier2` 来表达这一点。我们同步的不再是两个不同的 GPU 阶段，而是主机与设备。
+
+== 主机到设备的依赖
+
+最常见的情况是**主机到设备**依赖。你在 CPU 上写入一些数据，然后想让 GPU 在着色器中读取它。为此，你使用一个屏障，令 `srcStageMask = vk::PipelineStageFlagBits2::eHost`，并把 `dstStageMask` 设为将要读取该图像的着色器阶段。
+
+[,cpp]
+----
+auto hostToDeviceBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eHost,
+    .srcAccessMask = vk::AccessFlagBits2::eHostWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+    .oldLayout = vk::ImageLayout::eGeneral,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .image = gpuImage.image(),
+    .subresourceRange = subresourceRange
+};
+
+commandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &hostToDeviceBarrier});
+----
+
+`eHost` 阶段掩码是一个特殊标志，它告诉 GPU：“这些数据是在 CPU 上更新的。请确保所有 CPU 写入在片元着色器开始读取之前都可见。”
+
+== 设备到主机的依赖
+
+反向的情况是**设备到主机**依赖——例如截图时。你必须确保 GPU 在 CPU 开始主机拷贝之前已经完成渲染。为此，你录制一个屏障，把相应的 GPU 阶段作为源，把 `eHost` 作为目标。
+
+[,cpp]
+----
+auto deviceToHostBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eHost,
+    .dstAccessMask = vk::AccessFlagBits2::eHostRead,
+    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .newLayout = vk::ImageLayout::eGeneral,
+    .image = gpuImage.image(),
+    .subresourceRange = subresourceRange
+};
+
+commandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &deviceToHostBarrier});
+----
+
+除了屏障，你还必须在 CPU 侧使用**栅栏**或**时间线信号量**，确保包含该屏障的命令缓冲区确实已在 GPU 上执行完毕，再尝试调用 `device.copyImageToMemoryEXT`。
+
+掌握这些主机与设备之间的握手之后，你就能构建一个既极快又完全健壮的渲染器，为引擎内存管理添加强大的新工具。在本系列的最后几章，我们会看到如何用最新的 Vulkan 工具调试并优化这些复杂的同步模式。
+
+== 导航
+
+上一节：xref:Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc[CPU 直接访问图像：利用主机图像拷贝] | 下一节：xref:Synchronization/Synchronization_Validation/01_introduction.adoc[使用同步验证调试：找出你的危险]

@@ -1,0 +1,71 @@
+:pp: {plus}{plus}
+= ML 驱动的分割
+
+语义分割会为摄像头画面中的每个像素打上类别标签，提供逼真地混合虚拟内容与物理内容所需的像素级理解。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+OpenXR 虽然提供基本的环境混合，但标准并不管理像素级的语义标签或边缘细化。你可以用 Vulkan 的计算着色器与子组操作实现进阶的时域边缘细化与遮挡逻辑，这是标准 OpenXR 的 alpha 混合模型并不会原生管理的。
+
+== 概念：像素级理解
+
+语义分割为摄像头画面中的每个像素打上类别标签（例如 0 表示背景、1 表示桌子、2 表示人的手）。这带来了对场景的像素级理解，让引擎能够做出智能的混合决策。
+
+运行时从摄像头画面生成这些掩码，通常还会做延迟补偿：在交接之前把掩码「扭曲」以匹配用户最新的头部姿态。
+
+== 实现遮挡掩码
+
+在我们的 Vulkan 引擎中，我们把 ML 的输出当作一张**遮挡掩码**纹理。我们用指定初始化器在合成通道中绑定这张掩码：
+
+[source,cpp]
+----
+// Binding the semantic mask using designated initializers
+vk::DescriptorImageInfo maskInfo{
+    .sampler = *pointSampler,
+    .imageView = *semanticMaskView,
+    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+};
+
+vk::WriteDescriptorSet maskWrite{
+    .dstSet = *compositeSet,
+    .dstBinding = 1,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eSampledImage,
+    .pImageInfo = &maskInfo
+};
+----
+
+在 Slang 中，我们用这些标签来控制虚拟像素是否可见：
+
+[source,slang]
+----
+// A Slang fragment shader utilizing a semantic mask for occlusion
+[shader("pixel")]
+float4 fragmentMain(V2P input) : SV_Target {
+    float4 virtualColor = sceneTexture.Sample(input.uv);
+    uint label = semanticMask.Sample(input.uv).r;
+
+    // If the pixel is labeled as "Hand", we hide the virtual object
+    if (label == SEMANTIC_LABEL_HAND) {
+        return float4(0, 0, 0, 0); // Transparent output
+    }
+    return virtualColor;
+}
+----
+
+== 进阶：时域边缘细化与原子深度
+
+Vulkan 允许把合成质量做到超出标准掩码数据流的水平：
+
+*   **时域边缘细化**：借助 Vulkan 的**子组操作**，你可以跨多帧分析分割掩码，把嘈杂的边缘「精炼」成平滑的 alpha 通道，质量远高于原始的 OpenXR 数据流。
+*   **深度感知语义合成**：你可以用 Vulkan 的**原子操作**把 OpenXR 标签与引擎的深度数据结合起来，解决标准 OpenXR alpha 混合模型并不会原生协调的复杂重叠。
+
+== 现实的深度缓冲区
+
+语义标签告诉我们一个物体*是什么*，但把它们与 **LiDAR** 数据结合，才能实现**深度感知语义遮挡**。一台虚拟机器人可以藏在真实椅子后面，同时出现在更靠后的真实墙壁之前。利用 GPU 上的推理，我们能以最小延迟生成这些掩码，确保虚拟世界即时响应物理运动。
+
+TIP: 关于语义分割与图像混合的更多信息，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_FB_semantic_labels[XR_FB_semantic_labels 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc[下一页]

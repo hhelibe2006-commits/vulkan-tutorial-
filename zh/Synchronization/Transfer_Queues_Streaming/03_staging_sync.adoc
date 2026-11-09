@@ -1,0 +1,72 @@
+:pp: {plus}{plus}
+= 暂存同步：协调图形与传输
+
+== 握手
+
+一旦后台传输队列完成把新资产拷贝到 GPU 最优内存，你就需要一种方式告诉图形队列数据已可供采样。这正是**时间线信号量**与**队列族所有权转移**汇合之处。
+
+协调遵循简单的三步流程：
+
+1.  **传输释放**：传输队列执行拷贝，然后录制一个管线屏障来「释放」资源的所有权（如我们在第 3 章所学）。
+2.  **信号量通知**：传输队列完成工作时，发出时间线信号量上某个特定值的信号。
+3.  **图形获取**：图形队列等待同一个信号量值，然后录制自己的管线屏障来「获取」资源的所有权。
+
+== 协调握手
+
+我们在第 4 章学到的**信号前等待**模式，其妙处在于图形队列可以在传输甚至尚未完成之前就被提交。只要图形队列等待正确的时间线值，硬件就会确保传输先完成。
+
+[,cpp]
+----
+// Graphics Queue Submission (Wait for Transfer)
+auto waitInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *transferTimeline,
+    .value = upload_complete_value,
+    .stageMask = vk::PipelineStageFlagBits2::eFragmentShader
+};
+
+auto acquireBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eNone,
+    .srcAccessMask = vk::AccessFlagBits2::eNone,
+    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = transferQueueIndex,
+    .dstQueueFamilyIndex = graphicsQueueIndex,
+    .image = newTexture.image(),
+    .subresourceRange = subresourceRange
+};
+
+// Record and submit the acquire barrier on the graphics queue
+graphicsCommandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &acquireBarrier});
+
+auto submit = vk::SubmitInfo2{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &waitInfo,
+    // ...
+};
+
+graphicsQueue.submit2(submit);
+----
+
+== 处理资源生命周期
+
+在后台流式加载资产时，你还必须小心**暂存缓冲区**的生命周期。在传输队列完成从暂存缓冲区拷贝之前，你不能复用或销毁它。时间线信号量在这方面的价值同样不可估量。通过给每次暂存分配打上其完成值，你可以构建一个简单的「垃圾回收器」，只在安全时才回收内存。
+
+通过把暂存同步与时间线信号量协调起来，你能构建一个既高性能又极其健壮的引擎。在下一章中，我们将看到这些相同的原则如何适用于**动态渲染**的现代世界——在那里，传统的子通道依赖已被这些显式同步模式取代。
+
+== 在简易引擎中协调
+
+在 `Simple Engine` 中，这种协调发生在 `Renderer::ProcessPendingMeshUploads` 方法里。当 `LoadingThread` 完成一次传输后，它会把新的网格/纹理加入一个线程安全的队列。主渲染器每帧检查一次该队列。
+
+对于每个新资产，渲染器会：
+
+1.  **获取时间线值**：取回加载线程为这次特定上传所发出信号的 `uploadTimelineValue`。
+2.  **录制获取屏障**：在主图形命令缓冲区上录制一个 `vk::ImageMemoryBarrier2`。由于我们对图像使用 `eConcurrent`，这个屏障主要处理从 `eTransferDstOptimal` 到 `eShaderReadOnlyOptimal` 的布局转换，并确保数据在图形缓存中被失效。
+3.  **等待完成**：向主帧提交中添加一个 `vk::SemaphoreSubmitInfo`。这告诉 `graphicsQueue`，在 `uploadTimeline` 达到 `uploadTimelineValue` 之前不要开始执行那些采样新纹理的片元着色器。
+
+这套健壮的握手确保 `Simple Engine` 绝不会尝试绘制仍在拷贝中的纹理，即使后台线程运行在不同的 CPU 核心上、并向不同的 GPU 队列提交。
+
+== 导航
+
+上一篇：xref:Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc[非阻塞数据上传：利用专用传输队列] | 下一篇：xref:Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc[动态渲染中的同步：无渲染通道的世界]

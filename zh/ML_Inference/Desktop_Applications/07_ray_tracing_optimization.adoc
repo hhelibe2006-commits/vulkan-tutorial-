@@ -1,0 +1,936 @@
+:pp: {plus}{plus}
+:stem: latexmath
+
+= 光线追踪优化：降噪与自适应采样
+
+光线追踪是图形学的「圣杯」，但计算代价高昂。即便有现代 Vulkan 光线追踪扩展（`VK_KHR_ray_tracing_pipeline`），要在当前硬件上实时渲染出采样足够多、完全没有噪点的场景，通常也不可能。
+
+如果每像素只投射 1 到 2 条光线，渲染结果就会布满「椒盐」噪点。要得到干净的图像，你可能需要每像素 1000 条以上的光线，那样每帧要花几秒甚至几分钟。本章我们用 ML 来弥合这道鸿沟：拿一张「噪声很大」的每像素 1 采样（1spp）渲染图，用 AI 把它变成制作级品质的图像。
+
+这并不是在「造假」。我们是在用概率法则和神经网络，智能地重建硬件没时间计算的物理过程。读完本章，你将理解如何构建一条让单条光线发挥一千条光线作用的管线。
+
+== 噪声的物理原理：光线追踪为什么难
+
+要理解我们为什么需要 AI，先要理解光线追踪为什么噪声这么大。
+
+在传统光栅化器里，你绘制一个三角形，就能确切知道每个像素该是什么颜色，因为数学是确定性的。你把三维坐标投影到二维屏幕空间，插值顶点属性，再运行片元着色器。结果很「锐利」，但往往缺少光线之间微妙的相互作用——反射、软阴影和全局光照。
+
+在光线追踪中，我们从确定性投影转向**蒙特卡洛积分**。我们要解一个复杂的积分，叫做**渲染方程**。
+
+=== 渲染方程：快速入门
+
+渲染方程是图形学的数学核心。它说的是：离开某一点的光，等于该点自身发出的光，加上周围环境射到该点、再朝你眼睛方向反射的全部光。
+
+[latexmath]
+++++
+L_o(p, \omega_o) = L_e(p, \omega_o) + \int_{\Omega} f_r(p, \omega_i, \omega_o) L_i(p, \omega_i) (\omega_i \cdot n) d\omega_i
+++++
+
+别被公式吓到。用人话翻译一下：
+
+*   **latexmath:[L_o]**：离开点 latexmath:[p]、朝你眼睛（latexmath:[\omega_o]）方向去的光。
+*   **latexmath:[L_e]**：表面自身发出的光（类似霓虹灯）。
+*   **积分（latexmath:[\int]）**：这是最难的部分。它的意思是「考察光可能来自的每一个方向（latexmath:[\Omega]）」。
+*   **latexmath:[f_r]**：材质的属性（BRDF）。它反光吗？它哑光吗？
+*   **latexmath:[L_i]**：从那个方向*入射*的光。
+*   **latexmath:[(\omega_i \cdot n)]**：针对光线角度的修正因子。
+
+在理想世界里，我们会通过检查每一个光子来解这个积分。在计算机里，我们用**蒙特卡洛采样**：随机挑几个方向，看它们是什么颜色，然后求平均。
+
+=== 迪斯科球问题：直观理解方差
+
+想象一下，你要判断一个迪斯科球在只有一盏聚光灯的暗室里的平均颜色。
+
+1. 你朝球射出一条光线。
+2. 它打到一小块镜面上。
+3. 如果这块镜面恰好反射聚光灯，这个像素就是**纯白（亮度 10,000.0）**。
+4. 如果它反射的是暗墙，这个像素就是**纯黑（亮度 0.0）**。
+
+在每像素 1 采样（1spp）下，你的图像是一堆黑白点的混合。这叫**方差**。数学上，方差是各值与均值之差的平方的平均值。在图形学里，它就是毁掉你渲染结果的「椒盐」噪点。
+
+在图形学里，你看到的噪点就是你猜测的数学「误差」。随着光线（采样）数量增加，噪点会按照**大数定律**下降，但下降得很慢——误差按采样数的平方根下降（latexmath:[1/\sqrt{N}]）。要把噪点减半，你需要 latexmath:[4\times] 倍的光线。要把噪点降低 latexmath:[10\times]，你需要 latexmath:[100\times] 倍的光线！
+
+=== 传统滤波器为什么失败
+
+简单的模糊（比如高斯或双线性滤波）试图通过对邻近像素求平均来解决这个问题。但模糊是个「笨」算子——它分不清「噪点」和「锐利边缘」。
+
+如果有一条从黑到白的锐利边缘（比如阴影边界），你把它模糊掉，得到的是一团灰色污迹。噪点是没了，但场景的几何结构也被你毁了。
+
+我们用 AI 解决这个问题，因为神经网络可以被训练来识别噪点的*模式*，并把它与几何的*模式*区分开。它学会的是：曲面上的一个亮光「点」很可能是镜面高光，而不是随机伪影。它能「看见」上下文。
+
+为了不必等每帧 1000 条光线，我们使用一条三阶段的 AI 管线：
+
+1. **降噪**：从带噪的 1spp 帧出发，通过从数百万个高质量样本中学习，重建缺失的细节。
+2. **自适应采样**：用第二个很小的 AI 在我们渲染之前预测哪些像素「困难」（方差高）、需要更多光线。
+3. **时间稳定性**：利用运动矢量和 AI 在时间上混合多帧，消除「重影」伪影。
+
+== 技术 1：AI 降噪（U-Net）
+
+AI 降噪是一项**重建**任务。我们不只是平滑像素，而是让神经网络看着一块噪声图块，根据训练中见过的数百万个样本，「凭空想象」出干净版本。
+
+=== 术语：张量与通道
+
+在查看架构之前，我们需要使用同一套语言。在机器学习中，我们不只说「图像」，我们说**张量**。
+
+张量就是一个多维数组。Vulkan 交换链中的一个标准颜色像素有三个**通道**：红、绿、蓝（RGB）。你可以把它们想象成三张叠在一起的数据「薄片」。
+
+在 AI 增强的图形学中，我们扩展了这个概念。我们可以把任何数据堆进这些「薄片」。如果再加一张**深度**薄片和三张**表面法线**（X、Y、Z）薄片，我们就得到一个 7 通道张量。AI 把这些额外通道当作「提示」或「辅助缓冲区」。这些缓冲区没有噪点，因为它们来自光线的第一次命中（G-Buffer），为 AI 提供了一个稳定的「骨架」，让它在此基础上重建带噪的光照。
+
+=== 架构：U-Net 如何看见细节
+
+重建的行业标准是 **U-Net**。它最初是为医学成像设计的（在噪声 X 光片中找肿瘤），但事实证明它非常适合在噪声渲染中找出「干净像素」。
+
+U-Net 专门用来处理图像中的**尺度问题**。
+
+.AI 降噪架构（U-Net）
+image::images/ML_Inference/Desktop_Applications/rt_denoising_diagram.svg[U-Net 结构图，展示编码器、解码器与跳跃连接, 800]
+
+下面把「U」的三个部分逐一拆开细讲：
+
+==== 1. 编码器：压缩与上下文
+「U」的前半部分是一系列下采样步骤。每一步包含一次**双卷积**，后接一个**最大池化**层。
+
+===== 3x3 卷积的数学
+那个 `nn.Conv2d(3, 32, 3)` 调用内部到底发生了什么？
+
+想象一个 3x3 的权重网格（**核**）。这个核在图像上滑动时，对它当前覆盖的像素做一次「加权求和」。
+
+[source,cpp]
+----
+// Conceptual Convolution in C++
+float kernel[3][3] = {
+    {-1, -1, -1},
+    {-1,  8, -1},
+    {-1, -1, -1}
+}; // This is a simple edge-detection kernel
+
+float output_pixel = 0;
+for(int i = -1; i <= 1; i++) {
+    for(int j = -1; j <= 1; j++) {
+        output_pixel += input_image[y+i][x+j] * kernel[i+1][j+1];
+    }
+}
+----
+
+如果核覆盖的是平坦区域（所有像素颜色相同），输出为零。如果它覆盖的是边缘，输出就是一个很大的数。在降噪器里，AI 不止一个核；每层有 **32 或 64 个核**。有的学会找水平边缘，有的找「萤火虫」噪点模式，有的找纹理梯度。
+
+===== 为什么要双卷积？
+我们连续应用两个 3x3 滤波器。第一层找出「原始」特征（边缘）。第二层看到第一层的输出，找出「复杂」特征（曲线、拐角或噪点簇）。这增大了**有效感受野**，又不需要昂贵的大滤波器（比如 7x7）。
+
+===== 最大池化（2x2）：尺度切换
+卷积之后，我们把分辨率减半。
+
+*   **机制**：我们查看每个 2x2 像素块，只保留最大的值。
+*   **直观理解**：在 1080p 图像上，一个 3x3 卷积滤波器只看到 3 像素宽的一小块区域。它没有上下文，分不清一个白像素是「萤火虫」（明亮的噪点伪影）还是一个小灯泡。
+*   把图像缩小到 1/2、1/4 和 1/8 后，同样的 3x3 滤波器突然能看到场景中更大的一片区域。在最低分辨率下，一个 3x3 滤波器可能正看着原图里原本 64x64 大小的区域。这给了 AI **全局上下文**——它能看出，一簇噪声像素其实是一栋建筑投下的大片平滑阴影的一部分。
+
+==== 2. 瓶颈层：潜在表示
+在「U」的底部，网络对场景拥有非常「低分辨率」但「高语义」的理解。它把图像挤过一个「瓶颈」，迫使它只保留最重要的信息。在这个阶段，AI 看到的已经不是「像素」，而是「特征」。它知道：
+
+*   「中央有一个金属球体。」
+*   「主光源是天花板上的一个面光源。」
+*   「背景是一面哑光墙，带有柔和的间接反弹光。」
+
+==== 3. 解码器：重建与细化
+「U」的后半部分用**转置卷积**把图像上采样回原来的 1080p 尺寸。
+
+*   **转置卷积**：它是池化的逆操作。它取一张小图，「涂抹」成一张更大的图，用学习到的权重决定如何填充新像素。
+
+==== 4. 跳跃连接：保留几何锐度
+这是 U-Net 最关键的部分。当解码器把图像放大时，它会「横跨」U 形结构，抓取编码器中对应层的高分辨率特征。
+
+*   **问题**：图像在编码器中被缩小时，我们丢失了边缘的精确位置。我们知道那里有个「球体」，但精确到像素的轮廓在池化层中丢失了。
+*   **解决办法**：跳跃连接就像「小抄」。它们把早期层（被缩小之前）的锐利几何边缘直接送进最终重建层。
+*   这让网络能把**高层理解**（来自瓶颈层）与**像素级细节**（来自编码器）结合起来。这就是 U-Net 降噪器在平滑平坦噪声区域的同时还能保持边缘锐利的原因。
+
+[source,python]
+----
+import torch
+import torch.nn as nn
+
+class DenoisingUNet(nn.Module):
+    def __init__(self, in_channels=10):
+        super().__init__()
+        # Input: Noisy RGB (3) + Albedo (3) + Normals (3) + Depth (1) = 10 channels
+
+        # Encoder Stage 1 (Full Res -> Half Res)
+        # We start with 10 channels and expand to 32 internal 'feature' channels
+        self.enc1 = self.double_conv(in_channels, 32)
+        self.pool1 = nn.MaxPool2d(2)
+
+        # Encoder Stage 2 (Half Res -> Quarter Res)
+        self.enc2 = self.double_conv(32, 64)
+        self.pool2 = nn.MaxPool2d(2)
+
+        # Bottleneck (Quarter Res)
+        # This is where the AI understands the 'meaning' of the noise
+        self.bottleneck = self.double_conv(64, 128)
+
+        # Decoder Stage 2 (Quarter -> Half)
+        # We use a Transpose Convolution to upsample
+        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        # We concatenate the upsampled data (64) with the skip connection (64)
+        self.dec2 = self.double_conv(128, 64)
+
+        # Decoder Stage 1 (Half -> Full)
+        self.up1 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
+        self.dec1 = self.double_conv(64, 32) # 32 (up) + 32 (skip)
+
+        # Final Layer: Map the 32 feature channels back to 3-channel RGB
+        self.final = nn.Conv2d(32, 3, kernel_size=1)
+
+    def double_conv(self, in_c, out_c):
+        """A helper that applies two convolutions back-to-back with ReLU"""
+        return nn.Sequential(
+            nn.Conv2d(in_c, out_c, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(out_c, out_c, 3, padding=1), nn.ReLU()
+        )
+
+    def forward(self, x):
+        # Encoder Path
+        # We save 's1' and 's2' to use as Skip Connections later
+        s1 = self.enc1(x)
+        p1 = self.pool1(s1)
+        s2 = self.enc2(p1)
+        p2 = self.pool2(s2)
+
+        # Bottleneck
+        b = self.bottleneck(p2)
+
+        # Decoder Path with Skip Connections (torch.cat)
+        d2 = self.up2(b)
+        # Concatenate along the 'channel' dimension
+        d2 = torch.cat([d2, s2], dim=1)
+        d2 = self.dec2(d2)
+
+        d1 = self.up1(d2)
+        d1 = torch.cat([d1, s1], dim=1)
+        d1 = self.dec1(d1)
+
+        return self.final(d1)
+----
+
+=== 结构锚点：G-Buffer 的优势
+
+一个只看噪声彩色图像的降噪器等于在闭着眼睛干活。它必须猜物体在哪里结束、背景从哪里开始。在 Vulkan 光线追踪器中，我们不必猜。我们可以访问 **G-Buffer**（几何缓冲区）。
+
+G-Buffer 是光线第一次命中时生成的数据。由于它们不依赖光在房间里来回反弹，所以是**数学上完美的**——没有噪点，没有方差。
+
+*   **世界法线（3 通道）**：提供每个表面的精确朝向（XYZ）。如果相邻两个像素的法线差异很大，AI 就知道那里有几何边缘（比如拐角）。它会拒绝让颜色跨过那条边「渗漏」，从而避免传统模糊那种「涂抹」感。
+*   **反照率 / 基础色（3 通道）**：提供物体未经着色和光照的原始纹理（例如木纹或石纹）。这使 AI 能区分「噪点」与「纹理细节」。如果它在反照率里看到某种图案，就知道要保留它。
+*   **深度（1 通道）**：提供到相机的距离。它帮助 AI 分离相互遮挡的物体，并理解场景的尺度。
+
+把这 10 个通道（噪声 RGB + 反照率 + 法线 + 深度）送入 U-Net，我们就给了 AI 一副高分辨率「骨架」。它的工作不再是「发明」一张图像，而是在一个已被完全理解的三维模型上「画」光。
+
+=== 数据布局：为什么 NCHW 对 Vulkan 很重要
+
+等等，一个通常只接收 3 个通道（RGB）的网络，怎么「喂」进 10 个通道？这里**输入张量布局**就成了性能瓶颈。
+
+大多数图形程序员习惯**交错**数据（RGBA, RGBA, RGBA）。在 ML 里，这叫 **NHWC** 布局。
+
+*   **N**：批大小
+*   **H**：高度
+*   **W**：宽度
+*   **C**：通道（RGB 值在内存中彼此相邻）
+
+然而，GPU 处理**平面**数据（称为 **NCHW**）要快得多。
+
+*   在 NCHW 中，我们先存整幅图像的所有红色值，再存所有绿色值，然后所有蓝色值，然后所有法线，依此类推。
+*   **为什么？**卷积滤波器运行时，希望一次从同一个「通道」读取很多像素。如果数据是平面的，GPU 可以「合并」这些内存读取，在一个内存周期内取回 32 或 64 个像素。如果数据是交错的，GPU 就必须跳过 G 和 B 值才能到达下一个 R 值，白白浪费带宽。
+
+在 Vulkan 预处理计算着色器中，你必须先把交错的 G-Buffer 转换成单个平面 NCHW 缓冲区，再发给 ONNX Runtime。
+
+=== 稳定性：HDR 对数缩放问题
+
+Vulkan 光线追踪器通常以 16 位或 32 位浮点（HDR）输出。一盏太阳灯的亮度值可能是 **50,000.0**，而一块暗影是 **0.0001**。
+
+神经网络很讨厌这种情况。它们的数学基础（比如权重初始化，以及 ReLU 这类激活函数）是针对 0.0 到 1.0 之间的值调好的。如果你把 50,000.0 喂进网络，就像对着别人耳朵尖叫——梯度会「爆炸」，权重会变成 `NaN`，AI 永远学不会。
+
+解决办法是**对数压缩**。在把图像送给 AI 之前，我们在计算着色器里把数值范围「压扁」：
+
+[source,glsl]
+----
+// Preprocessing Compute Shader
+// Squash HDR range [0, infinity] to a manageable [0, ~12]
+vec3 compressed = log(1.0 + noisyColor.rgb);
+----
+
+AI 给出「干净」输出后，我们再把它展开回原来的 HDR 范围：
+
+[source,glsl]
+----
+// Postprocessing Compute Shader
+// Expand [0, ~12] back to [0, infinity]
+vec3 cleanHDR = exp(aiOutput.rgb) - 1.0;
+----
+
+这保证了 AI 看到的始终是「可控」的数值，训练稳定得多，「萤火虫」（那些毁掉许多渲染的单个亮像素）也大幅减少。
+
+=== 训练策略：如何「教」降噪
+
+要训练这个网络，你需要一个「参考路径追踪器」。这是你的渲染器的一个允许跑得很慢的版本。
+
+1.  **场景选择**：在你的 Vulkan 引擎里挑一个复杂场景——包含许多不同材质（金属、玻璃、木材）、复杂光照（点光源、面光源）和深阴影。
+2.  **渲染噪声帧（输入）**：以 1spp（每像素 1 采样）渲染一帧。这就是 AI 的输入。保存 RGB 颜色和所有 G-Buffer（反照率、法线、深度）。
+3.  **渲染金标准（真值）**：保持同一帧，但以 4096spp 渲染。每帧可能要花好几分钟，但结果是「地面真值」图像——1spp 帧*本应*呈现的无噪参考。
+4.  **重复**：把相机移动一点点，再重复这个过程。要训练一个稳健的降噪器，通常需要来自不同场景的至少 1000 到 5000 对数据。
+
+**损失函数**：
+我们怎么告诉 AI 它干得好？用**损失函数**把它的输出与「金标准参考」比较。
+
+不要只用**均方误差（MSE）**。MSE 计算像素间差值的平方的平均值。它在数学上很简单，但对图形学很糟糕。如果 AI 把一条锐利边缘挪动了一个像素，MSE 就会变得很大，尽管在人看来完全没问题。更糟的是，MSE 倾向于把高频「平均掉」，得到模糊、「塑料感」的渲染。
+
+改用加权组合：
+
+*   **L1 损失（平均绝对误差）**：用于一般颜色精度。它比 MSE 更稳健，不会过度惩罚小的差异。
+*   **SSIM（结构相似性指数）**：这是最重要的部分。SSIM 考察局部的对比度和结构模式。它迫使 AI 保留定义高质量图形的锐利边缘和精细纹理。
+*   **LPIPS（学习感知图像块相似度）**：正如我们在 CI 验证那一章学到的，LPIPS 用另一个神经网络来判断图像在人看来是否「像」。这帮助 AI 正确捕捉光照的「感觉」。
+
+业界训练降噪器的常见「配方」是：
+**损失 = 0.8 * SSIM + 0.2 * L1**
+
+== 技术 2：AI 引导的自适应采样
+
+在朴素的渲染器里，每个像素都得到同样数量的光线。但在真实场景中，光的分布并不均匀。一面平坦的白墙可能只需 1 到 2 个采样就「解决」了（无噪）。而一盏有多重反射和折射的复杂玻璃吊灯，即使采样 100 次也可能仍是「椒盐」噪点。
+
+**自适应采样**是一门把计算预算只花在噪点「顽固」之处的艺术。与其到处都每像素投射 8 条光线，我们的目标是在平墙上投 1 条、在吊灯上投 64 条。这能保证图像各处同时达到相同的质量水平。
+
+.自适应采样工作流
+image::images/ML_Inference/Desktop_Applications/adaptive_sampling_diagram.svg[示意图，展示探测通道、热力图生成与定向通道, 800]
+
+=== 方差理论：噪点藏在哪里？
+
+在蒙特卡洛积分中，**方差**衡量的是各个采样彼此相差多大。在图形学里，高方差就等于高噪声。
+
+*   **低方差**：如果你朝一个像素射 10 条光线，它们返回的亮度几乎相同（例如都打在光照微弱的墙上），我们就确信平均值是对的。这个像素「解决」了。
+*   **高方差**：如果 5 条光线返回「黑」、5 条返回「亮白」（例如这个像素靠近锐利的阴影边缘或一个小光源），平均值是 0.5——但那只是猜测。第 11 条光线可能显著改变平均值。这个像素「有噪」，需要更多采样。
+
+问题在哪？传统上计算方差需要先射多条光线（至少 4 到 8 条），只是为了看看我们*是否*需要更多光线。这是浪费时间。AI 让我们能从单次 1spp 探测中**预测**方差，办法是寻找那些总是导致噪点的视觉模式。
+
+=== 误差预测器：用于预算分配的小型 AI
+
+为了驱动自适应采样器，我们再构建一个极轻量的 CNN，称为**误差预测器**。
+
+与降噪器（一个试图修复图像的重量级 U-Net）不同，误差预测器是一个为极速而生的「专科医生」。它通常只有 4 到 5 个卷积层，没有昂贵的解码器。它唯一的任务就是看着一张噪声 1spp 帧，说：「那片区域看起来会很难。」
+
+1.  **输入**：最初的 1spp 噪声渲染。
+2.  **训练目标**：1spp 帧与 4096spp 金标准参考之间的绝对误差（`abs(1spp - Gold)`）。
+3.  **目标**：AI 学到高对比度的阴影边缘、金属上的镜面高光和折射玻璃都是「危险」区域，总会带来高误差。它也学到墙上的平滑渐变很「容易」，不需要多少光线。
+
+=== 热力图：管理光线预算
+
+这个小 AI 的输出是一张**热力图**——一张单通道纹理（可以把它想成灰度图），其中 1.0 表示「预计噪声高」，0.0 表示「预计噪声低」。
+
+我们把这幅热力图当作**光线预算图**。正是在这里，我们在 AI 预测与 Vulkan 光线追踪硬件之间架起桥梁。
+
+==== 数学缩放函数
+我们不会直接把热力图的值当作光线数量。我们要用**非线性缩放函数**。
+
+为什么？因为人眼对阴影中的噪点比对亮部敏感得多。另外，我们要避免「光线尖峰」——某个像素突然射出 1000 条光线，把整个 GPU 卡住。
+
+[source,glsl]
+----
+// Inside the Ray Generation Shader
+float heat = texture(heatmap, uv).r;
+
+// We use a Power Function to create a steep ramp.
+// Most pixels (heat < 0.2) stay at 1 ray.
+// Difficult pixels (heat > 0.8) scale up rapidly.
+float scaledHeat = pow(heat, 3.0);
+
+int maxExtraRays = 31;
+int extraRays = int(scaledHeat * float(maxExtraRays));
+----
+
+==== Vulkan 集成：多通道策略
+
+要在 Vulkan 中实现这一点，你需要在三个不同的通道之间协调命令缓冲区：
+
+**通道 1：探测通道（1spp）**
+我们用 `vkCmdTraceRaysKHR` 每像素恰好射 1 条光线。
+*   **输入**：场景 TLAS、相机 UBO。
+*   **输出**：`probeColorImage`（1spp 噪声图）。
+
+**通道 2：AI 方差预测**
+我们运行误差预测器的 ONNX 模型。
+*   **输入**：`probeColorImage`。
+*   **输出**：`heatmapImage`。
+*   **优化**：由于模型很小，我们可以在 GPU 收尾其它任务的同时用**计算队列异步**来运行它。
+
+**通道 3：定向通道（可变 spp）**
+我们再运行一个光线生成着色器，同时读取 `probeColorImage` 和 `heatmapImage`。
+
+[source,glsl]
+----
+// Ray Generation Shader (Targeted Pass)
+void main() {
+    // 1. Fetch the 'Heat' value for this pixel
+    float heat = texture(heatmap, uv).r;
+
+    // 2. Decide the extra ray budget
+    int extraRays = int(pow(heat, 2.0) * 31.0);
+
+    // 3. Retrieve the color from our first (probe) pass
+    vec3 accumulatedColor = texelFetch(probePassBuffer, ivec2(gl_LaunchIDEXT.xy), 0).rgb;
+
+    // 4. Cast the additional rays only where needed
+    for(int i = 0; i < extraRays; i++) {
+        // We use the 'i' as an offset to our Blue Noise texture
+        // to ensure we don't sample the same direction twice.
+        uint seed = initRandom(gl_LaunchIDEXT.xy, frameCount, i);
+        vec3 sample = traceIndirectRay(seed);
+        accumulatedColor += sample;
+    }
+
+    // 5. Compute the final average (Total samples = 1 probe + extraRays)
+    finalOutput = accumulatedColor / (1.0 + float(extraRays));
+}
+----
+
+在吊灯上花 32 条光线、在墙上花 1 条，我们就能获得与*到处*都花 32 条光线相同的视觉质量，而代价只是后者的一小部分。这项技术通常能让整体渲染时间获得 **3 到 5 倍加速**。
+
+=== 进阶自适应采样：概率与蓝噪声
+
+要让自适应采样真正发挥威力，你需要把 AI 的预测与高质量的**采样分布**结合起来。
+
+==== 蒙特卡洛 PDF
+当光线生成着色器读取热力图、看到一个「热」像素（Heat = 1.0）时，它不会只在随机方向上射 32 条光线。它用**概率密度函数（PDF）**把光线偏置向光源。AI 热力图实际上充当了一个「次级 PDF」，告诉硬件最复杂的相互作用发生在哪里。
+
+==== 蓝噪声与白噪声
+如果你用标准随机数（`rand()`）来生成光线方向，就会出现「聚簇」——很多光线朝同一个方向去，其它区域则很暗。这会产生「脏」噪声。
+
+*   **蓝噪声**：一种特殊的噪声，其采样尽可能均匀地分布。
+*   **与 AI 的关系**：AI 降噪器清理「蓝噪声」比清理「白噪声」强得多，因为蓝噪声有一个非常特定的数学频率，U-Net 很容易识别并减掉它。
+
+**实现提示**：把一张 64x64 的蓝噪声纹理加载到你的 Vulkan 光线追踪管线中。用像素坐标和当前采样索引来偏移这张纹理。这样即便光线预算很低（比如我们讨论的 1 到 32 条），你的采样也能尽可能高效地覆盖半球。
+
+== 技术 3：时间稳定性（抗重影 AI）
+
+即使有 AI 引导的采样，单帧仍可能残留一些噪点。要达到「电影级」的平滑度，我们需要利用**之前帧**的信息。如果相机不动，我们只要把最近 60 帧平均起来，就能得到完美的、相当于 1000 条光线的结果。
+
+然而在游戏里，东西是会动的。相机会转，角色会跑，灯光会闪。如果我们天真地把帧平均，就会得到**重影**——移动物体后面拖着一串模糊的「旧」颜色。
+
+为了解决这个问题，我们使用一种叫做**时间重投影**的技术，结合一个 **AI 置信度模型**。
+
+=== 重投影数学：回望过去
+
+要利用上一帧，我们必须知道当前像素在上一帧里*曾经*在哪。这是一个坐标变换问题。
+
+==== 一个像素的数学旅程
+想一想三维世界中的一个点在你 Vulkan 管线中流动时经历了什么：
+1.  **世界空间**：点有类似 `(10.0, 5.0, -2.0)` 的坐标。
+2.  **观察空间**：乘以**视图矩阵**（相机的位置/旋转）。
+3.  **裁剪空间**：乘以**投影矩阵**（镜头属性）。
+4.  **屏幕空间**：除以 latexmath:[W]，并映射到显示器的像素网格（例如 1920x1080）。
+
+要「回望」，我们把这段旅程反过来走。取当前像素，用深度缓冲区找出它的三维世界位置，然后用**上一帧的矩阵**重新投影这个位置。
+
+[source,cpp]
+----
+// Reprojection Logic in C++ (Conceptual)
+// This is what you would implement in your Motion Vector shader
+vec4 current_clip_pos = vec4(pixel_x / width * 2 - 1, pixel_y / height * 2 - 1, depth, 1.0);
+vec4 world_pos = inv_current_view_proj * current_clip_pos;
+world_pos /= world_pos.w;
+
+// Now, where was this world position in the previous frame's screen?
+vec4 prev_clip_pos = prev_view_proj * world_pos;
+prev_clip_pos /= prev_clip_pos.w;
+
+vec2 prev_screen_uv = (prev_clip_pos.xy + 1.0) / 2.0;
+vec2 motion_vector = current_uv - prev_screen_uv;
+----
+
+==== 处理角色动画
+等等，如果相机静止、但有个角色在跑呢？相机矩阵只反映相机的运动。要处理移动的物体，你还必须为每个物体保存上一帧的**模型矩阵**。在顶点着色器里，你把位置算两遍：一次算「现在」，一次算「那时」，再把差值作为运动矢量传给像素着色器。
+
+[source,glsl]
+----
+// Motion Vector Calculation in Vertex Shader
+void main() {
+    vec4 currentPos = ubo.viewProj * ubo.model * vec4(inPos, 1.0);
+    vec4 previousPos = ubo.prevViewProj * ubo.prevModel * vec4(inPos, 1.0);
+
+    // Pass these to the fragment shader
+    outCurrentPos = currentPos;
+    outPreviousPos = previousPos;
+    gl_Position = currentPos;
+}
+
+// Fragment Shader
+void main() {
+    vec2 curUV = (outCurrentPos.xy / outCurrentPos.w) * 0.5 + 0.5;
+    vec2 prevUV = (outPreviousPos.xy / outPreviousPos.w) * 0.5 + 0.5;
+    outMotionVector = curUV - prevUV;
+}
+----
+
+如果运动矢量算错了，即使简单场景里 AI 也会看到「拖影」。**专业提示**：把运动矢量可视化为颜色（红色表示 X 方向运动，绿色表示 Y 方向）。如果颜色与物体实际运动方向不符，你的时间稳定性就会失效。
+
+=== 在着色器中使用这些矢量
+
+[source,glsl]
+----
+// In the Temporal Accumulation Shader
+vec2 velocity = texture(motionVectorBuffer, uv).xy;
+vec2 historyUV = uv - velocity;
+
+// Fetch the color we rendered in the previous frame
+vec3 historyColor = texture(previousFrameResult, historyUV).rgb;
+----
+
+如果数学完美且什么都没变，`historyColor` 应该正好等于当前像素一帧前的样子。然后我们可以把它们混合：`finalColor = mix(historyColor, currentColor, 0.05)`。这就是**指数滑动平均（EMA）**。
+
+=== 问题：遮挡与光照突变
+
+重投影在两种常见情形下会失败：
+
+1.  **遮挡/去遮挡**：想象一个角色走到墙前。当它走开时，墙被「露出来」了。上一帧在那个位置只看到角色，没看到墙。如果我们用历史，就会把角色的颜色「抹」到墙上。
+2.  **动态光照**：如果发生爆炸，当前帧突然变亮，而历史是暗的。把它们混合会让光「慢慢爬升」，看起来很迟钝。
+
+=== AI 置信度模型：智能混合
+
+为了处理这些「坏」历史情形，我们训练第三个 AI 模型：**置信度预测器**。这是一个小 CNN，它考察当前帧和重投影后的历史，逐像素决定该在多大程度上信任过去。
+
+==== 拒绝的逻辑
+AI 的训练目标是检测历史何时「过时」或被「遮挡」。它会寻找特定的「警告信号」：
+
+*   **深度差异**：它把当前深度与从上一帧重投影得到的深度比较。如果差异显著（例如超过 5%），说明有物体移到了这个像素前面（或移开了）。历史无效。
+*   **法线一致性**：它计算当前法线与上一帧法线的点积。如果点积很低（例如 < 0.9），说明表面发生了剧烈旋转，其相对光照的朝向已经改变。
+*   **亮度差异**：它把重投影历史与当前噪声探测帧的亮度（明度）作比较。亮度大幅跳变通常意味着光照突然变化，或是几何信号漏掉的去遮挡。
+
+==== 训练置信度模型
+这个模型的训练方式与降噪器不同。它的目标不是「金标准」图像，而是一张标记重投影失败位置的**二值掩码**。
+1. 我们取两帧 4096spp 的「金标准」数据。
+2. 用完美的运动矢量把第一帧变换到第二帧。
+3. 任何对不上的地方就是「去遮挡」或「光照突变」。
+4. AI 学会只根据噪声 1spp 输入来预测这张差异掩码。
+
+=== 智能混合：EMA 逻辑
+
+AI 输出一个从 0.0（拒绝历史）到 1.0（保留历史）的**置信度分数**。我们用这个分数驱动**指数滑动平均（EMA）**混合：
+
+[source,glsl]
+----
+float confidence = predictConfidence(current_buffers, history_buffers);
+
+// 'Alpha' is our blending factor.
+// If confidence is 1.0 (Static), alpha is 0.01 (99% history, 1% new).
+// If confidence is 0.0 (Moving), alpha is 1.0 (0% history, 100% new).
+float alpha = mix(1.0, 0.01, confidence);
+
+// We also cap the accumulation to prevent 'Forever Smearing'
+alpha = max(alpha, 1.0 / float(maxFramesAccumulated));
+
+vec3 finalColor = mix(historyColor, currentNoisyColor, alpha);
+----
+
+借助这种 AI 驱动的方式，我们可以在静态区域随时间累积**数百条光线**（让它们完全干净），而在有东西移动的瞬间立刻切换到新数据，从根本上消除重影。
+
+=== 时间钳制：数学安全网
+
+即使最好的 AI 有时也会犯错。为了防止数学上的「泄漏」或「无限拖尾」，专业渲染器使用一种叫做**颜色盒钳制**（或邻域裁剪）的技术。
+
+1.  **找出邻域**：我们在*当前*帧中查看当前像素周围的 3x3 像素邻域。
+2.  **计算统计量**：找出这个 3x3 盒子里的**最小值**、**最大值**和**平均值**。
+3.  **钳制历史**：如果 `historyColor` 落在当前邻域的 [Min, Max] 范围之外，就把它「裁」到盒子的边界上。
+
+[source,glsl]
+----
+// Simple Color Box Clamping logic
+vec3 minColor = vec3(10000.0);
+vec3 maxColor = vec3(-10000.0);
+
+for(int y = -1; j <= 1; y++) {
+    for(int x = -1; x <= 1; x++) {
+        vec3 neighbor = texelFetch(currentFrame, pos + ivec2(x, y), 0).rgb;
+        minColor = min(minColor, neighbor);
+        maxColor = max(maxColor, neighbor);
+    }
+}
+
+// Ensure history stays within the bounds of current reality
+vec3 clampedHistory = clamp(historyColor, minColor, maxColor);
+----
+
+这保证了历史永远不会偏离当前现实太远，即便 AI 置信度模型一时糊涂，它也是对抗重影伪影的最后一道保险。
+
+=== 进阶时间稳定性：方差校正
+
+颜色盒钳制对锐利图像效果很好，但对噪声光线追踪帧可能过于激进。如果当前帧噪声很大，「盒子」会变得巨大，历史根本不会被钳制。如果当前帧很干净，盒子会很小，历史就被破坏了。
+
+==== 方差逻辑
+高端时间滤波器不使用简单的 Min/Max 盒子，而是用**方差校正**：
+1.  计算当前 3x3 邻域的**均值**（latexmath:[\mu]）和**标准差**（latexmath:[\sigma]）。
+2.  把有效范围设为 latexmath:[[\mu - k\sigma, \mu + k\sigma]]，其中 latexmath:[k] 通常在 1.0 到 2.0 之间。
+3.  这就形成了一个考虑当前帧统计噪声的「模糊盒子」。
+
+[source,glsl]
+----
+// Variance Rectification Snippet
+vec3 m1 = vec3(0.0); // First moment (Sum)
+vec3 m2 = vec3(0.0); // Second moment (Sum of squares)
+
+for(int i = -1; i <= 1; i++) {
+    for(int j = -1; j <= 1; j++) {
+        vec3 color = texelFetch(current, pos + ivec2(i, j), 0).rgb;
+        m1 += color;
+        m2 += color * color;
+    }
+}
+
+vec3 mean = m1 / 9.0;
+vec3 stddev = sqrt(max(vec3(0.0), (m2 / 9.0) - (mean * mean)));
+
+// Clamp history to Mean +/- 1.5 * StdDev
+vec3 rectifiedHistory = clamp(historyColor, mean - 1.5 * stddev, mean + 1.5 * stddev);
+----
+
+把这种统计方法与 AI 的高层置信度分数结合起来，你就得到一个既极其平滑又完全锐利的时间滤波器。
+
+== 数据采集与训练：构建你自己的 AI
+
+要构建这些模型，你需要一条能生成数百万对「噪声」与「干净」数据的训练流水线。这正是本教程「教学路线」的回报之处——既然你掌控着 Vulkan 渲染器，你就可以把这个过程自动化。
+
+=== 第 1 步：编写「真值引擎」脚本
+
+修改你的 Vulkan 应用，加入一个专门的**数据集模式**。在这个模式下，应用不实时运行，而是充当一个生成训练数据的「真值引擎」：
+
+1.  **冻结世界**：禁用所有物理、粒子系统和基于时间的动画。我们要把完全相同的状态渲染两次。
+2.  **渲染输入（噪声）**：
+    *   把光线追踪器设为 1spp。
+    *   捕获最终颜色缓冲区。
+    *   捕获 G-Buffer：反照率、世界空间法线和线性深度。
+    *   把它们保存为高精度 `.exr` 或 `.hdr` 文件。
+3.  **渲染真值（金标准）**：
+    *   把光线追踪器切到 4,096spp（复杂场景甚至 16,384spp）。
+    *   等待渲染完成（可能要 5 到 10 分钟）。
+    *   把它保存为你的「地面真值」目标。
+4.  **移动并重复**：
+    *   让相机沿样条曲线自动飞过场景，或传送到随机位置。
+    *   改变光照条件——一些帧在正午渲染，一些在日落，一些只有一支闪烁的蜡烛。
+    *   变化材质——给不同区域增加金属、玻璃或更复杂的纹理。
+
+多样化的数据集是防止 AI「过拟合」的唯一办法——所谓过拟合，就是它在你的开发场景里完美工作，换个新关卡就失败。
+
+=== 第 2 步：在 PyTorch 中训练
+
+当你有了装满 `.exr` 文件的文件夹，就用 PyTorch 训练这些神经网络。
+
+**专业提示：在图像块上训练**
+不要在完整的 1080p 或 4K 图像上训练。那太慢，也太吃内存。应该让你的数据加载器从高分辨率图像中随机裁出 **256x256 像素**（一个「图像块」）。这迫使 AI 学习局部纹理和噪声模式，而不是记住关卡的全局布局。
+
+=== 第 3 步：进阶训练配方
+
+如果你想让降噪器达到「3A 级」效果，就得超越简单的训练循环。下面是制作工作室用的秘诀：
+
+==== 数据增强：让 AI 更稳健
+如果你只用「完美」的 G-Buffer 训练，AI 会很脆弱。真实硬件有舍入误差，有时你的运动矢量也会稍有偏差。你应该「折腾」训练数据，让 AI 更皮实：
+
+1.  **注入高斯噪声**：训练时给「完美」的反照率和法线加一点随机噪声。这教会 AI 不要*太*依赖完美输入。
+2.  **颜色抖动**：训练时随机调整图像的亮度和对比度。这保证降噪器在黑暗地牢和明亮阳光的原野里都同样好用。
+3.  **旋转与翻转**：把训练图像块水平、垂直翻转。无论朝向如何，阴影边缘还是阴影边缘。
+
+==== 课程学习：先学爬再学跑
+不要一上来就用 1spp 开始训练。AI 可能被噪声压垮。
+*   **阶段 1**：训练 AI 清理 16spp 图像（中等噪声）。
+*   **阶段 2**：等它做得不错了，转到 4spp。
+*   **阶段 3**：最后用 1spp 训练。
+这种「课程」帮助 AI 在处理最难、最混乱的数据之前，逐步建立起关于光如何行为的内部模型。
+
+==== 损失加权：「萤火虫」惩罚
+在光线追踪中，「萤火虫」是一个比邻居亮 latexmath:[1000\times] 的像素，因为它碰巧打到了光源。标准损失函数会把这些像素置于最高优先级，往往导致 AI 为了补偿而把图像其余部分过度模糊。
+*   **解决办法**：使用 Charbonnier 损失这类**稳健损失**，或者干脆在训练时钳制梯度，让单个亮像素无法「劫持」整个训练过程。
+
+[source,python]
+----
+# Example of Robust Training Loop snippet
+def train_step(noisy, clean):
+    output = model(noisy)
+
+    # SSIM captures structural edges
+    ssim_loss = 1 - ssim(output, clean)
+
+    # L1 captures color accuracy
+    l1_loss = torch.abs(output - clean).mean()
+
+    # Combined Loss with a bias toward structure
+    total_loss = 0.8 * ssim_loss + 0.2 * l1_loss
+
+    total_loss.backward()
+
+    # Gradient Clamping to prevent Fireflies from ruining weights
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+    optimizer.step()
+----
+
+[source,python]
+----
+import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from my_vulkan_dataset import RayTracingDataset
+
+def train_model():
+    # 1. Initialize our U-Net
+    # Input is 10 channels (RGB, Albedo, Normals, Depth)
+    model = DenoisingUNet(in_channels=10).cuda()
+
+    # 2. Setup optimizer and loss
+    # We use Adam, the industry standard for neural network optimization
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    criterion = CombinedLoss() # SSIM + L1
+
+    # 3. Load the data captured from Vulkan
+    dataset = RayTracingDataset("path/to/vulkan_data/")
+    loader = DataLoader(dataset, batch_size=16, shuffle=True)
+
+    # 4. The Training Loop
+    for epoch in range(100):
+        for noisy_patch, clean_patch in loader:
+            optimizer.zero_grad()
+
+            # AI tries to clean the noisy patch
+            output = model(noisy_patch.cuda())
+
+            # Compare output to the 'Gold' reference
+            loss = criterion(output, clean_patch.cuda())
+
+            # Update the AI's weights
+            loss.backward()
+            optimizer.step()
+
+        print(f"Epoch {epoch} complete. Loss: {loss.item()}")
+
+    # 5. Export for Vulkan use
+    # We export to ONNX format so we can load it in our C++ application
+    dummy_input = torch.randn(1, 10, 256, 256).cuda()
+    torch.onnx.export(model, dummy_input, "denoiser.onnx")
+
+train_model()
+----
+
+== 实现路线图：你的集成指南
+
+如果你要在 Vulkan 项目中从零实现这套方案，下面是具体的 5 阶段管线。这条路线从 GPU 的固定功能单元一路走到 AI 学到的权重。
+
+=== 阶段 1：锚点通道（G-Buffer）
+
+在投射第一条间接光光线之前，你需要「锚点」数据。你可以用一次快速的光栅化通道，或者一个简单的「主光线」命中通道来获得它。这些数据必须没有噪点。
+
+*   **目标**：生成反照率（RGB）、世界法线（XYZ）、线性深度（Z）和运动矢量（XY）。
+*   **精度很重要**：法线和运动矢量用 `VK_FORMAT_R16G16B16A16_SFLOAT`。标准的 8 位 `UNORM` 格式（如 `R8G8B8A8`）精度不够；舍入误差在 AI 看来就是「抖动」。
+*   **运动矢量**：计算方法是取当前世界位置，先用*当前* VP 矩阵投影，再用*上一帧*的 VP 矩阵投影。差值就是速度。
+
+=== 阶段 2：随机光线通道
+
+这里是真正的蒙特卡洛光线追踪发生的地方。
+
+1.  **引导采样**：
+    *   在一次快速的 1spp 探测上运行你的小型**误差预测器** ONNX 模型。
+    *   它输出热力图纹理。
+2.  **定向追踪**：
+    *   派发你的 `vkCmdTraceRaysKHR` 管线。
+    *   在光线生成着色器里读取热力图。
+    *   动态分配光线预算。
+
+[source,glsl]
+----
+// Inside RayGen Shader
+float heat = texture(heatmap, uv).r;
+int samples = (heat > 0.5) ? 32 : 1; // Simplest adaptive logic
+
+for(int i = 0; i < samples; i++) {
+    // Trace and accumulate...
+}
+----
+
+=== 阶段 3：ML 预处理（Vulkan 计算）
+
+AI 需要特定格式的数据。你用 Vulkan 计算着色器把交错的图形缓冲区转换成单个 ML 张量。
+
+1.  **归一化**：把世界法线从 [-1, 1] 映射到 [0, 1] 范围。
+2.  **对数缩放**：对噪声颜色应用 `log(1.0 + x)`，把 HDR 范围压扁。
+3.  **平面打包（NCHW）**：重新组织数据。这通常是着色器里最复杂的部分。你必须把每个通道写到最终缓冲区各自的区段。
+
+[source,glsl]
+----
+layout(std430, binding = 0) writeonly buffer TensorBuffer { float data[]; } tensor;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    uint pixelIdx = pos.y * width + pos.x;
+    uint planeSize = width * height;
+
+    vec3 color = log(1.0 + texelFetch(noisyImage, pos, 0).rgb);
+
+    // NCHW Planar Layout
+    tensor.data[0 * planeSize + pixelIdx] = color.r;
+    tensor.data[1 * planeSize + pixelIdx] = color.g;
+    tensor.data[2 * planeSize + pixelIdx] = color.b;
+    // ... continue for Albedo, Normals, Depth ...
+}
+----
+
+=== 阶段 4：推理阶段（ONNX Runtime）
+
+现在运行重量级的 AI 模型。这是整条管线中计算代价最高的阶段。要维持实时帧率（60 FPS 需要 16.6ms），你必须在处理 GPU 内存时格外小心。
+
+==== 进阶 GPU 内存管理
+
+在朴素的实现中，你可能会把 G-Buffer 从 GPU 下载到 CPU，喂给 ONNX Runtime，再把结果上传回 GPU。**别这么做。**在 60 FPS 下，PCIe 总线对这类「往返」来说太慢了。
+
+改用**零拷贝内存共享**：
+
+1.  **Vulkan 一侧**：
+    *   用 `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` 分配预处理输出缓冲区。
+    *   使用 `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT`（Windows 上）或 `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT`（Linux 上）确保内存可「导出」。
+    *   用 `vkGetMemoryWin32HandleKHR` 或 `vkGetMemoryFdKHR` 取得这块内存的「句柄」。
+
+2.  **ML 一侧（ONNX Runtime / TensorRT）**：
+    *   把该句柄导入 ML 框架。
+    *   告诉 AI：「别自己为输入分配内存，用这个句柄。」
+    *   这样 AI 就会直接从 GPU 内存读取你的 Vulkan 缓冲区。
+
+3.  **同步（「握手」）**：
+    *   必须确保 AI 开始读缓冲区之前，GPU 已完成预处理通道。
+    *   由于 Vulkan 与 ONNX Runtime 运行在同一块 GPU 上，你用**时间线信号量**或**时间线栅栏**来协调。
+    *   Vulkan 等待信号量 latexmath:[\to] 通知 ONNX latexmath:[\to] ONNX 完成 latexmath:[\to] 通知 Vulkan 开始后处理通道。
+
+==== 模型精度：FP32 与 FP16
+
+标准 U-Net 使用 32 位浮点（FP32）。不过现代 GPU 有专用硬件（如 NVIDIA Tensor Core），能以快得多的速度处理 16 位浮点（FP16）——通常有 latexmath:[2\times] 到 latexmath:[4\times] 的加速。
+
+*   **FP32**：安全、精度高，但慢。
+*   **FP16**：快，只用一半内存，但如果你没有处理好前面讨论的对数缩放，就可能出现「NaN」（非数）错误。
+*   **建议**：降噪器和置信度预测器用 FP16。视觉差异通常察觉不到，但性能提升正是 30 FPS 与 60 FPS 之间的差距所在。
+
+==== 面向实时图形的模型优化
+
+即便用 FP16，U-Net 仍是「重」模型。在节奏很快的游戏里，整个降噪通道可能只有 5ms。要做到这一点，你需要使用**模型优化技术**：
+
+1.  **层融合**：把模型导出到 ONNX 时，用优化器（如 `onnx-simplifier` 或 TensorRT 的图编译器）合并层。例如「卷积 + ReLU」序列可以融合成单个 GPU 内核，节省宝贵的内存带宽。
+2.  **剪枝**：可以移除网络中对最终图像贡献不大的「死」权重。剪掉 20% 的 U-Net 能显著加快运行速度，而视觉质量毫无损失。
+3.  **内核特化**：高端方案（如 NVIDIA OptiX）使用手写的 Winograd 卷积，比标准 ML 框架用的通用卷积快得多。
+
+=== 阶段 5：最终累积与后期效果
+
+最后一步把所有东西合成到屏幕上。
+
+1.  **逆缩放**：派发一个计算着色器，对 AI 的输出应用 `exp(x) - 1.0`。
+2.  **时间混合**：用 AI 生成的置信度图和你的运动矢量，把当前结果与上一帧的结果混合。
+3.  **色调映射**：应用标准后处理：曝光控制（如 Reinhard 或 ACES）、颜色分级和 Gamma 校正。
+
+== AI 与传统降噪器对比：视觉上的权衡
+
+你也许会问：「既然存在 **SVGF（时空方差引导滤波）** 这样的传统滤波器，为什么还要用重量级神经网络？」
+
+[options="header"]
+|===
+| 特性 | 传统方案（SVGF/ASVGF） | AI（U-Net）
+| **细节保留** | 常常把精细纹理模糊掉。 | 极擅长把噪声与纹理分离。
+| **边缘锐度** | 依赖手工调整的 G-Buffer 权重。 | 从「金标准」数据中自动学习。
+| **搭建时间** | 需要数月手工「调」边缘权重。 | 训练时自动「调」好。
+| **性能** | 极快（2 到 5ms）。 | 较重（10 到 20ms）。
+| **通用性** | 针对特定光源类型优化。 | 可训练适应任何光照风格。
+|===
+
+**业界结论**：对实时游戏来说，混合方案往往胜出。用 SVGF 处理「容易」的直接光噪声，用专门的 AI 降噪器处理光泽反射和全局光照这类复杂「困难」噪声。
+
+== 获取模型：「结构路线图」
+
+你不需要成为 AI 研究者才能开始实验。你可以用下面的 Python 脚本生成「空」模型（即结构路线图）。这些模型虽然还没训练，但它们定义了你 Vulkan 集成代码所需的精确输入/输出形状。
+
+[source,python]
+----
+import torch
+import torch.nn as nn
+
+# 1. The Denoiser: The U-Net architecture we discussed
+class DenoisingUNet(nn.Module):
+    def __init__(self, in_channels=10, out_channels=3):
+        super().__init__()
+        # 10 channels = Noisy RGB (3) + Albedo (3) + Normals (3) + Depth (1)
+        self.enc1 = self.conv_block(in_channels, 32)
+        self.pool1 = nn.MaxPool2d(2)
+        self.enc2 = self.conv_block(32, 64)
+        self.up1 = nn.ConvTranspose2d(64, 32, 2, stride=2)
+        self.dec1 = self.conv_block(64, 32)
+        self.final = nn.Conv2d(32, out_channels, 1)
+
+    def conv_block(self, in_c, out_c):
+        return nn.Sequential(
+            nn.Conv2d(in_c, out_c, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(out_c, out_c, 3, padding=1), nn.ReLU()
+        )
+
+    def forward(self, x):
+        e1 = self.enc1(x)
+        d1 = self.up1(self.enc2(self.pool1(e1)))
+        return self.final(self.dec1(torch.cat([d1, e1], dim=1)))
+
+# 2. The Error Predictor: A very lightweight CNN for adaptive sampling
+class ErrorPredictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(16, 16, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(16, 1, 1), nn.Sigmoid()
+        )
+    def forward(self, x): return self.net(x)
+
+# 3. The Confidence Predictor: Handles temporal anti-ghosting
+class ConfidencePredictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Input: Current RGB, History RGB, Current Depth, Previous Depth
+        self.net = nn.Sequential(
+            nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(16, 1, 1), nn.Sigmoid()
+        )
+    def forward(self, x): return self.net(x)
+
+def export_all():
+    torch.onnx.export(DenoisingUNet(), torch.randn(1, 10, 256, 256), "denoiser.onnx")
+    torch.onnx.export(ErrorPredictor(), torch.randn(1, 3, 256, 256), "error_predictor.onnx")
+    torch.onnx.export(ConfidencePredictor(), torch.randn(1, 8, 256, 256), "confidence.onnx")
+    print("Empty ONNX models exported successfully.")
+
+export_all()
+----
+
+== 专业方案：何时购买，何时自研
+
+虽然从零构建自己的 AI 图形管线是理解底层技术的最好方式，但大规模生产项目往往依赖高度优化的厂商方案。这些库使用与我们讨论过的类似的 U-Net 和时空架构，但针对特定硬件架构做了手工调优。
+
+*   **NVIDIA OptiX Denoiser**：随 OptiX SDK 提供，是 NVIDIA GPU 上的金标准。它使用专门的 A-SVGF 滤波器，结合针对 RTX Tensor Core 调优的深度学习降噪器。link:https://developer.nvidia.com/optix-denoiser[NVIDIA OptiX]
+*   **Intel® Open Image Denoise (OIDN)**：高性能开源降噪器，可在*任何* CPU 或 GPU 上运行（包括 NVIDIA、AMD 和 Intel）。它被 Blender Cycles 等离线渲染引擎广泛使用，并且越来越有能力达到交互速度。link:https://www.openimagedenoise.org/[Intel OIDN]
+*   **NVIDIA Real-Time Denoisers (NRD)**：专为实时游戏中的低延迟时空降噪设计的库。它替你处理自适应采样和时间稳定性的数学，让你专注于创作着色器。link:https://developer.nvidia.com/nrd[NVIDIA NRD]
+
+== 小结：图形学的未来是 AI
+
+AI 增强的光线追踪讲的是**效率**。你在用深度学习「预测」你没时间计算的物理。把 U-Net 重建、自适应光线预算和时间验证结合起来，你就能在实时 Vulkan 环境里交付「电影级」画面。
+
+你已经从单纯绘制三角形，走到用概率法则和神经网络的力量智能地重建世界。这正是现代图形工程的最前沿。
+
+=== 给 Vulkan 开发者的关键结论
+
+1.  **G-Buffer 就是金矿**：你的首次命中数据（反照率、法线、深度）是你最好的朋友。把它当作 AI 模型的「结构锚点」。
+2.  **编排为王**：瓶颈不在 AI 的数学，而在数据的搬运。用零拷贝内存共享和异步计算让你的管线保持 60 FPS。
+3.  **统计兜底**：始终把 AI 与颜色盒钳制或方差校正这类数学保险结合起来。AI 给出「猜测」，数学给出「保证」。
+
+=== 前路：硬件演进
+
+在继续你的旅程时，留意硬件如何演进。`VK_NV_ray_tracing_motion_blur` 这样的新扩展和专用 AI 核心，正让我们今天讨论的技术更加强大。「图形程序员」与「ML 工程师」之间的界线正在模糊，而你就站在这场变革的最前沿。
+
+渲染愉快！
+
+=== 最后的话：学习是无限循环
+
+最重要的一点是：AI 降噪器永远不会真正「完工」。当你在引擎里加入新材质——比如肥皂泡的薄膜干涉，或者复杂的体积雾——你就需要采集新数据并重新训练模型。
+
+把图形管线当成一个活的、会学习的系统，你就能保证无论世界变得多复杂，你的应用始终呈现最佳效果。
+
+xref:ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc[上一篇：用于自动化探索的强化学习] | xref:ML_Inference/Desktop_Applications/08_future_directions.adoc[下一篇：未来方向：GAN、DLSS 与更多]

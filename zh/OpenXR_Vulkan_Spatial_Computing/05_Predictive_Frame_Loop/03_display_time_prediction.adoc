@@ -1,0 +1,68 @@
+:pp: {plus}{plus}
+= 显示时刻预测
+
+稳定而沉浸的空间体验，关键在于把引擎的内部状态对齐到用户真正看到这一帧的那个未来时刻。这正是 `XrFrameState` 里的 `predictedDisplayTime` 派上用场的地方。我们必须把这个时间戳用在两项关键任务上：**定位用户的头部（视图）**和**计算我们的模拟（物理与动画）**。
+
+== 生态视角
+
+本章属于类别：**使用 Vulkan 与 OpenXR 运行时**。
+
+正确利用预测显示时刻是 XR 应用的硬性要求。如果模拟与渲染没有对齐到这个时间戳，就会出现「游移」和晕动症。
+
+== 1. 定位用户（`xrLocateViews`）
+
+渲染视图时，我们需要精确知道用户的双眼将位于何处。如果使用「当前」头部位姿，画面就会显得滞后。我们用 `xrLocateViews` 请求运行时预测用户在未来 `displayTime` 的位姿。
+
+[source,cpp]
+----
+// Predicting where the user will be at the moment of display
+XrViewLocateInfo viewLocateInfo{
+    .type = XR_TYPE_VIEW_LOCATE_INFO,
+    .viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+    .displayTime = frameState.predictedDisplayTime,
+    .space = xrAppSpace
+};
+
+XrViewState viewState{XR_TYPE_VIEW_STATE};
+uint32_t viewCountOutput;
+std::vector<XrView> views(viewCount, {XR_TYPE_VIEW});
+xrLocateViews(xrSession, &viewLocateInfo, &viewState, viewCount, &viewCountOutput, views.data());
+----
+
+得到的 `XrView` 数组包含预测的**位姿**和 **FOV**。注意 FOV 是会变的——有些头显使用随对焦而变化的动态透镜，因此我们必须用这些值*每帧*更新投影矩阵。
+
+== 2. 模拟对齐：同步物理
+
+需要预测的不只是相机；我们整个世界的模拟（物理、动画和粒子系统）都必须对齐到 `predictedDisplayTime`。
+
+如果模拟用的 delta 时间与视图预测用的不一致（比如固定 60Hz 更新），世界中的物体相对用户头部运动就会显得「抖动」。在我们的引擎里，模拟的 delta 时间根据当前帧与上一帧预测值之差计算。
+
+[source,cpp]
+----
+double deltaTime = static_cast<double>(currentPredictedTime - lastPredictedTime) / 1e9; // Convert nanoseconds to seconds
+engine.update(deltaTime);
+----
+
+== 进阶：关联 GPU 时间与物理位姿
+
+运行时只提供一份最佳猜测的位姿，而 Vulkan 允许你把对齐做得更精细：
+
+*   **关联 GPU 执行时间**：你可以把 GPU 侧的执行时间与 OpenXR 系统时钟关联起来。这样就能精确测量顶点着色器变换场景耗时多少，从而按「动态复杂度」缩放，让引擎的渲染时间完全落在预测的显示窗口之内。
+*   **物理感知的位姿调整**：如果用户的头即将穿进虚拟墙壁，你可以用 Vulkan 的**计算着色器**实时执行「位姿钳制」，在最后一遍渲染之前根据引擎的物理数据修正 OpenXR 的预测。
+
+== 时钟漂移的危险
+
+XR 开发中一个常见错误是用 `std::chrono::now()` 或 `glfwGetTime()` 驱动模拟。这些时钟与 XR 运行时的心跳是解耦的。
+
+*   **系统时钟**：测量现实世界的挂钟时间。
+*   **XR 时钟**：测量头显硬件显示器的频闪。
+
+即使它们从同一时刻起算，最终也会**漂移**。游玩 30 分钟后，你的物理引擎可能比显示器实际刷新周期快或慢 5ms。如果你不始终如一地使用 `predictedDisplayTime`，正是这种漂移会造成看似「随机」的卡顿与顿挫，而且极难调试。
+
+TIP: 关于时间预测的更多信息，请查阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#xrLocateViews[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+== 下一步：最小化延迟
+
+既然帧循环的节拍已经正确，模拟也与未来对齐，我们就为高质量的空间体验打下了基础。下一章我们将探讨**延迟锁存**，以及**时间线信号量**如何帮我们削掉最后那几微秒的「游移」。
+
+xref:OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc[下一页]

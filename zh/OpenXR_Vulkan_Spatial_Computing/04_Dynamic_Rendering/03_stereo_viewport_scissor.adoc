@@ -1,0 +1,72 @@
+:pp: {plus}{plus}
+= 立体视口与剪刀矩形管理
+
+为 XR 渲染时，我们并不只是往一块屏幕上绘制。我们要绘制多个**视图**，每个视图都有自己的透视与投影。要在动态渲染的语境下管理这些，我们必须掌握**视口**与**剪刀矩形**。
+
+== 生态视角
+
+本章属于类别：**使用 Vulkan 与 OpenXR 运行时**。
+
+管理多个视口是空间视图的标准需求。你必须使用 Vulkan 的动态状态，让渲染与运行时为每只眼睛提供的具体光学参数对齐。
+
+== 眼睛的光学构造：不对称投影
+
+要理解为什么视口与剪刀矩形管理在 XR 中如此关键，我们必须看看透镜的光学特性。与标准显示器不同，XR 的透镜常常是偏置的，这就带来了**不对称投影**。
+
+*   **透镜畸变校正**：运行时知道透镜的物理曲率。它提供的视口通常比物理显示面板的分辨率*更大*（常见为 1.4 倍），以补偿「桶形畸变」变形过程中损失的细节。
+*   **最佳像素密度**：运行时确保透镜的「甜点」（光学中心）获得最密集的渲染像素。
+*   **视锥对齐**：不对称的 FOV 取值经过设计，能够与头显外壳的物理边界完美对齐，确保你不会把 GPU 周期浪费在渲染被设备物理遮挡的像素上。
+
+[source,cpp]
+----
+// Configure the viewport for a specific eye view using designated initializers
+vk::Viewport eyeViewport{
+    .x = 0.0f,
+    .y = 0.0f,
+    .width = static_cast<float>(viewWidth),
+    .height = static_cast<float>(viewHeight),
+    .minDepth = 0.0f,
+    .maxDepth = 1.0f
+};
+
+// Configure the scissor to match
+vk::Rect2D eyeScissor{
+    .offset = {0, 0},
+    .extent = {viewWidth, viewHeight}
+};
+
+// Dynamic state update in our command buffer
+commandBuffer.setViewport(0, eyeViewport);
+commandBuffer.setScissor(0, eyeScissor);
+----
+
+== 单纹理与阵列纹理交换链
+
+交换链的布局并非运行时突然塞给我们的——而是*我们*事先通过 `XrSwapchainCreateInfo` 里的 `arraySize` 选定的（参见 xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc[外部图像协商]）。实践上这留下两个真正的选项：
+
+*   **阵列纹理**（`arraySize = viewCount`）：两只眼睛作为独立的数组层，住在同一个 `XrSwapchain` 里。我们把视口保持在 `(0,0)`，通过改变 `vk::RenderingAttachmentInfo` 中的 `imageView`（或 `baseArrayLayer`）来选择眼睛。这几乎是每个现代 OpenXR 运行时都期望的方式，也是**原生多视图**（`VK_KHR_multiview`）所需的布局——后者见 xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc[原生多视图]，两只眼睛在一次绘制调用中完成渲染，而不是逐眼循环。
+*   **单纹理图集**：一种早于 OpenXR 的旧技术，应用手动用视口 `x`/`y` 偏移把两只眼睛并排合成到一张双倍宽的纹理里。这不是运行时会为你提供的，而且与多视图渲染不兼容，所以它只是一条遗留的退路，而不是今天应该围绕它设计的东西。
+
+由于动态渲染允许我们逐次绘制地调整附件与视口，而无需改动管线对象，从朴素的逐眼循环转向阵列纹理（最终是多视图）渲染，只不过是改变绑定哪一层的问题，而不需要重构渲染循环。
+
+== 进阶：可变速率着色与模板掩码
+
+Vulkan 让我们可以超越 OpenXR 提供的标准矩形视口：
+
+*   **可变速率着色（VRS）**：你可以用 Vulkan 的 VRS 让着色速率与视口分辨率解耦。这样就能使用高分辨率视口来满足透镜畸变的要求，同时用一张着色速率图像降低周边区域的 GPU 负载。
+*   **非矩形裁剪**：OpenXR 的剪刀矩形严格是矩形的。借助 Vulkan 的**模板缓冲区**，你可以定义与透镜可见孔径相匹配的「隐藏区域掩码」，确保永远不会渲染任何一个会被头显外壳遮挡的像素。
+
+== 最优视图管理：节奏模式
+
+为了尽量减少状态切换并优化性能，我们的引擎对每只眼睛的视图遵循一套固定的模式：
+
+1.  **获取索引**：从 OpenXR 取得当前帧的交换链索引。
+2.  **绑定视图**：把 `vk::RenderingAttachmentInfo` 指向正确的眼睛层或图集区域。
+3.  **应用视口/剪刀矩形**：告诉 GPU 当前眼睛视锥的精确边界。
+4.  **发起绘制调用**：使用预测的视图矩阵与投影矩阵渲染场景。
+
+把视口与剪刀矩形当作动态状态来处理，我们就避免了两眼之间必须切换整个管线对象时会出现的那种严重的「管线停顿」。
+
+TIP: 关于视口与剪刀矩形状态的更多信息，请查阅官方 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#pipelines-dynamic-state[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc[下一页]

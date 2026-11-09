@@ -1,0 +1,75 @@
+:pp: {plus}{plus}
+= 几何校正与边缘融合
+
+几何校正把直线式图像转换成「变形」后的图像，使其投影到曲面屏幕或转角等物理表面上时看起来正确。
+
+== 生态视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+标准 HMD 运行时在内部处理变形，但对于自定义投影仪配置或曲面显示墙，你必须自己实现几何校正。你要用 Vulkan 的计算着色器与子组操作，实现超越以 HMD 为中心的 OpenXR 标准模型的像素级精确边缘融合与变形。
+
+== 概念：反向查找
+
+要理解变形，你必须反向思考。我们不再问「这个源像素去了哪里？」，而是问**「对于墙上这个像素，我应该到渲染帧的哪个位置去取样？」**
+
+1.  **直线式源**：一份标准的 3D 渲染结果（直线、90 度角）。
+2.  **物理目标**：曲面屏幕，或两墙相交的转角。
+3.  **变形贴图**：一张查找表（LUT），把每个目标像素映射到源渲染中的 $(u, v)$ 坐标。
+
+运行时维护一个持久的「变形网格」数据库，并计算为让图像在物理表面上「摆正」所需的投影变换（梯形校正）。
+
+== 实现变形贴图
+
+这项操作的「大脑」是**变形贴图**，通常是一个包含浮点数据的 `vk::raii::Image`。我们用计算着色器执行反向查找：
+
+[source,cpp]
+----
+// Configure the warp map texture binding using designated initializers
+vk::DescriptorImageInfo warpMapInfo{
+    .sampler = *pointSampler,
+    .imageView = *warpMapView,
+    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+};
+
+vk::WriteDescriptorSet descriptorWrite{
+    .dstSet = *warpDescriptorSet,
+    .dstBinding = 0,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eSampledImage,
+    .pImageInfo = &warpMapInfo
+};
+----
+
+在 Slang 中，计算内核把目标像素映射到源坐标：
+
+[source,slang]
+----
+// Compute-based warping kernel in Slang
+void main(uint3 dispatchThreadID : SV_DispatchThreadID) {
+    // 1. Look up where this wall pixel should sample from the rendered image
+    float2 sourceUV = warpMap.Load(int3(dispatchThreadID.xy, 0));
+
+    // 2. Sample and write to the final projector output
+    outputTarget[dispatchThreadID.xy] = sourceRender.SampleLevel(linearSampler, sourceUV, 0);
+}
+----
+
+== 进阶：像素级精确融合与动态梯形校正
+
+Vulkan 能做到超出标准校准的精度：
+
+*   **像素级精确的边缘融合**：借助 Vulkan 的**子组操作**，你可以实现像素级精确的实时边缘融合。这让你能动态消除投影仪重叠区域的「热斑」。
+*   **动态梯形校正**：通过计算着色器与来自 OpenXR 的被追踪物体数据，你可以实现动态梯形校正——如果在会话期间投影仪被物理移动，变形贴图会实时更新。
+
+== 亮度叠加与边缘融合
+
+在多投影仪配置中，边缘会重叠。这块区域会比墙上其他地方亮一倍。为解决这个问题，我们在变形贴图中加入一个 alpha 通道来定义平滑的渐变。把最终颜色乘以这个 alpha，就能在整个墙面上保持均匀亮度。
+
+== 精度：双三次与 Sinc 过滤
+
+由于变形需要在非整数坐标上采样纹理，过滤质量至关重要。线性过滤虽然快，但会导致「模糊」。高端空间引擎往往在计算着色器中实现自定义的**双三次**或 **Lanczos** 过滤，以在坐标变换过程中保持锐度。
+
+TIP: 关于投影几何与变形的更多信息，请参阅官方 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#samplers[Vulkan 规范中关于采样器的章节]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc[下一页]

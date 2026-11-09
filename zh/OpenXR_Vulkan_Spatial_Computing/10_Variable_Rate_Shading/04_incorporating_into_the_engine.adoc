@@ -1,0 +1,82 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+把**可变速率着色（VRS）**集成进 `simple_game_engine`，让我们能在 `renderer_resources.cpp` 中更聪明地处理片元，从而释放巨大的性能提升。*目前这部分留作练习，由读者自行实现。*
+
+== 在后端启用 VRS
+
+在 `renderer_core.cpp` 中，我们必须在创建设备时启用 VRS 特性。
+
+[source,cpp]
+----
+// renderer_core.cpp
+bool Renderer::createLogicalDevice(bool enableValidationLayers) {
+    // ...
+    vk::PhysicalDeviceVulkan13Features vulkan13Features;
+    vulkan13Features.dynamicRendering = vk::True;
+
+    // NEW: Enable Fragment Shading Rate (VRS)
+    vk::PhysicalDeviceFragmentShadingRateFeaturesKHR vrsFeatures;
+    vrsFeatures.attachmentFragmentShadingRate = vk::True;
+    vrsFeatures.pipelineFragmentShadingRate = vk::True;
+
+    vulkan13Features.pNext = &vrsFeatures;
+    // ...
+}
+----
+
+== 动态注视驱动的 VRS
+
+在 `renderer_rendering.cpp` 中，我们更新 `Render` 循环，绑定一张标出用户当前注视位置的着色率图像。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ...
+    if (xrMode) {
+        // Query current gaze from OpenXR (Eye Tracking)
+        glm::vec2 gazeNDC = xrContext.getGazeNDC();
+
+        // Update the shading rate image (a low-res 8-bit image)
+        // High density (1x1) at gazeNDC, low density (4x4) at periphery
+        updateShadingRateImage(gazeNDC);
+
+        // Bind the shading rate attachment to our dynamic rendering info
+        vk::RenderingFragmentShadingRateAttachmentInfoKHR vrsAttachment{
+            .imageView = *vrsImageView,
+            .imageLayout = vk::ImageLayout::eFragmentShadingRateAttachmentOptimalKHR,
+            .shadingRateAttachmentTexelSize = vk::Extent2D(16, 16)
+        };
+
+        passInfo.pNext = &vrsAttachment;
+    }
+
+    commandBuffer.beginRendering(passInfo);
+    // ...
+}
+
+void Renderer::updateShadingRateImage(glm::vec2 gazeNDC) {
+    // 1. Map NDC (-1 to 1) to our shading rate image texels
+    // The image is low-res (e.g., 1/16th of the main display)
+    uint32_t gazeX = static_cast<uint32_t>((gazeNDC.x * 0.5f + 0.5f) * vrsWidth);
+    uint32_t gazeY = static_cast<uint32_t>((gazeNDC.y * 0.5f + 0.5f) * vrsHeight);
+
+    // 2. Fill the image: 1x1 (full rate) at gaze, 4x4 (low rate) at periphery
+    // We use a simple distance-based falloff
+    for (uint32_t y = 0; y < vrsHeight; ++y) {
+        for (uint32_t x = 0; x < vrsWidth; ++x) {
+            float dist = glm::distance(glm::vec2(x, y), glm::vec2(gazeX, gazeY));
+            vrsData[y * vrsWidth + x] = (dist < foveaRadius) ? 0x0 : 0x4; // 0x0=1x1, 0x4=4x4
+        }
+    }
+    // 3. Upload to GPU
+    vrsBuffer.upload(vrsData);
+}
+----
+
+== 为什么要做这些改动？
+
+通过把眼动追踪数据直接集成进 Vulkan 1.3 的渲染通道，我们实现了**动态注视点渲染（DFR）**。这让引擎在复杂的 PBR 场景中最多可节省 60% 的片元处理开销——只需把用户实际注视的那一小块区域渲染到完整细节。由于我们的引擎使用动态渲染，把 `vrsAttachment` 加到 `passInfo` 上不过是挂一个 `pNext` 的事。
+
+xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc[下一页]

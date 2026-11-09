@@ -1,0 +1,53 @@
+:pp: {plus}{plus}
+
+= OpenXLA：XLA、StableHLO 以及 Vulkan 的定位
+
+== 概述
+
+OpenXLA 是 XLA、StableHLO 及相关项目（包括 IREE）的总括，它们共同构成一套现代、开放的 ML 编译器栈。StableHLO 是许多框架都能导出到的标准化 IR（JAX 与 TensorFlow 最为直接），XLA 则提供成熟的、面向 CPU 与 GPU 后端的下沉能力。Vulkan 通常经 IREE 抵达——IREE 消费 StableHLO/MLIR 并生成 SPIR‑V。
+
+为什么要有这一页：在 IREE 一章中我们很早就提到了 StableHLO 和 XLA。这个短章节给出心智模型，让这些术语不再像行话。
+
+== 如何理解它
+
+把 StableHLO 当作你的模型导出后所说的语言。从这门共同语言出发，你为目标选择一个下游编译器。如果你要去 Vulkan，就用 IREE 把 StableHLO 下沉为 SPIR‑V，并发布一个录制 Vulkan 派发的小运行时。如果你的目标是 CUDA/ROCm/CPU，就留在 XLA 的后端（或其他下游）上，根本不碰 Vulkan。
+
+这种分离很有用：训练团队可以统一产出 StableHLO，而部署团队按平台选择正确的下游，无需改动训练侧导出。
+
+实用提示：目前从 JAX 与 TensorFlow 导出 StableHLO 最为直接；其他生态可能需要一次转换跳转。当你的最终目标是 Vulkan 时，优先走 StableHLO → IREE，这样你就留在本教程充分支持的路径上。
+
+== 一个微小的实用工作流（Vulkan 场景）
+
+从训练侧导出为 StableHLO（或转换得到），用 IREE 配合 `--iree-hal-target-backends=vulkan` 为 Vulkan 编译，然后在应用里通过 IREE 的运行时加载 `.vmfb`。完整的分步版本见 xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE（OpenXLA）：面向 ML 的提前编译与 JIT 编译]。
+
+如果你的团队在训练中已经使用 XLA，那么在以 Vulkan 为目标时，StableHLO/IREE 路径带来的摩擦最小。
+
+== 局限与预期
+
+OpenXLA/XLA 本身并不以「发布 Vulkan 二进制」的方式直接面向 Vulkan。Vulkan 是 IREE 的一等目标。把心智模型保持清晰：对本教程而言就是 StableHLO → IREE → SPIR‑V（Vulkan）。
+
+== 把 IREE 输出并入 Vulkan 应用
+
+IREE 把你的模型编译成产物（通常是 `.vmfb` 字节码或提前编译的模块），并通过 IREE 运行时执行。在 Vulkan 应用中，这看起来、感觉起来就像使用任何其他模型运行时（例如 ONNX Runtime 或 TFLite）：
+
+- 初始化运行时并选择 Vulkan HAL 后端
+- 加载编译产物
+- 创建输入/输出缓冲区（通常借助运行时辅助函数）
+- 按名字调用函数并回读结果
+
+换句话说，你把 IREE 的运行时库与你的应用一起嵌入，让它掌管 SPIR‑V 模块、描述符集和派发调度。
+
+=== 「我能在没有 IREE 运行时的情况下集成编译好的模型吗？」
+
+从概念上讲，IREE 会下沉为 SPIR‑V 内核加宿主侧调度逻辑；然而产物与运行时共享一套 ABI，它并不会作为「即插即用」的 SPIR‑V + 独立宿主代码导出。把内核抽取出来、在你自己的 Vulkan 引擎里重新实现宿主调度，理论上可行，但目前不是受支持、稳定的路径——你会依赖内部细节，并且需要复刻运行时的相当一部分（描述符管理、推送常量、同步、管线等）。
+
+本教程的实用建议：
+
+- 把 IREE 当作你要链接并调用的运行时，就像链接 ONNX Runtime 或 TFLite 那样。xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE 一章]展示了最小嵌入方式。
+- 如果你的应用需要更紧的互操作（例如共享 VkDevice 或内存），请寻找运行时受支持的钩子，而不是试图完全绕过它。
+
+== NNEF 互操作
+
+如果你的源是 NNEF，先转换为 ONNX 或 StableHLO。从 StableHLO 出发，按 IREE 流程抵达 Vulkan。这样管线保持简单且可重复。
+
+xref:ML_Inference/Third_Party_Libraries/14_mojo_max.adoc[上一章：Mojo / MAX：来自 Modular 的编译器驱动推理] | xref:ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc[下一章：选择合适的 ML 编译器]

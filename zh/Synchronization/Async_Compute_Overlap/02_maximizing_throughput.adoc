@@ -1,0 +1,99 @@
+:pp: {plus}{plus}
+= 最大化吞吐量：识别可重叠的工作
+
+== 找出 GPU 中的「空洞」
+
+要最大化 GPU 吞吐量，我们需要跳出命令缓冲区简单的线性执行方式。我们要找出那些**受延迟限制**的工作负载（大量时间花在等待内存或固定功能单元上），把它们与**受计算限制**的工作负载（大量使用 GPU 算术单元）配对。
+
+一个经典例子是**阴影通道**。当 GPU 忙于为阴影做顶点处理和光栅化仅深度几何时，许多计算与着色单元都闲在那里。这是一个完美的「空洞」，可以填入异步计算任务，比如物理模拟或遮挡剔除通道。
+
+== Simple Engine 案例研究：物理与音频计算
+
+在我们的 `Simple Engine` 中，有两个主要系统是异步计算的理想候选：**物理系统**（`physics_system.cpp`）和**音频 HRTF 系统**（`audio_system.cpp`）。
+
+`PhysicsSystem` 使用 GPU 加速的计算着色器（`shaders/physics.slang`）执行积分、碰撞检测等复杂模拟任务。同样，`AudioSystem` 使用计算着色器（`shaders/hrtf.slang`）在 GPU 上处理音频空间化（头相关传输函数）。
+
+目前，这两个系统都遵循**串行、阻塞**的模式。例如，物理模拟被提交到 GPU，而 CPU 立刻在栅栏上停顿：
+
+[,cpp]
+----
+// Sequential Physics Dispatch (Current Engine)
+physicsSystem->Update(deltaTime); // Internally calls SimulatePhysicsOnGPU
+
+// Inside PhysicsSystem::SimulatePhysicsOnGPU:
+// 1. Submit compute commands to computeQueue
+// 2. ReadbackGPUPhysicsData: blocks on a fence (CPU STALL!)
+----
+
+这种 CPU 侧的停顿是错失的重叠机会。要最大化吞吐量，我们可以利用引擎专用的**计算队列**（通过 `renderer->GetComputeQueue()` 获取）把它改造成异步流程。在帧的早期提交这些任务，只在数据确实需要时才同步，我们就能让图形与计算硬件单元都保持充分忙碌。
+
+除了物理与音频，引擎的 **Forward+ 渲染**路径（见 `ForwardPlus_Rendering.adoc`）也是另一个理想的重叠候选。Forward+ 计算通道（`forward_plus_cull.slang`）为屏幕上的每个瓦片构建光源列表。虽然这个计算通道*确实*需要当前帧的深度缓冲区来做有效的 Z 剔除，但它不必等整个几何通道完成。
+
+如果我们使用**时间线信号量**，就可以告诉计算队列只等到**深度预通道**完成。当图形队列继续主**不透明几何**渲染时，计算队列可以同时为同样的像素剔除光源，让计算密集的光照分配与光栅密集的几何处理完美重叠。
+
+== 依赖架构
+
+让这些工作负载得以重叠的关键，是我们构建依赖的方式。如果我们对所有事情都用一条全局时间线，就可能无意中造成瓶颈。相反，我们应当使用多条时间线信号量——GPU 的每个主要「引擎」各一条——让它们只在严格必要时才协调。
+
+例如，你的图形队列可以在自己的时间线上发出「几何完成」的值。你的计算队列可以等这个值再开始自己的工作，同时并行继续那些不依赖几何的任务。
+
+[,cpp]
+----
+// Compute queue waiting for graphics geometry completion
+auto computeWaitInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *graphicsTimeline,
+    .value = geometryFrameValue,
+    .stageMask = vk::PipelineStageFlagBits2::eComputeShader
+};
+
+auto computeSubmit = vk::SubmitInfo2{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &computeWaitInfo,
+    // ...
+};
+
+computeQueue.submit2(computeSubmit);
+----
+
+== 为重叠而提交
+
+仅仅有多个队列还不够。你还需要以硬件真正能并行的方式提交工作。在大多数现代硬件上，这意味着把「后台」计算工作提交到专用的异步计算队列。
+
+=== 识别专用队列
+
+在 Vulkan 中，队列被划分为**队列族**。要得到真正异步的计算队列，你应当寻找支持 `vk::QueueFlagBits::eCompute` 但*不*支持 `vk::QueueFlagBits::eGraphics` 的队列族。这保证了硬件有一条专用计算通路，不与图形单元共用同一个前端命令处理器。
+
+下面是我们引擎中识别这些专用队列族的方法：
+
+[,cpp]
+----
+uint32_t computeQueueFamilyIndex = std::numeric_limits<uint32_t>::max();
+auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+
+for (uint32_t i = 0; i < queueFamilies.size(); ++i) {
+    // Look for a family that has compute but NOT graphics for true async
+    if ((queueFamilies[i].queueFlags & vk::QueueFlagBits::eCompute) &&
+        !(queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics)) {
+        computeQueueFamilyIndex = i;
+        break;
+    }
+}
+
+// Fallback: if no dedicated compute family exists, use any that supports compute
+if (computeQueueFamilyIndex == std::numeric_limits<uint32_t>::max()) {
+    for (uint32_t i = 0; i < queueFamilies.size(); ++i) {
+        if (queueFamilies[i].queueFlags & vk::QueueFlagBits::eCompute) {
+            computeQueueFamilyIndex = i;
+            break;
+        }
+    }
+}
+----
+
+通过用这些专用队列把计算工作的提交与主图形循环解耦，你让驱动可以并发调度它们。如果图形队列短暂停住（例如等待显示或缓存刷新），计算队列就能顶上，让硬件保持忙碌。
+
+下一节，我们会看到一个具体实现：异步后处理。
+
+== 导航
+
+上一节：xref:Synchronization/Async_Compute_Overlap/01_introduction.adoc[异步计算与执行重叠：让 GPU 并行起来] | 下一节：xref:Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc[异步后处理：并行化帧的结束与开始]

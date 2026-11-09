@@ -58,11 +58,13 @@ image::images/MainEntry.png[Bistro 场景——一个细致的户外咖啡馆环
 
 - Linux/macOS（默认目标：仓库根目录下的 attachments/simple_engine/Assets/bistro）：
 +
-在终端运行 `cd attachments/simple_engine`，然后运行 `./fetch_bistro_assets.sh`。
+  $ cd attachments/simple_engine
+  $ ./fetch_bistro_assets.sh
 
 - Windows（默认目标：仓库根目录下的 attachments\simple_engine\Assets\bistro）：
 +
-在命令提示符中运行 `cd attachments\simple_engine`，然后运行 `fetch_bistro_assets.bat`。
+  > cd attachments\simple_engine
+  > fetch_bistro_assets.bat
 
 这些脚本使用 SSH（git@github.com:gpx1000/bistro.git），如果 SSH 不可用则回退到 HTTPS。如果安装了 Git LFS，大文件会自动拉取。
 

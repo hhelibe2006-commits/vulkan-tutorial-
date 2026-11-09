@@ -1,0 +1,46 @@
+:pp: {plus}{plus}
+= 自动化 QA 与无头 CI/CD
+
+测试空间引擎可以借助**无头运行时**和 AI 驱动的视觉分析实现自动化，从而在没有物理头显的情况下搭建健壮的 CI/CD 管线。
+
+== 生态视角
+
+本章属于类别：**使用 Vulkan 与 OpenXR 运行时**。
+
+用 `XR_EXT_headless` 扩展把空间引擎接入自动化 CI/CD 管线，是在规模化开发中保持代码质量的标配。你必须用这些扩展创建无显示会话，让高速构建系统来管理。
+
+== 概念：无头运行时
+
+**无头运行时**（例如 OpenXR 模拟器）让我们的引擎无需物理头显或 GPU 也能运行。
+
+1.  **模拟追踪数据**：模拟器提供预先录制或脚本化的位姿与控制器输入。
+2.  **交换链捕获**：引擎渲染到交换链，模拟器则把这些帧直接捕获到磁盘。
+3.  **视觉验证**：我们把这些帧与「黄金标准」基线对比，确保没有回归。
+
+在这种模式下，运行时会生成完全确定性的位姿，保证每次 CI 运行都完全一致，也便于启用诊断层检查线程或句柄问题。
+
+== 用于回归检测的 AI 视觉分析
+
+传统的「像素级精确」比对在空间计算中往往失效，因为重投影或 MSAA 会带来细微差异。我们改用 **AI 视觉模型**来检测特定的伪影：
+
+*   **不对称视锥错误**：检测视图边缘的「拉伸」或「挤压」。
+*   **多视图不一致**：检查某只眼睛是否缺失了物体。
+*   **时域掩码闪烁**：识别**语义遮挡**掩码中的不稳定。
+
+== CI 中的性能监控
+
+我们在每次构建中追踪**空间性能指标**，防止性能「蠕变」：
+*   **提交延迟**：`xrWaitFrame` 到 `xrEndFrame` 之间的总时间。
+*   **等待到开始的间隙**：CPU 花在等待延迟锁存同步上的时间。
+*   **内存占用**：4D **光场**与**语义遮挡**缓冲区占用的 VRAM。
+
+== 进阶：自动化视觉测试与镜头模拟
+
+Vulkan 让自动化 QA 的深度超越标准的无头执行：
+
+*   **自动化视觉回归**：借助 Vulkan 的**离屏渲染**与**图像回读**，你可以捕获每一帧，并用 SSIM（结构相似性指数）与黄金图像对比，在无需人工介入的情况下确保视觉正确。
+*   **物理镜头模拟**：你可以用 Vulkan **计算着色器**在 CI 管线中模拟镜头伪影（神光、色差），在部署到硬件之前测试 UI 与内容透过真实镜片会呈现成什么样。
+
+TIP: 关于无头测试与模拟器的更多信息，请查阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_EXT_headless[XR_EXT_headless 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/02_spatial_debugging.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/04_incorporating_into_the_engine.adoc[下一页]

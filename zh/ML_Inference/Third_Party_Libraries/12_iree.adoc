@@ -1,0 +1,339 @@
+:pp: {plus}{plus}
+
+= IREE（OpenXLA）：面向 ML 的提前编译与 JIT 编译
+
+== 概述
+
+IREE 是一个 ML 编译器与运行时，能把模型下沉为面向多种后端的高效可执行文件——Vulkan、Metal、CUDA 和 CPU——并高度重视可移植性与小巧的运行时占用。从概念上讲，IREE 接收一个高层模型（通常采用 StableHLO 或其他 MLIR 方言），施加图级与内核级优化，再生成后端专属代码（Vulkan 对应 SPIR‑V）。你把编译产物和一个极小的运行时一起发布，然后像调用普通库 API 那样调用其中的函数。
+
+如果你想在不亲手写着色器的前提下获得「手写着色器」级别的性能，这条路正合适。它恰好契合本教程的第三条路径：在 Vulkan 上做编译器驱动的 ML。
+
+=== 如果你不熟悉 MLIR/StableHLO/XLA（60 秒入门）
+
+本章会反复出现 MLIR、StableHLO、XLA 和 OpenXLA 这几个术语。先给出简明定义，免得你迷路：
+
+- MLIR：一套用于构建中间表示（IR）与变换的编译器基础设施。MLIR 把概念组织成「方言」（运算与类型的集合），用来表示不同阶段或领域。IREE 内部使用 MLIR，把 ML 图下沉到 Vulkan（经 SPIR‑V）之类的目标。StableHLO 本身就是一个 MLIR 方言。参见 xref:ML_Inference/glossary.adoc[术语表：机器学习推理]。
+- StableHLO：面向 ML 图的标准化中间表示（IR）。可以把它理解为神经网络从框架导出后的可移植「汇编语言」。许多工具都能生成或读取它。
+- XLA：一个成熟的编译器（来自 OpenXLA 项目），主要由 TensorFlow/JAX 用来把 StableHLO/HLO 下沉到 CPU/GPU 后端。
+- IREE：OpenXLA 的另一个子项目，专注于为 Vulkan（经 SPIR‑V）、Metal、CUDA 和 CPU 等目标产出可部署的产物，并配上一个小巧的运行时。
+
+对 Vulkan 而言，典型路径是：StableHLO → IREE → SPIR‑V（在 Vulkan 上运行）。如果你的模型还不是 StableHLO，别担心——可以从 ONNX 或 TFLite 起步再转换。背景知识见 xref:ML_Inference/Third_Party_Libraries/15_openxla.adoc[OpenXLA：XLA、StableHLO 以及 Vulkan 的定位]，简明定义（含 MLIR）则见 xref:ML_Inference/glossary.adoc[术语表：机器学习推理]。
+
+== 本章你将构建什么
+
+到本章结束时，你将得到一条可重复的管线，以及满足下列要求的应用代码：
+
+- 把训练好的模型转换/导出为 IREE 能理解的 StableHLO/MLIR
+- 把该模型编译成面向 Vulkan 的 `.vmfb` 产物
+- 从 C++ 加载模块，并用新输入反复执行
+- 把产物与你的应用一起打包（桌面与 Android/嵌入式）
+- 出问题时知道去哪里排查（不支持的运算、形状、设备）
+
+== 何时使用 IREE
+
+对大多数游戏和应用来说，ONNX Runtime 或 TensorFlow Lite 能让你更快进入生产。在下列情况下选择 IREE：
+
+- 你想要带 AOT 编译的小运行时，以适配紧凑的部署环境（嵌入式/移动端/桌面工具）。
+- 你需要把 Vulkan 当作一等目标（发布 SPIR‑V，在任何支持 Vulkan 计算的厂商硬件上运行）。
+- 你希望在多个厂商之间获得可移植的性能，又不依赖厂商 SDK。
+- 你接受在构建或 CI 中加入编译步骤，并发布编译好的模块。
+
+== 端到端工作流（实战）
+
+目前最简单的做法是：导出为 StableHLO（或通过上游工具导入），用 `iree-compile` 针对 Vulkan 编译，然后从 C/C++ 加载并调用编译好的模块。
+
+=== 0）需要的工具
+
+在讲概念或演示命令之前，先确保你真能把这些命令跑起来。你会用到两样东西：IREE 命令行工具（编译器及若干辅助工具），以及你的 C/C++ 应用所链接的 IREE 运行时。对日常桌面开发来说，最快的路径是用 Python wheel 安装 CLI，然后确认它们已在 PATH 中。
+
+[source,bash]
+----
+python -m pip install --upgrade iree-compiler iree-runtime
+
+# Sanity check: these should print help/version text
+iree-compile --version
+iree-run-module --help
+----
+
+你的应用需要链接 IREE 的小型 C 运行时。有些平台可以直接使用预编译包；另一些平台则要从源码构建，并把 CMake 包/头文件安装到项目能找到的已知前缀。本章稍后接好一个最小 C++ 程序时，会给出 CMake 相关说明。
+
+入门所需的全部工具就是这些：一个在构建或 CI 中运行的编译器，以及一个链接进应用的轻量运行时。
+
+== 命令之前，先讲思路
+
+先建立心智模型。你从训练好的模型出发，把它变成编译器友好的形式（最常见的是 StableHLO，它是一种 MLIR 方言）。IREE 接收该模型、进行优化并下沉为目标代码——Vulkan 对应 SPIR‑V——然后打包成单个文件（`.vmfb`）。运行时，你的应用加载这个文件，把 IREE 指向你的 Vulkan 设备，并按名字调用函数。无需编写着色器，也无需驱动专属 SDK——只有一个极小的运行时替你录制 Vulkan 计算工作。
+
+如果 MLIR 或 StableHLO 对你是新名词，就把 MLIR 当作编译器框架，把 StableHLO 当作「可移植的 ML 汇编」。XLA 与 IREE 都属于 OpenXLA：XLA 常被 TensorFlow/JAX 使用；IREE 则是我们用来抵达 Vulkan 的、面向部署的路径。简明定义见 xref:ML_Inference/glossary.adoc[术语表：机器学习推理]，简短说明见 xref:ML_Inference/Third_Party_Libraries/15_openxla.adoc[OpenXLA：XLA、StableHLO 以及 Vulkan 的定位]。本章你只需记住一条流程：StableHLO → IREE → SPIR‑V（在 Vulkan 上运行）。
+
+== 本章你将构建什么
+
+我们将构建一条可复制到任何项目的可重复管线：把训练好的模型导出为 IREE 能理解的形式，编译成面向 Vulkan 的 `.vmfb`，从 C++ 加载，并在循环中用新输入调用。过程中还会讨论如何把产物与你的应用放在一起打包，以及如何诊断常见的「首次运行」问题（函数名错误、不支持的运算、形状不匹配、设备问题）。
+
+== 何时使用 IREE
+
+对许多应用而言，ONNX Runtime 或 TensorFlow Lite 是通往生产的最快路径。当你想要小运行时与提前编译、需要 Vulkan 作为跨厂商的一等目标，并且乐意在构建或 CI 中执行编译步骤、把编译好的模块作为应用的一部分发布时，就该选 IREE。
+
+== 端到端工作流
+
+日常流程是：导出为 StableHLO（或从你的框架转换），用 `iree-compile` 为 Vulkan 编译，然后从 C/C++ 加载并调用编译好的模块。
+
+// Tools were covered up front; we keep the detailed commands above.
+
+=== 1）导出或准备模型
+
+先把训练好的模型导出成编译器能理解的形式。StableHLO 是最直接的路线。如果你从 ONNX 或 TFLite 出发，就用你所在框架生态的当前工具转换为 StableHLO——具体命令会演进，但这条路已经走得很熟。这里尽量少用 Python；目标只是产出 `iree-compile` 能消费的 StableHLO（或 MLIR）。
+
+顺便把形状与布局固定下来。如果你的函数带有动态维度，就确定运行时实际会用的维度，并让导出与调用保持一致。还要选择与你的 Vulkan 前处理匹配的张量布局（NCHW 或 NHWC），免得之后再折腾数据重排。
+
+=== 2）为 Vulkan 编译
+
+现在编译成可部署的模块（`.vmfb`）：
+
+[source,bash]
+----
+iree-compile model.stablehlo \
+  --iree-hal-target-backends=vulkan \
+  --o=model_vulkan.vmfb
+----
+
+`--iree-hal-target-backends=vulkan` 这个标志选择 Vulkan 后端（IREE 会在底层生成 SPIR‑V）。你还可以为数值与布局添加标志——在验证正确性之后，fp16 往往是不错的下一步——但先保持简单，先做测量。
+
+不写任何代码就能验证编译好的模块：
+
+[source,bash]
+----
+# List exported functions and inputs/outputs
+iree-run-module --module=model_vulkan.vmfb --list-functions
+
+# Run a function with randomly generated inputs (useful smoke test)
+iree-run-module \
+  --module=model_vulkan.vmfb \
+  --function=main \
+  --input=1x3x224x224xf32=0  # shape and dtype; values auto-filled
+----
+
+如果你的函数名不是 `main`，就用导出时实际生成的名字。
+
+=== 3）最小运行时：加载与调用
+
+IREE 的运行时是一套小巧的 C API。下面是一个最小、自包含的骨架：加载编译好的模块、创建 Vulkan 设备并运行入口函数。为简洁起见用 C++ 书写，但使用的是 C API 类型。
+
+[source,cpp]
+----
+#include <iree/base/api.h>
+#include <iree/hal/api.h>
+#include <iree/hal/drivers/vulkan/api.h>
+#include <iree/vm/api.h>
+
+// Utility that checks an iree_status_t and aborts on failure.
+static void IREE_CHECK_OK(iree_status_t status) {
+  if (IREE_UNLIKELY(!iree_status_is_ok(status))) {
+    iree_status_fprint(stderr, status);
+    abort();
+  }
+}
+
+int main(int argc, char** argv) {
+  iree_allocator_t host_allocator = iree_allocator_system();
+
+  // 1) VM instance
+  iree_vm_instance_t* instance = NULL;
+  IREE_CHECK_OK(iree_vm_instance_create(IREE_VM_TYPE_CAPACITY_DEFAULT, host_allocator, &instance));
+
+  // 2) Create Vulkan HAL driver and device
+  iree_hal_driver_t* driver = NULL;
+  IREE_CHECK_OK(iree_hal_vulkan_driver_create(IREE_SV("vulkan"), host_allocator, &driver));
+
+  iree_hal_device_t* device = NULL;
+  IREE_CHECK_OK(iree_hal_driver_create_default_device(driver, host_allocator, &device));
+
+  // 3) Load compiled module (.vmfb)
+  const char* vmfb_path = (argc > 1) ? argv[1] : "model_vulkan.vmfb";
+  iree_vm_module_t* bytecode_module = NULL;
+  IREE_CHECK_OK(iree_vm_bytecode_module_load_from_file(
+      iree_make_cstring_view(vmfb_path), IREE_VM_BYTECODE_MODULE_FLAG_NONE,
+      host_allocator, host_allocator, &bytecode_module));
+
+  // 4) HAL module gives programs access to the device
+  iree_vm_module_t* hal_module = NULL;
+  IREE_CHECK_OK(iree_hal_module_create(device, host_allocator, &hal_module));
+
+  // 5) Create a context with HAL + your module
+  iree_vm_module_t* modules[] = {hal_module, bytecode_module};
+  iree_vm_context_t* context = NULL;
+  IREE_CHECK_OK(iree_vm_context_create_with_modules(instance, IREE_ARRAYSIZE(modules),
+                                                    modules, host_allocator, &context));
+
+  // 6) Look up the exported function
+  // Replace "main" with your model’s exported entry (e.g., module.function)
+  iree_string_view_t entry_name = iree_make_cstring_view("main");
+  iree_vm_function_t function;
+  IREE_CHECK_OK(iree_vm_context_resolve_function(context, entry_name, &function));
+
+  // 7) Prepare inputs (simple example: one 1D float tensor)
+  const float input_data[4] = {1, 2, 3, 4};
+  iree_hal_buffer_params_t params = {
+      .type = IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE,
+      .usage = IREE_HAL_BUFFER_USAGE_DEFAULT | IREE_HAL_BUFFER_USAGE_TRANSFER,
+  };
+  iree_hal_buffer_view_t* input = NULL;
+  IREE_CHECK_OK(iree_hal_buffer_view_allocate_and_assign(
+      device, /*shape_rank=*/1, (iree_hal_dim_t[]){4}, IREE_HAL_ELEMENT_TYPE_FLOAT_32,
+      IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR, params, sizeof(input_data),
+      (const void*)input_data, &input));
+
+  iree_vm_list_t* inputs = NULL;
+  IREE_CHECK_OK(iree_vm_list_create(/*element_type=*/NULL, 1, host_allocator, &inputs));
+  iree_vm_ref_t input_ref = iree_hal_buffer_view_move_ref(input);
+  IREE_CHECK_OK(iree_vm_list_push_ref_move(inputs, &input_ref));
+
+  // 8) Invoke
+  iree_vm_list_t* outputs = NULL;
+  IREE_CHECK_OK(iree_vm_invoke(context, function, IREE_VM_INVOCATION_FLAG_NONE,
+                               /*policy=*/NULL, inputs, &outputs, host_allocator));
+
+  // 9) Read back the first output as a buffer view
+  iree_hal_buffer_view_t* out_view = NULL;
+  iree_vm_ref_t out_ref = iree_vm_list_get_ref_deref(outputs, 0);
+  out_view = (iree_hal_buffer_view_t*)out_ref.ptr;
+
+  // (Optional) Map or copy to host to inspect results
+  iree_host_size_t out_element_count = 0;
+  IREE_CHECK_OK(iree_hal_buffer_view_compute_num_elements(out_view, &out_element_count));
+  std::vector<float> host_out(out_element_count);
+
+  iree_hal_buffer_t* out_buffer = iree_hal_buffer_view_buffer(out_view);
+  IREE_CHECK_OK(iree_hal_device_transfer_d2h(
+      device, out_buffer, /*source_offset=*/0,
+      host_out.data(), host_out.size() * sizeof(float), IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+      host_allocator));
+
+  // Print first few values (for sanity)
+  for (int i = 0; i < std::min<size_t>(host_out.size(), 4); ++i) {
+    fprintf(stdout, "out[%d]=%f\n", i, host_out[i]);
+  }
+
+  // Cleanup (omitted for brevity)
+  return 0;
+}
+----
+
+这是刻意做成最小化的。真实应用会池化设备/队列、复用列表并预分配缓冲区。HAL 模块把编译好的程序与你的 Vulkan 设备桥接起来，从而在底层把派发录制并在 Vulkan 上执行。
+
+==== 高效复用输入/输出
+
+对实时应用来说，你会反复调用同一个函数。复用 `iree_vm_context_t`，保留一块预分配的输入 `iree_hal_buffer_view_t` 并每帧原地更新，同时让 `iree_vm_list_t` 容器常驻。不要每次调用都重建 VM、驱动、设备和上下文。
+
+==== 函数名与签名
+
+导出的函数以名字标识（例如 `module.my_inference`）。按上文所示用 `--list-functions` 列出它们。如果你的模型有多个输入或动态形状，就准备一个 `iree_vm_list_t`，其中的项按期望的顺序与形状排列。秩/数据类型不匹配时，调用会返回一个带说明的 `iree_status_t`。
+
+=== 4）与你的 Vulkan 应用集成
+
+最简单的集成方式是让 IREE 拥有自己的 Vulkan 设备，并在专用的计算队列上运行。如果你需要更紧的控制（共享已有的 `VkInstance/VkDevice`），IREE 的 Vulkan HAL 支持包装外部创建的 Vulkan 句柄。先从简单路径开始；当你需要与渲染器显式互操作或同步时，再转向共享设备。
+
+今天就能落地的两种实用模式：
+
+1）边界处简单的主机拷贝（推荐优先采用）：
+
+   - 在 Vulkan 中前处理 → 把结果拷贝到主机可见缓冲区 → 上传到 IREE 输入缓冲区
+   - 运行 IREE → 需要时把输出拷回主机 → 在 Vulkan 中上传/消费
+   这在验证正确性的阶段易于校验，也能隔离关注点。
+
+2）单一所有者设备（进阶）：
+
+   - 让 IREE 创建 Vulkan 设备并运行推理；把你自己的 Vulkan 工作放在独立队列（或分时复用）上，并通过传输传递数据。当拷贝成为瓶颈时，再探索共享/包装你的设备，让 IREE 录制到你用于渲染的同一个 VkDevice 中。这需要谨慎的同步，并与 IREE 的 HAL 做版本匹配——等应用跑通之后再这么做。
+
+我们让前处理/后处理留在 Vulkan 中，以与本教程其余部分保持一致：你的图形/计算代码负责图像与可视化；IREE 负责模型计算。
+
+== 构建与打包说明（CMake）
+
+如何链接运行时取决于你获取 IREE 的方式：
+
+- 如果你以 CMake 包形式安装 IREE：使用 `find_package`，并链接你的安装所提供的运行时与 Vulkan HAL 目标。
+- 如果你从源码构建且本地已有头文件/库：直接添加包含路径与库。
+
+示例（把目标名调整为你安装中的实际名称）：
+
+[source,cmake]
+----
+cmake_minimum_required(VERSION 3.22)
+project(iree_demo LANGUAGES CXX)
+
+find_package(Threads REQUIRED)
+# If available in your environment:
+# find_package(iree_runtime CONFIG REQUIRED)
+
+add_executable(app main.cpp)
+# target_link_libraries(app PRIVATE iree::runtime iree::hal::vulkan Threads::Threads)
+
+# Fallback: manually add include dirs and libs from your IREE build/install
+# target_include_directories(app PRIVATE ${IREE_INCLUDE_DIRS})
+# target_link_libraries(app PRIVATE ${IREE_LIBS})
+----
+
+把 `.vmfb` 与可执行文件放在一起，或放进游戏/应用的资产目录。按相对路径加载它，或通过你引擎的虚拟文件系统加载。
+
+== 前处理/后处理
+
+IREE 专注于模型本身。按本教程其他部分的说明，把图像前处理与后处理留在 Vulkan（或 CPU）中。常见模式是：
+
+1）用 Vulkan 计算通道把图像缩放/归一化到张量缓冲区
+2）在该张量上调用 IREE
+3）用 Vulkan 通道（或 CPU）做后处理/可视化
+
+这样能把拷贝降到最低，并让你用异步计算重叠工作。
+
+== 验证你的管线
+
+在深入集成之前，先快速证明正确性：
+
+1）用你的实际输入张量通过 `iree-run-module` 运行模型，并把输出捕获到磁盘。
+2）在 CPU 上用 PyTorch/ONNX Runtime 运行同一模型并保存输出。
+3）做数值比较（MAE/MSE）。如果差异显著，先修正导出/归一化。
+
+== 数值与性能技巧
+
+- 模型允许时优先使用 fp16。用启用 fp16 运算的标志编译并测量。
+- 在有益之处做批处理；IREE 对融合内核处理得很好，但你仍要付出内存带宽的代价。
+- 用你的 GPU 工具做性能分析。即便是编译器生成的内核，也受内存访问模式约束。
+
+其他常常起作用的实用选项：
+
+- 避免不必要的布局转换。让前处理的布局与导出图所期望的一致。
+- 让张量留在设备本地并复用分配。每帧尽量少做重建。
+- 测量端到端延迟（包含拷贝）。再快的核也可能输给糟糕的管线衔接。
+
+== Android 与嵌入式说明
+
+- 为目标交叉编译 IREE 运行时（Android NDK 或你的嵌入式工具链），并把 `.vmfb` 随资产一起发布。
+- 在桌面与移动端使用同一个 `--iree-hal-target-backends=vulkan` 模块；Vulkan 让它保持可移植。
+- 只链接需要的后端（例如 Vulkan + VM 字节码），让二进制保持小巧。
+
+Android 上的实际部署步骤：
+
+1）在构建机上编译 `.vmfb`，放到 `app/src/main/assets/` 下。
+2）为你的 ABI（例如 `arm64-v8a`）构建 IREE 运行时，并在 NDK 项目中链接它。
+3）启动时加载资产，创建一次 VM/上下文/设备，并在各帧间复用。
+4）使用异步计算与时间线信号量，让传输与推理和渲染重叠。
+
+== NNEF 互操作
+
+如果你的源格式是 NNEF，先转换为 ONNX 或 StableHLO。之后管线相同：用 `iree-compile` 编译到 Vulkan，用运行时加载并调用。我们会在嵌入式 NNEF 一章给出具体的端到端示例。
+
+== 故障排查
+
+- 调用时报「找不到函数」：用 `--list-functions` 列出函数并使用导出的名字。确保你发布的模块就是最近一次编译出的那个。
+- 编译时报「不支持的运算」：简化模型或更换导出路径；确认该算子集在你的版本上被 StableHLO/IREE 支持。
+- 形状/数据类型不匹配：检查运行时的张量秩与元素类型是否与编译出的签名完全一致。在调用处打印形状。
+- Vulkan 设备/实例错误：先用更简单的系统（单 GPU 桌面）尝试，关闭验证层，并确认一个最小 Vulkan 应用能在这台机器上跑通。
+
+== 交付清单
+
+- 模型导出已脚本化并纳入版本管理（在 CI 中对 `.vmfb` 做哈希）
+- `iree-run-module` 与黄金参考的一致性检查通过
+- 应用只创建一次 VM/上下文/设备并复用缓冲区
+- 前处理/后处理在 Vulkan 中运行，拷贝被最小化并重叠
+- Android/嵌入式构建只使用必需后端以压缩体积
+
+xref:ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc[上一章：ML 编译器：概览与使用时机] | xref:ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc[下一章：Apache TVM]

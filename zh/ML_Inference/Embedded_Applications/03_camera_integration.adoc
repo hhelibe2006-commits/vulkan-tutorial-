@@ -1,0 +1,318 @@
+= 相机集成：零拷贝管线
+:pp: {plus}{plus}
+:stem: latexmath
+
+在桌面应用中，相机集成通常被当作已经解决的问题——你用 OpenCV 这类库，一次函数调用就取到一帧，然后上传到 GPU。在拥有 32GB 内存和 300W GPU 的高端 PC 上，马虎一点也无所谓。但在**嵌入式系统**的世界里，马虎的代码就是产品的死刑判决。
+
+一帧标准 1080p RGB 画面占 latexmath:[\approx 6\text{MB}] 内存。如果你走「桌面路线」——把这一帧从内核拷贝到用户空间，再从 OpenCV 拷贝到 Vulkan 暂存缓冲区，最后拷贝到 GPU——那么每一帧你都搬运了 **18MB 数据**。按 60 FPS 计算，仅仅「搬像素」就占用了超过 **1 GB/s** 的内存带宽。在 Raspberry Pi 或 Jetson Nano 上，这笔带宽税足以压满内存总线，让你的 ML 推理慢如蜗牛、帧率下降、SoC 过热。
+
+本章我们要学习嵌入式视觉的「圣杯」：**零拷贝管线**。我们会探索如何用 **V4L2** 和 **dmabuf**，把像素从传感器直接送进 Vulkan 计算着色器，全程不经过任何一次 CPU 侧的内存拷贝。
+
+== V4L2 基础：与传感器对话
+
+Linux 通过 link:https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/v4l2.html[**Video for Linux 2 (V4L2)**] API 与相机打交道。为了获得最高速度，我们不使用朴素的 `read()` 调用（它会执行一次缓慢的内核到用户拷贝），而是使用**带内存映射的流式 I/O（MMAP）**。
+
+=== IOCTL 生命周期：管理传感器
+
+与 V4L2 的通信通过 `ioctl`（Input/Output Control）调用完成。生产级相机管线遵循严格的状态转换顺序，你必须手动管理这些状态。
+
+[cols="1,3"]
+|===
+| IOCTL 命令 | 用途
+
+| `VIDIOC_S_FMT` | 设置像素格式（例如 YUYV）和分辨率。
+| `VIDIOC_REQBUFS` | 在内核中分配一个缓冲区池。
+| `VIDIOC_QUERYBUF` | 获取每个缓冲区的物理内存偏移量。
+| `VIDIOC_EXPBUF` | **魔法步骤**：把缓冲区导出为 `dmabuf` 文件描述符。
+| `VIDIOC_QBUF` | 把一个缓冲区交给内核，等待传感器填充。
+| `VIDIOC_STREAMON` | 启动传感器的 DMA 引擎。
+| `VIDIOC_DQBUF` | 从内核取回一个已填充的缓冲区。
+|===
+
+=== 深入剖析：缓冲区协商
+开始流式传输之前，你必须与内核协商缓冲区数量。对于高速 ML，我们通常使用**三缓冲**（3 个缓冲区）或**四缓冲**（4 个缓冲区）。
+
+* **缓冲区 1**：正由相机传感器填充（硬件持有）。
+* **缓冲区 2**：正由 Vulkan ML 引擎处理（GPU 持有）。
+* **缓冲区 3**：在队列中等待下一轮填充。
+
+这种流水线设计确保传感器永远不必等待 GPU，反之亦然。
+
+[source,cpp]
+----
+// Request 4 buffers from the kernel
+v4l2_requestbuffers req = {
+    .count = 4,
+    .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+    .memory = V4L2_MEMORY_MMAP
+};
+if (ioctl(fd, VIDIOC_REQBUFS, &req) < 0) {
+    perror("Requesting buffers failed");
+}
+----
+
+=== 初始化设备
+开始流式传输之前，我们必须找到正确的 `/dev/videoX` 节点并配置它。嵌入式设备往往有多个节点（例如 `/dev/video0` 对应传感器，`/dev/video1` 对应元数据）。你可以用 `v4l2-ctl` 工具检查你的硬件：
+
+[source,bash]
+----
+# List all video devices and their capabilities
+v4l2-ctl --list-devices
+# List supported formats for /dev/video0
+v4l2-ctl -d /dev/video0 --list-formats-ext
+----
+
+[source,cpp]
+----
+// 1. Open the camera device
+// We open in Read/Write mode because ioctls require both.
+int fd = open("/dev/video0", O_RDWR);
+
+// 2. Set Format (YUYV 1080p)
+// YUYV is the native format for most MIPI CSI cameras.
+v4l2_format fmt = {
+    .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+    .fmt = { .pix = {
+        .width = 1920,
+        .height = 1080,
+        .pixelformat = V4L2_PIX_FMT_YUYV,
+        .field = V4L2_FIELD_NONE
+    }}
+};
+if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+    throw std::runtime_error("Failed to set V4L2 format");
+}
+----
+
+=== 内存映射（MMAP）与 DMA-BUF 的对比
+V4L2 支持两种主要的显存访问方式：
+1.  **V4L2_MEMORY_MMAP**：驱动在内核中分配内存，你把它「映射」到自己的进程里。这对纯 CPU 处理非常合适。
+2.  **V4L2_MEMORY_DMABUF**：由你分配内存（例如在 Vulkan 中），然后把文件描述符交给相机。
+
+本章我们采用**把 MMAP 导出为 DMA-BUF** 的路径。这是支持最广的方法，因为它让相机驱动（它清楚自己的对齐要求）来分配内存，我们只需把这部分内存「导入」Vulkan。
+
+== 零拷贝的秘密：`dmabuf`
+
+**dmabuf** 是内核层面指向一段物理 RAM 的句柄。可以把它看作一个能跨越不同硬件驱动边界的指针。把 V4L2 缓冲区导出为 dmabuf 后，我们就能告诉 GPU：「别自己分配内存了，直接看这个物理地址上的内存。」
+
+.零拷贝 dmabuf 管线
+image::images/ML_Inference/Embedded_Applications/zero_copy_pipeline.svg[示意图：V4L2 传感器与 Vulkan GPU 通过 dmabuf 共享物理内存, 800]
+
+=== 阶段 1：从 V4L2 导出
+我们向相机驱动请求一个文件描述符，它代表某个具体缓冲区的物理内存。
+
+[source,cpp]
+----
+v4l2_exportbuffer expbuf = {
+    .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+    .index = i // The index of the buffer (usually 0 to 3)
+};
+if (ioctl(fd, VIDIOC_EXPBUF, &expbuf) < 0) {
+    perror("Exporting dmabuf failed");
+}
+// This integer is a standard File Descriptor.
+// You can send it to other processes or drivers!
+int sharedFd = expbuf.fd;
+----
+
+=== 阶段 2：导入 Vulkan
+我们告诉 Vulkan 要使用这块外部内存。这需要 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html[`VK_KHR_external_memory_fd`] 扩展。
+
+[source,cpp]
+----
+// 1. Define External Memory Properties
+// We tell Vulkan that this memory comes from a DMA-BUF handle.
+vk::ImportMemoryFdInfoKHR importInfo{
+    .handleType = vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT,
+    .fd = sharedFd
+};
+
+vk::MemoryAllocateInfo allocInfo{
+    .pNext = &importInfo,
+    .allocationSize = bufferSize, // This must match the V4L2 buffer length
+    .memoryTypeIndex = findDmabufCompatibleMemoryType()
+};
+
+// 2. Allocate 'External' Memory
+// Note: Vulkan now 'shares' ownership of the memory with the kernel.
+// It does not perform a copy; it simply maps the physical address.
+vk::raii::DeviceMemory vulkanMemory = device.allocateMemory(allocInfo);
+
+// 3. Bind to a Linear Image
+// Camera sensors write data in 'Linear' order (pixel by pixel).
+// Most GPUs prefer 'Tiled' order, but we MUST use linear here.
+vk::ImageCreateInfo imageInfo{
+    .imageType = vk::ImageType::e2D,
+    .format = vk::Format::eG8B8G8R8G8B8G8R8_422_Unorm, // YUYV
+    .tiling = vk::ImageTiling::eLinear,
+    .usage = vk::ImageUsageFlagBits::eSampled,
+    .extent = {1920, 1080, 1}
+};
+vk::raii::Image cameraImage = device.createImage(imageInfo);
+cameraImage.bindMemory(*vulkanMemory, 0);
+----
+
+**回报**：你实现了 latexmath:[100\%] 的 CPU 开销节省。像素落到 RAM 里，GPU 从同一块 RAM 读取它们。CPU 全程没有碰过图像的一个字节。
+
+== 理解 YUV：嵌入式的现实
+
+嵌入式传感器很少输出 RGB，通常输出 **YUV422（YUYV）**。这是电视历史留下的产物，但至今仍然有用，因为它允许简单的压缩。你可以查看各种 link:https://fourcc.org/yuv.php[YUV 格式变体] 来理解它们的内存布局。人眼对亮度（Luminance）远比色彩（Chrominance）敏感。
+
+=== 宏像素布局
+在 **YUYV** 码流中，像素成对打包以节省空间。每 4 个字节包含**两个**像素：
+`[Y0, U, Y1, V]`
+
+*   **像素 0** 用 `(Y0, U, V)` 重建。
+*   **像素 1** 用 `(Y1, U, V)` 重建。
+
+这意味着色度（U 和 V）由两个相邻像素共享。与 RGB888 相比，带宽因此降低 33%。但这也意味着你的 Vulkan 着色器不能简单地读一个 `vec4`，它必须理解这种布局。
+
+=== YUYV 转 RGB 的数学
+我们使用 **BT.601** 色彩空间系数。从归一化 YUV latexmath:[[0, 1]] 到 RGB 的变换是一个线性矩阵乘法：
+
+[latexmath]
+++++
+\begin{bmatrix} R \\ G \\ B \end{bmatrix} = \begin{bmatrix} 1.0 & 0.0 & 1.402 \\ 1.0 & -0.344 & -0.714 \\ 1.0 & 1.772 & 0.0 \end{bmatrix} \begin{bmatrix} Y \\ U - 0.5 \\ V - 0.5 \end{bmatrix}
+++++
+
+*（注：我们从 U 和 V 中减去 0.5，因为色度是有符号的，在归一化范围内以 0.5 为中心。）*
+
+=== 进阶：NV12 多平面挑战
+虽然 YUYV 在 USB 相机上很常见，但高性能 MIPI CSI 传感器常用 **NV12**。
+
+在 NV12 中，图像被拆分成两个独立的内存平面：
+
+1.  **亮度（Y）平面**：全分辨率的灰度图像。
+2.  **色度（UV）平面**：半分辨率（2x2 下采样）的平面，U 和 V 交错存放。
+
+这种格式对内存总线更高效，但要求我们把**两个独立的 DMA-BUF**（或带两个偏移量的一个 DMA-BUF）导入 Vulkan。
+
+[source,cpp]
+----
+// Importing a multi-planar NV12 image
+vk::ExternalFormatANDROID externalFormat{ .externalFormat = 0 }; // Vendor specific
+
+vk::ImageCreateInfo imageInfo{
+    .pNext = &externalFormat,
+    .imageType = vk::ImageType::e2D,
+    .format = vk::Format::eG8B8R8_2Plane420Unorm, // NV12
+    .extent = {1920, 1080, 1},
+    .usage = vk::ImageUsageFlagBits::eSampled
+};
+----
+
+== 使用 `VK_KHR_sampler_ycbcr_conversion`
+
+在着色器里做 YUV 转换（如下所示）可移植性很好，但许多嵌入式 GPU（如 ARM Mali）配有**固定功能 YUV 硬件**。如果使用 `VK_KHR_sampler_ycbcr_conversion` 扩展，GPU 硬件会在纹理取样时完成转换，耗费**零**条着色器指令。
+
+1.  **创建转换对象**：定义色彩空间（BT.601）和色度位置。
+2.  **创建采样器**：把转换对象附加到采样器上。
+3.  **在 GLSL 中采样**：照常使用 `texture()`；结果自动就是 RGB！
+
+[source,glsl]
+----
+// With Ycbcr conversion, this sampler returns RGB directly!
+layout(set = 0, binding = 0) uniform sampler2D cameraTexture;
+
+void main() {
+    vec3 rgb = texture(cameraTexture, uv).rgb;
+    // No manual math required!
+}
+----
+
+== 「一体化」预处理着色器
+
+Vulkan 的真正威力在于，我们可以把**格式转换**、**双线性缩放**和 **ImageNet 归一化**合并进一个计算通道。这比分成几个独立步骤去做要快得多。
+
+[source,glsl]
+----
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// Our dmabuf-backed camera frame
+layout(set = 0, binding = 0) uniform sampler2D cameraTexture;
+
+// The output tensor for ONNX Runtime
+layout(set = 0, binding = 1) writeonly buffer Output { float data[]; } mlTensor;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (pos.x >= targetWidth || pos.y >= targetHeight) return;
+
+    // 1. Hardware-Accelerated Bilinear Sample
+    // We sample from the normalized UV coordinate.
+    // The GPU's fixed-function texture units handle the interpolation for us.
+    vec2 uv = (vec2(pos) + 0.5) / vec2(targetWidth, targetHeight);
+    vec3 yuv = texture(cameraTexture, uv).rgb;
+
+    // 2. Manual YUV -> RGB
+    // We implement the math ourselves to avoid driver bugs with YCbCr extensions.
+    vec3 rgb;
+    rgb.r = yuv.x + 1.402 * (yuv.z - 0.5);
+    rgb.g = yuv.x - 0.344 * (yuv.y - 0.5) - 0.714 * (yuv.z - 0.5);
+    rgb.b = yuv.x + 1.772 * (yuv.y - 0.5);
+
+    // 3. Normalization (ImageNet constants)
+    // Most models expect pixels to be centered around zero with unit variance.
+    vec3 normalized = (rgb - vec3(0.485, 0.456, 0.406)) / vec3(0.229, 0.224, 0.225);
+
+    // 4. Planar NCHW Write
+    // ONNX Runtime expects Red plane, then Green plane, then Blue plane.
+    uint planeSize = targetWidth * targetHeight;
+    uint pixelIdx = pos.y * targetWidth + pos.x;
+    mlTensor.data[0 * planeSize + pixelIdx] = normalized.r;
+    mlTensor.data[1 * planeSize + pixelIdx] = normalized.g;
+    mlTensor.data[2 * planeSize + pixelIdx] = normalized.b;
+}
+----
+
+== 跨驱动同步：握手
+
+相机传感器和 GPU 是两个独立的处理器，却共用同一张「桌子」（内存）。如果 GPU 在相机仍在写入时就开始读取，你就会看到**撕裂**（帧的上半部分是新的，下半部分是旧的）。
+
+=== 使用 `dma_buf_sync`
+在 Linux 上，我们用 `DMA_BUF_IOCTL_SYNC` 告诉内核我们的意图。它会刷新 CPU/传感器缓存，让 GPU 看到最新的数据。
+
+[source,cpp]
+----
+// 1. BEFORE GPU READS: Tell kernel to flush sensor caches
+// This is mandatory on ARM Mali and Adreno GPUs.
+struct dma_buf_sync sync_start = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+ioctl(sharedFd, DMA_BUF_IOCTL_SYNC, &sync_start);
+
+// 2. EXECUTE VULKAN COMPUTE JOB
+// We use a timeline semaphore to signal when Vulkan is finished.
+submitVulkanInference(cameraImage);
+
+// 3. AFTER GPU FINISH: Tell kernel we are done
+struct dma_buf_sync sync_end = { .flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ };
+ioctl(sharedFd, DMA_BUF_IOCTL_SYNC, &sync_end);
+----
+
+== ISP 与 GPU：在哪里做缩放？
+
+嵌入式 SoC 通常配有**图像信号处理器（ISP）**。ISP 是专为相机数据设计的独立硬件模块，能以几乎为零的功耗完成缩放、旋转和色彩转换。
+
+*   **ISP 的优点**：不占用 GPU，功耗极低。
+*   **ISP 的缺点**：ISP 驱动往往是专有的（比如树莓派上的 Broadcom 驱动），很难接入标准的 Vulkan 流程。
+*   **专业策略**：用 ISP 完成主要的下采样（例如把 4K 传感器数据缩到 1080p 的 `dmabuf`），再用 Vulkan 计算着色器做最终面向 ML 的裁剪与归一化。
+
+== 疑难排查：常见陷阱
+
+1.  **缓存不一致**：如果你的 ML 模型看到闪烁的伪影，多半是漏掉了 `dma_buf_sync` 调用。不要因为硬件共享一根内存条就假设它是「统一的」——缓存往往是 CPU 或 GPU 私有的。
+2.  **句柄泄漏**：每次调用 `VIDIOC_EXPBUF` 都会在进程表里新建一个文件描述符。用完之后你**必须**调用 `close(sharedFd)`，否则应用程序迟早会撞上进程上限而崩溃。
+3.  **内存对齐**：许多相机驱动要求图像宽度是 16 或 32 的倍数。如果你的传感器宽度是 1920，而驱动把它补齐到 1936，你的 Vulkan UV 坐标就会偏移，AI 就会看到「斜向条纹」。
+
+== 小结：零拷贝检查清单
+
+1.  **V4L2 MMAP**：向传感器驱动申请一个含 4 个缓冲区的缓冲池。
+2.  **dmabuf 导出**：为每个物理缓冲区取得一个文件描述符。
+3.  **Vulkan 导入**：用外部内存扩展把这些文件描述符导入 `VkDeviceMemory`。
+4.  **融合计算**：在一次 1ms 的通道里完成缩放 + 色彩转换 + 归一化。
+5.  **同步 IOCTL**：每帧前后都用 `dma_buf_sync` 维持缓存一致性。
+
+掌握了零拷贝管线，你就移除了嵌入式视觉中的首要性能瓶颈。你的应用现在更快、更凉，能在低功耗芯片上实时跑 AI。
+
+接下来，我们会看看如何借助**功耗与散热优化**来管理硬件的物理极限。
+
+xref:ML_Inference/Embedded_Applications/02_cross_compilation.adoc[上一篇：交叉编译：为 Arm 生态构建] | xref:ML_Inference/Embedded_Applications/04_power_optimization.adoc[下一篇：功耗与散热优化：管理物理极限]

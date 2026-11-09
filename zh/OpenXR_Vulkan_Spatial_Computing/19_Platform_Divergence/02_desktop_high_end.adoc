@@ -1,0 +1,41 @@
+:pp: {plus}{plus}
+= 桌面高端：释放 GPU 性能
+
+在高端桌面平台上，我们的空间引擎基本不受电池续航或严苛散热限制的约束。这让我们可以专注于绝对的视觉保真度，用现代 GPU 的全部威力驱动高分辨率头显。桌面端的目标是**饱和**——让 GPU 的内存总线和计算单元尽可能满载，从而交付硬件所能达到的最具沉浸感的体验。
+
+== 概念：直接模式
+
+在标准应用里，你的 Vulkan 窗口由操作系统的窗口管理器管理（例如 Windows 上的 **DWM**）。这引入了一层延迟，因为操作系统要把你的窗口与其他桌面元素合成到一起。对空间计算来说，这点额外延迟是不可接受的。
+
+我们使用**直接模式（Direct Mode）**。这让 XR 运行时可以独占显示输出，完全绕过操作系统的桌面合成器。
+
+*   **延迟收益**：去掉操作系统合成器后，我们把帧交付时间缩短了 1–2 帧，这对**动作到光子**的稳定性至关重要。
+*   **选通同步**：直接模式可以实现完美的「显示选通」。头显的背光与 GPU 的交换信号精确同步闪烁，消除快速转头时的运动模糊。
+
+== HDR10 与 10 位色：超越屏幕
+
+移动平台往往在出色的 HDR 支持上走在前列，但在高端桌面 GPU 上，我们能以高得多的内部分辨率和位深来利用**高动态范围（HDR）**。在 XR 中，这对物理真实感至关重要。虚拟的太阳应该比虚拟的蜡烛亮上几千倍。没有 HDR，引擎就只能把这些值「色调映射」到同样狭窄的范围内，从而丢掉尺度感。
+
+为了实现这一点，我们的 `VulkanContext` 会与 OpenXR 运行时协商一个 10 位颜色格式——例如 `VK_FORMAT_A2B10G10R10_UNORM_PACK32`。这提供超过十亿种颜色，消除了夜景或洞穴等昏暗空间环境中的「色带」伪影。
+
+[source,cpp]
+----
+// Configuring HDR10 for high-end desktop XR using designated initializers
+vk::SwapchainCreateInfoKHR createInfo{
+    .imageFormat = vk::Format::eA2b10g10r10UnormPack32,
+    .imageColorSpace = vk::ColorSpaceKHR::eHdr10St2084EXT,
+    // ... other parameters ...
+};
+----
+
+== 利用高 PCIe 带宽
+
+在 **PCIe 4.0** 或 **5.0** 链路上，CPU 与 GPU 之间可以高速传输数据，这对流式加载复杂的空间资产至关重要。然而，在 XR 所需的高帧率下，如果不谨慎管理，即便是这样的链路也可能成为瓶颈——尤其是在 PCIe 通道数量有限的系统上。
+
+*   **未压缩光场**：我们可以把数 GB 的全光数据直接上传到 GPU，而不会让渲染循环停顿。
+*   **光线追踪**：我们承担得起每帧为复杂的高面数环境构建**加速结构（AS）**的高昂开销，从而实现实时的空间反射与全局光照。
+
+
+在桌面端，空间计算的心态就是把每一瓦功耗、每 GB 带宽都利用起来，消解用户与虚拟世界之间的边界。
+
+xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/03_mobile_mastery.adoc[下一页]

@@ -1,0 +1,16 @@
+:pp: {plus}{plus}
+= 倾斜显示与不对称视锥
+
+在标准的桌面渲染器中，我们通常假设两个虚拟相机（「眼睛」）彼此平行。这被称为**平行投影**模型。然而，许多现代高端头显——例如 Pimax 或 Valve Index——采用**倾斜显示**架构。在这类设备中，物理屏幕与透镜向外倾斜，以提供更宽的**视场角（FOV）**。
+
+这种机械上的倾斜给我们的渲染管线增添了一层显著的复杂性。我们不能再假设两个视图矩阵只是彼此简单的横向偏移。相反，每只眼睛都有各自独特的朝向，以及一个**不对称视锥**——其焦点并不在图像中心。
+
+本章我们将通过以下方面来探讨如何处理这类非平行架构：
+
+1.  **分解 XR 位姿**：理解如何使用 `XrView` 数据构建考虑倾斜角的正规 4x4 矩阵。
+2.  **计算不对称视锥**：使用 OpenXR 的 `fov` 正切值构建投影矩阵，并把其中的「中心」偏移到与光轴对齐。
+3.  **用视口重排优化**：利用 **VK_NV_viewport_swizzle** 扩展（或它在 Vulkan 1.3 中的等价物）来优化这些非直线投影的光栅化方式。
+
+掌握这些概念后，你的引擎将能兼容整个空间硬件谱系，从采用平行屏幕的移动 VR 头显，到超宽 FOV 的发烧级硬件。
+
+xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc[下一页]

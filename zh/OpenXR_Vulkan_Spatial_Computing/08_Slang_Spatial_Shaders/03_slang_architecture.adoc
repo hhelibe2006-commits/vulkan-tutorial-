@@ -1,0 +1,87 @@
+:pp: {plus}{plus}
+= 面向 N 视图着色器的 Slang 架构
+
+编写能感知多视图的着色器是一项独特的挑战。GPU 硬件虽然负责复制绘制命令，但确保我们高效地访问各眼专属数据（比如视图矩阵和投影矩阵）是我们的工作。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+用 Slang 这类现代着色器语言来管理 OpenXR 所需的多个视图，是高性能引擎的标准做法。这种架构让你用一套统一的着色器代码，就能处理任意数量的视图（单目、立体或四视图）。
+
+== N 视图思维：与视图数量无关的着色器
+
+在传统着色器里，你可能会传入单个 `viewMatrix`。而在能感知 XR 的引擎中，我们采用 **N 视图思维**，让着色器动态处理单目、立体甚至「四视图」（4 只眼）的情形。
+
+Slang 强大的类型系统与 **StructuredBuffers** 让我们可以传入一个视图数据数组，着色器依据 `SV_ViewID` 来索引它。
+
+[source,slang]
+----
+// 1. Defining a View Structure in Slang
+struct SpatialView {
+    float4x4 viewProjection;
+    float4x4 inverseView;
+    float4 eyePosition;
+};
+
+// 2. Accessing N-Views in a Structured Buffer
+StructuredBuffer<SpatialView> eyeViews;
+
+struct VertexOutput {
+    float4 position : SV_Position;
+    uint viewID : SV_ViewID;
+};
+
+VertexOutput main(VertexInput input, uint viewID : SV_ViewID) {
+    VertexOutput output;
+
+    // Index into our views using the hardware-provided viewID
+    SpatialView currentView = eyeViews[viewID];
+
+    output.position = mul(currentView.viewProjection, float4(input.position, 1.0));
+    output.viewID = viewID;
+    return output;
+}
+----
+
+在 C++ 侧，我们用指定初始化器把这些缓冲区绑定到描述符上：
+
+[source,cpp]
+----
+vk::DescriptorBufferInfo bufferInfo{
+    .buffer = *eyeViewsBuffer,
+    .offset = 0,
+    .range = sizeof(SpatialView) * maxViews
+};
+
+vk::WriteDescriptorSet descriptorWrite{
+    .dstSet = *descriptorSet,
+    .dstBinding = 0,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eStructuredBuffer,
+    .pBufferInfo = &bufferInfo
+};
+----
+
+== 向片元着色器传递
+
+`SV_ViewID` 并非只属于顶点着色器。你可以把它传递到**片元着色器**，执行各眼专属的逻辑，比如根据每只眼睛的物理位置计算高光。
+
+运行时负责视图掩码的路由与视口数组的管理，确保每一次片元着色器调用都作用在多视图广播的正确层上。许多运行时还会把小的缓冲区放进 GPU 的「常量缓存」中加以优化，使逐视图索引变得极其高效。
+
+== 进阶：协作着色与动态投影
+
+Vulkan 让我们能把「N 视图」思维推得比标准更远：
+
+*   **协作视图着色**：你固然可以按 `viewID` 分支，但这样做可能导致 GPU 发散。你可以用 Vulkan 的**子组操作**在视图之间共享信息，保持较高的 GPU 占用率。
+*   **动态投影模型**：借助**着色器对象**（`VK_EXT_shader_object`），你无需重建整条管线就能动态替换视图-投影逻辑，从而实时调整针对特定镜片的投影模型。
+
+== 模块化空间着色器
+
+Slang 对**泛型**与**接口**的支持，意味着我们可以写出完全与视图数量无关的着色器。我们只需定义一次空间逻辑，剩下的多视图集成交给编译器处理。
+
+这大幅降低了出错的概率。如果你为「旁观者相机」增加第三个视图，不必修改着色器代码——只要更新视图掩码和 `eyeViews` 缓冲区的大小即可。
+
+TIP: 关于 Slang 与 Vulkan 集成的更多信息，请参阅官方的 link:https://shader-slang.com/slang/user-guide/index.html[Slang 用户指南]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc[下一页]

@@ -1,0 +1,66 @@
+:pp: {plus}{plus}
+= 基于投影仪的空间架构
+
+从 HMD 过渡到 **CAVE**（Cave Automatic Virtual Environment，洞穴式自动虚拟环境）时，「相机」变成了固定的物理表面——墙壁——而用户在它们*之中*移动。这需要高度专门的**离轴投影**逻辑。
+
+== 生态视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+标准 HMD 运行时并不是为固定表面的 CAVE 环境设计的。你要借助 Vulkan 对视锥的低层控制与多设备同步，来实现这些专门的空间架构，往往绕开标准的 HMD 追踪模型，转而采用自定义的基于集群的渲染。
+
+== 观察者悖论：一个视角，多块屏幕
+
+要理解 CAVE 渲染，你必须接受一个悖论：**3D 场景只对一个人是正确的。**
+
+由于物理墙壁是固定的，如果用户向左移动，前墙上的图像就必须倾斜，才能从他新的视角维持深度错觉。这就是所谓的**离轴投影**。
+
+1.  **固定显示**：投影表面（墙壁）永不移动。
+2.  **运动的眼睛**：用户的眼睛（视点）不断移动。
+3.  **结果**：「视觉金字塔」（视锥）高度不对称，并且每一帧都根据用户的位置改变其斜度。
+
+== 计算离轴视锥
+
+为计算它，我们把物理墙壁当作相机的「近平面」。我们计算从被追踪的眼睛出发、穿过墙壁四个角的视锥。
+
+[source,cpp]
+----
+// A representation of a physical projection wall in our engine using designated initializers
+struct ProjectionWall {
+    glm::vec3 bottomLeft;
+    glm::vec3 bottomRight;
+    glm::vec3 topLeft;
+};
+
+// Configure the rendering info for a specific wall view
+vk::RenderingInfo wallRenderingInfo{
+    .renderArea = {{0, 0}, {wallWidth, wallHeight}},
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colorAttachment
+};
+----
+
+运行时（或像 Monado 这样的封装层）确保每个节点只渲染它负责的那个 `viewID`，同时通过「变形与融合」网格校正投影仪的梯形失真。
+
+== 分布式渲染模型：主节点与从节点
+
+以 4K 分辨率驱动五面 CAVE 需要极强的 GPU 算力，通常要使用由计算机组成的**集群**。
+
+*   **主节点**：运行主仿真、物理与输入处理，并把世界状态广播给从节点。
+*   **从节点**：执行**确定性仿真**，更新自己的世界状态以匹配主节点，并且只渲染分配给自己的那面墙。
+
+== 进阶：多设备同步与色彩平衡
+
+Vulkan 能实现标准 XR API 原生无法管理的协调级别：
+
+*   **多设备缓冲区交换**：借助 Vulkan 的**外部信号量**与**栅栏**，你可以在多 GPU 投影仪集群中同步渲染，确保所有 GPU 在完全相同的硬件时钟周期交换缓冲区。
+*   **全局亮度一致性**：你可以用 Vulkan 的**查询池**采样每台投影仪的亮度，并动态调整引擎的光照，确保所有墙壁的视觉环境均匀一致。
+
+== 确定性是必须的
+
+在集群中，每台计算机必须对世界状态达成一致。如果粒子系统使用的随机种子在各节点间不同，沉浸感就会被破坏。每一个「随机」或「基于时间」的元素都必须跨网络同步。
+
+TIP: 关于 CAVE 与大规模空间系统的更多信息，请参阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#spaces[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc[下一页]

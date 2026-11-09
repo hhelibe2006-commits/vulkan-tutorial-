@@ -1,0 +1,67 @@
+:pp: {plus}{plus}
+= 本地读取同步：动态渲染下的片内高效处理
+
+== 两全其美
+
+在遗留的渲染通道系统里，我们用子通道进行高效的片内读取。这让 GPU 能直接从片上内存（tile cache，瓦片缓存）读取颜色或深度附件，避免昂贵的主存往返。对移动 GPU 和基于瓦片的渲染 GPU 来说，这是一项关键优化。
+
+随着 **Vulkan 1.4** 的到来，同样的效率如今也能在**动态渲染**中通过 `VK_KHR_dynamic_rendering_local_read` 特性获得。这让我们既享有“无渲染通道”世界的简洁，又拥有基于子通道的世界的性能。
+
+== 实现本地读取
+
+实现包含两部分：一个专用屏障和一套特定的渲染配置。使用本地读取时，你是在告诉 GPU：“我要读取某个附件，但我保证读取只发生在与当前写入相同的像素位置 (x, y) 上。”这样硬件就能把数据留在片上。
+
+[,cpp]
+----
+// 1. Define the Dependency
+auto localReadBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+    .dstAccessMask = vk::AccessFlagBits2::eInputAttachmentRead,
+    .oldLayout = vk::ImageLayout::eRenderingLocalRead,
+    .newLayout = vk::ImageLayout::eRenderingLocalRead,
+    .image = gBufferAttachment.image(),
+    .subresourceRange = subresourceRange
+};
+
+commandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &localReadBarrier});
+
+// 2. Perform the Rendering
+// You must include the local read information in your RenderingInfo
+auto localReadInfo = vk::RenderingInputAttachmentIndexInfo{
+    .colorAttachmentCount = 1,
+    .pColorAttachmentInputIndices = &colorIndex
+};
+
+auto renderingInfo = vk::RenderingInfo{
+    .pNext = &localReadInfo,
+    // ...
+};
+
+commandBuffer.beginRendering(renderingInfo);
+// ... record your on-tile reads in your Slang shader ...
+commandBuffer.endRendering();
+----
+
+== Slang 集成
+
+在你的 Slang 着色器中，使用标准的输入附件语法。Slang 编译器会正确地为本地读取访问生成所需的 SPIR-V 指令。这确保你的着色器代码保持整洁，并能在不同硬件之间移植。
+
+[,cpp]
+----
+// Slang snippet
+[[vk::input_attachment_index(0)]]
+InputAttachment<float4> gBufferInput;
+
+float4 main(float2 uv : TEXCOORD0) : SV_Target {
+    float4 data = gBufferInput.SubpassLoad();
+    // ...
+}
+----
+
+掌握本地读取同步之后，你就能构建现代的延迟渲染器，效率与基于遗留子通道的渲染器不相上下，同时拥有现代 Vulkan 的灵活与清晰。下一章我们会看到，这些原则如何应用到**主机图像拷贝**中 CPU 到 GPU 的直接数据搬运。
+
+== 导航
+
+上一节：xref:Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc[替代子通道：无需渲染通道的同步] | 下一节：xref:Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc[主机图像拷贝与内存映射同步：直接访问]

@@ -1,0 +1,72 @@
+:pp: {plus}{plus}
+= 空间流形
+
+大多数输入动作产生的都是离散事件（比如按键），但位姿动作很特别：它天生就是空间性的。要把用户的手部运动与我们 3D 引擎中的物体联系起来，我们需要创建一个**动作空间**。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+通过基于动作的系统定义输入，并管理空间坐标系（动作空间），是 OpenXR 中必须遵循的架构模式。你必须使用这些抽象，才能确保应用可以运行在 OpenXR 生态所支持的各式控制器上。
+
+== 虚拟坐标系：动作空间
+
+你可以把动作空间想成一个「跟随」用户手部的虚拟坐标系。在 OpenXR 中，所有空间追踪都是相对的。要知道手在哪里，我们必须问：「这只手的手部空间相对于我的世界空间在什么位置？」
+
+1.  **抓握位姿（Grip Pose）**：用户手掌的位置，用于握持虚拟物体。
+2.  **瞄准位姿（Aim Pose）**：从控制器前端延伸出的一条射线，用于指向与 UI 交互。
+
+[source,cpp]
+----
+// 1. Create a Space for our Hand Pose Action using designated initializers
+XrActionSpaceCreateInfo actionSpaceInfo{
+    .type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
+    .action = handPoseAction,
+    .poseInActionSpace = identityPose // Can be used to apply a fixed offset
+};
+
+XrSpace handSpace;
+xrCreateActionSpace(session, &actionSpaceInfo, &handSpace);
+----
+
+运行时负责这些空间的世界对齐与延迟补偿，确保「手部空间」相对物理传感器保持稳定。
+
+== 空间流形：从四元数到矩阵
+
+每一帧我们都用 `xrLocateSpace` 找出手部的位置。运行时以一个 `XrSpaceLocation` 的形式提供它，其中包含一个位置和一个朝向。
+
+而我们的 Vulkan 着色器需要的是**4x4 矩阵**。这个转换过程就是「空间流形」——把 7 维的追踪数据映射成 GPU 使用的 16 维矩阵格式。
+
+[source,cpp]
+----
+// 2. Locate the hand space relative to the world coordinate system
+XrSpaceLocation location{
+    .type = XR_TYPE_SPACE_LOCATION
+};
+xrLocateSpace(handSpace, worldSpace, predictedDisplayTime, &location);
+
+if (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) {
+    // 3. Convert XrPosef to a 4x4 transformation matrix
+    vk::mat4 handTransform = xrPoseToMatrix(location.pose);
+
+    // Pass this matrix to our engine's scene graph or directly to a shader
+    pushConstants.modelMatrix = handTransform;
+}
+----
+
+== 进阶：考虑碰撞的位姿与平滑处理
+
+Vulkan 让你可以在 OpenXR 提供的原始追踪数据之外进一步打磨这些位姿：
+
+*   **考虑碰撞的位姿**：用**结构化缓冲区**把场景的包围体上传到 GPU，你就可以用 Vulkan 实时「钳制」OpenXR 给出的位姿，防止虚拟手穿墙。
+*   **时间平滑**：运行时虽然会滤除传感器噪声，但你还可以用 Vulkan 的**子组操作**实现极高效的时间平滑，或为虚拟物体做一种带预测的「沉重」手感。
+
+== 为什么使用「App 空间」
+
+在空间计算中，**App 空间**（或称舞台空间，Stage Space）是我们虚拟世界的原点。通过把 `handSpace` 定位到 `worldSpace` 之下，我们确保用户在自己的房间里走动时，虚拟手相对虚拟环境仍与他们的物理手完美对齐。
+
+这个变换过程把一只物理控制器变成了能在我们世界坐标系中移动的虚拟物体。无论用户是在发射激光还是随手挥动，引擎看到的都是一个统一的、一致的矩阵。
+
+TIP: 更多细节请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#spaces[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc[下一页]

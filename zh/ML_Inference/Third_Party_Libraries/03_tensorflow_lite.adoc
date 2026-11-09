@@ -1,0 +1,341 @@
+:pp: {plus}{plus}
+
+= TensorFlow Lite 集成
+
+== 简介
+
+当 Google 着手把机器学习带到移动设备时，他们面临一个根本挑战：作为旗舰 ML 框架的 TensorFlow 对手机和嵌入式系统来说过于庞大、过于复杂。一个完整的 TensorFlow 运行时可能有数百 MB，消耗可观的电量，还需要移动硬件上根本不存在的资源。
+
+TensorFlow Lite 正是在这种约束下诞生的。它不只是 TensorFlow 的缩小版——它是对“资源受限设备上的推理运行时应该是什么样”的一次彻底重新思考。每一个设计决策都把体积、效率和续航置于灵活性与开发便利之上。
+
+本章深入探讨 TensorFlow Lite：它与完整 TensorFlow 有何不同，为什么它是移动端 ML 部署的主流选择，如何把它与 Vulkan 应用集成，以及什么时候它才是适合你的工具。
+
+== 移动优先的理念
+
+要理解 TensorFlow Lite，就得先理解它为哪些约束而设计。移动设备并不只是更小的计算机——它们运行在根本不同的约束之下，而这些约束塑造了软件设计的每一个方面。
+
+=== 电池约束
+
+台式机插在墙上供电。服务器待在电力无限的数据中心里。移动设备靠电池运行，而用户期望电池能撑一整天。每一毫瓦都算数。
+
+机器学习是计算密集型的，而计算要耗电。一个粗糙的 ML 实现可能一小时就把手机电量耗尽。TensorFlow Lite 的整个设计，都是被“降低功耗、同时仍提供准确快速推理”这一需求塑造出来的。
+
+这影响了一切：文件格式（更小的模型加载更快，耗电更少）、运行时（为效率而非灵活性优化）、量化支持（整数运算比浮点运算省电），以及硬件加速（在可用时把工作委托给低功耗的专用 AI 加速器）。
+
+=== 体积约束
+
+移动应用要争夺有限的存储空间。用户会删掉太大的应用。应用体积里每多一兆字节，都是安装与留存的障碍。
+
+TensorFlow Lite 运行时用于核心功能的部分大约 300KB。即使把全部算子都包含进去，仍然不到 1MB。相比之下，完整 TensorFlow 有数百 MB。这种体积的剧烈缩减来自激进的优化：去掉训练代码、剔除不必要的算子、使用紧凑的二进制格式、最小化依赖。
+
+模型本身也针对体积做了优化。TensorFlow Lite 的量化工具能把模型体积缩小到 1/4（从 32 位浮点到 8 位整数），而精度损失极小。对移动部署来说，这种体积缩减往往比速度提升更有价值。
+
+=== 性能约束
+
+移动处理器不如桌面 CPU 或服务器 GPU 强大。它们是为效率而非原始性能设计的。但用户期望 ML 功能感觉是即时的——没人愿意等上几秒，看相机应用识别场景。
+
+TensorFlow Lite 通过多种策略达成这一点：对常见算子做激进优化、通过委托（GPU、NPU、DSP）实现硬件加速，以及量化（在大多数移动处理器上整数运算比浮点运算快）。最终得到的推理足够快，即使在主流手机上也能支撑实时应用。
+
+=== 多样性约束
+
+服务器部署时硬件由你掌控，移动部署则不同：它意味着要支持成千上万种不同设备。仅 Android 就横跨数百家制造商，每家的处理器、GPU 和 AI 加速器都不一样。iOS 更统一，但仍有多个世代、能力各异的设备。
+
+TensorFlow Lite 用委托系统应对这种多样性。同一个模型可以跑在 CPU（到处都能用）、通过 OpenGL ES 或 Vulkan 使用 GPU（大多数现代设备）、NPU（带神经网络处理单元的高端设备）或专用加速器（Google 的 Edge TPU、高通的 Hexagon DSP 等）上。运行时会自动选择可用的最佳方案，专用硬件不可用时则优雅回退。
+
+== 架构：为效率而设计
+
+TensorFlow Lite 的架构反映了它移动优先的理念。每个组件都针对我们刚才讨论的约束做了优化。
+
+=== FlatBuffers 格式
+
+模型格式本身就是一项关键创新。TensorFlow Lite 使用 FlatBuffers——Google 专为效率开发的序列化库。
+
+JSON 或 Protocol Buffers 这类传统序列化格式需要解析：你读取文件，构建内存中的表示，然后访问数据。解析要花时间和内存。一个 50MB 的模型，加载时可能需要 100MB 内存（文件本身加上解析后的表示），加载还可能花上几秒。
+
+FlatBuffers 消除了解析。这种文件格式的设计让你可以把它内存映射，然后直接从映射的内存中访问数据。加载几乎是瞬间完成的——只需把文件映射进内存。内存占用也极小——只有文件本身的大小，没有额外的解析后表示。
+
+这在移动设备上意义重大：内存宝贵，用户期望应用秒开。一个 TensorFlow Lite 模型几毫秒就能加载完，而不是几秒，占用的内存也只有同等格式的一半。
+
+=== 算子集：专注且经过优化
+
+TensorFlow 支持数百种运算。TensorFlow Lite 支持一个精心挑选的子集——即真正出现在生产环境移动模型里的那些运算。
+
+这不是缺陷，而是特性。通过聚焦更少的算子，TensorFlow Lite 能把它们优化到极致。每个算子都针对不同架构有手工调优的实现：面向移动 CPU 的 ARM NEON SIMD 指令、优化过的 GPU 内核、针对 NPU 的专用实现。
+
+算子集涵盖了常见移动 ML 任务所需的一切：卷积（2D、深度可分离、分组）、池化、归一化、激活函数、全连接层等等。如果你的模型只用到这些运算（大多数生产模型都是如此），你就能获得高度优化的推理。如果你的模型用了偏门运算，可能就得继续用完整 TensorFlow，或者自己实现自定义算子。
+
+=== 解释器：轻量而快速
+
+TensorFlow Lite 解释器是执行模型的运行时。它被设计得小巧、快速、可预测。
+
+完整 TensorFlow 的图执行引擎很复杂，TensorFlow Lite 解释器则很直白：它按顺序遍历模型中的运算，逐个执行。没有动态图构建，没有自动微分，没有训练机制。只有前向推理，尽可能快。
+
+这种简单性带来的好处不止于体积和速度。解释器的行为可预测，容易推理。内存占用是确定的。执行时间是一致的。这些性质对移动应用很重要，因为不可预测的行为会导致糟糕的用户体验。
+
+=== 委托系统：硬件加速
+
+委托系统是 TensorFlow Lite 应对硬件多样性的方案。委托是一种插件，可以在特定硬件上加速推理。
+
+GPU 委托使用 OpenGL ES 或 Vulkan 在移动 GPU 上运行运算。NNAPI 委托（Android Neural Networks API）使用设备提供的任何 AI 加速器——可能是 DSP、NPU 或专用 AI 芯片。Hexagon 委托专门针对高通的 Hexagon DSP。Core ML 委托在 iOS 上使用苹果的 Core ML 框架。
+
+从应用的角度看，使用委托很简单：你创建委托、把它挂到解释器上，推理就会自动使用加速硬件。如果委托处理不了某个运算，它就回退到 CPU 执行。这种优雅降级意味着你的应用在所有设备上都能工作，但在有专用硬件的设备上跑得更快。
+
+== 量化：杀手级特性
+
+如果只有一个特性定义了 TensorFlow Lite，那就是量化。这项技术是 TensorFlow Lite 在移动部署中价值主张的核心。
+
+=== 什么是量化？
+
+神经网络通常用 32 位浮点数表示权重和激活值。每个权重占 4 字节。一个 2500 万参数的模型就是 100MB。
+
+量化把它们转换成 8 位整数。每个权重变成 1 字节。同样的 2500 万参数模型现在只有 25MB——缩小到 1/4。
+
+但这不会损害精度吗？出乎意料的是，损害不大。对很多模型来说，量化造成的精度损失不到 1%。有些模型甚至略有提升（降低的精度起到了正则化作用，防止过拟合）。
+
+好处不止于体积：
+
+*更快的推理*：在大多数移动处理器上，整数运算比浮点运算快。量化模型的运行速度快 2 到 4 倍。
+
+*更低的功耗*：整数运算耗电更少。这能延长续航——对移动设备至关重要。
+
+*硬件加速*：很多移动 AI 加速器都针对整数运算做了优化。量化模型可以利用这些专用硬件。
+
+=== 量化如何工作
+
+基本思想很简单：把浮点数值的范围映射到 8 位整数的范围（0 到 255，或 -128 到 127）。
+
+举例来说，如果权重范围是 -2.0 到 2.0，你就把 -2.0 映射到 -128，把 2.0 映射到 127。中间每个值按比例映射。权重 0.0 映射到 0，权重 1.0 映射到 64，依此类推。
+
+这种映射由两个参数定义：*缩放因子*（scale）和*零点*（zero-point）。缩放因子决定每个整数步长在浮点空间里代表多大；零点决定哪个整数代表 0.0。
+
+推理过程中，运算以整数进行。当你需要相乘两个量化值时，先乘整数，再用缩放因子调整结果。这仍然比浮点乘法快，因为整数运算更便宜。
+
+=== 量化的类型
+
+TensorFlow Lite 支持多种量化方案，各有不同的取舍：
+
+*动态范围量化*：最简单的方式。权重被量化为 int8，但激活值仍保持 float32。这能把模型缩小到 1/4，并带来一定提速（加载权重更快），但拿不到纯整数推理的完整性能收益。
+
+适用场景：你想要更小的模型、不想费太多工夫，并且能接受适度的提速。
+
+*全整数量化*：权重和激活值都是 int8。这带来最大的体积缩减和提速，但需要一个有代表性的数据集做校准（以确定激活值的范围）。
+
+适用场景：你需要极致性能，并且手上有代表性数据集。
+
+*Float16 量化*：权重被转换为 16 位浮点。这能带来 2 倍的体积缩减，精度损失可忽略。它是全精度与 int8 量化之间的折中。
+
+适用场景：你想要缩减体积，但模型对 int8 量化比较敏感。
+
+*量化感知训练*：不在训练后量化，而是在训练过程中模拟量化。模型会学会对量化更鲁棒，从而得到比训练后量化更好的精度。
+
+适用场景：训练后量化造成了不可接受的精度损失。
+
+=== 实用的量化工作流
+
+给 TensorFlow Lite 量化一个模型的典型流程如下：
+
+* 在 TensorFlow 或 Keras 中训练模型（完整的 float32 精度）
+* 带量化地转换为 TensorFlow Lite 格式：
+
+[source,python]
+----
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+converter.representative_dataset = representative_dataset_gen
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.int8
+converter.inference_output_type = tf.int8
+tflite_model = converter.convert()
+----
+
+* 验证量化后的模型：在测试数据上运行推理，与原始模型比较精度
+* 如果精度可以接受，就部署；如果不接受，试试量化感知训练。
+
+`representative_dataset_gen` 是一个产出样本输入的函数。转换器把这些样本跑过模型，以确定激活值的范围，进而决定量化参数。这个数据集不需要很大——通常几百个样本就够。
+
+== 与 Vulkan 应用集成
+
+现在来讨论实际问题：如何把 TensorFlow Lite 与基于 Vulkan 的应用集成？
+
+=== 基本方案：分离上下文
+
+最简单的集成方式，是把 TensorFlow Lite 和 Vulkan 当作通过 CPU 内存通信的两个独立系统。
+
+你的 Vulkan 应用负责渲染帧、处理用户输入、管理游戏状态。当你需要 ML 推理时，你会：
+
+1. 把相关数据从 GPU 内存复制到 CPU 内存（例如一帧渲染结果）
+2. 按需预处理数据（缩放、归一化等）
+3. 运行 TensorFlow Lite 推理（它内部可能通过 GPU 委托使用 GPU）
+4. 在 CPU 上处理推理结果
+5. 如果需要渲染，把结果复制回 GPU 内存
+
+这个方案直截了当，对很多应用都适用。如果推理不是每帧都发生，或者推理时间远大于传输时间，那么 CPU 与 GPU 之间传输的开销是可以接受的。
+
+=== 使用 GPU 委托
+
+TensorFlow Lite 的 GPU 委托可以加速移动 GPU 上的推理。在 Android 上，它内部使用 OpenGL ES 或 Vulkan。这就引出一个有趣的问题：你能在 Vulkan 渲染和 TensorFlow Lite 的 GPU 推理之间共享 GPU 资源吗？
+
+简短的回答是：不能直接共享，但你可以把开销降到最低。
+
+TensorFlow Lite 的 GPU 委托会创建自己的 Vulkan 上下文（或 OpenGL ES 上下文）。它不与你的应用 Vulkan 上下文共享内存或同步原语。不过，两个上下文用的是同一块物理 GPU，所以只要 GPU 资源足够，它们可以并发运行。
+
+要把开销降到最低：
+
+*批量推理*：不要每帧都跑推理，而是把多帧攒在一起处理。这样能摊薄上下文切换的开销。
+
+*异步执行*：在单独的线程上运行推理。GPU 处理渲染命令的同时，CPU 可以准备下一个推理请求。这样计算就重叠起来，感知延迟也随之降低。
+
+*优化传输*：尽量减少 CPU 与 GPU 之间的数据传输。如果可能，把数据留在 CPU 上（例如用基于 CPU 的预处理），避免来回搬运。
+
+=== 进阶：共享内存（平台相关）
+
+在某些平台上，你可以借助外部内存扩展，在 Vulkan 上下文与 TensorFlow Lite 的 GPU 委托之间共享内存。这属于进阶用法且与平台相关，但它能消除数据复制。
+
+总体思路：
+
+1. 用 Vulkan 的外部内存扩展分配内存（VK_KHR_external_memory）
+2. 导出内存句柄（Linux/Android 上是文件描述符，Windows 上是句柄）
+3. 把这块内存导入 TensorFlow Lite 的 GPU 委托（需要自定义委托实现或修改）
+4. 两个上下文现在可以访问同一块内存，消除复制
+
+这很复杂，而且 TensorFlow Lite 的标准 GPU 委托并不官方支持这种做法。它要求你深入理解 Vulkan 和 TensorFlow Lite 的内部机制。对大多数应用来说，更简单的分离上下文方案已经够用。
+
+=== 移动平台专属注意事项
+
+在移动平台上，还有一些额外的考虑：
+
+*Android*：TensorFlow Lite 对 Android 的支持非常好。用 GPU 委托加速，或者用 NNAPI 委托来利用设备专属的 AI 加速器。要注意 Android 的内存限制——大模型在低端设备上可能导致内存不足错误。
+
+*iOS*：在 iOS 上想要最佳性能就用 Core ML 委托。Core ML 会在支持的设备上（iPhone 8 及之后、2018 年及之后的 iPad Pro）利用 Apple 神经引擎。集成是无缝的——只要启用委托，剩下的交给 Core ML。
+
+*续航*：开发期间要监控功耗。持续不断的 ML 推理会很快耗尽电池。可以考虑降低推理频率、使用更小的模型，或者只在必要时才运行推理（例如用户正在使用该功能时）。
+
+== 实战示例：图像分类
+
+我们走一个完整示例：把 TensorFlow Lite 图像分类集成进一个基于 Vulkan 的移动游戏。
+
+=== 场景
+
+你在做一个带相机功能的移动游戏。玩家把相机对准真实世界的物体，游戏来识别它们。你需要在主流 Android 设备上实现实时推理（至少 10 FPS）。
+
+=== 模型选择
+
+你选择 MobileNetV2，一个为移动设备设计的模型。它体积小（14MB）、速度快（主流手机上推理 30ms）、精度也不错（ImageNet 上 top-1 准确率 71%）。
+
+你从 TensorFlow Hub 下载预训练模型，带量化地转换成 TensorFlow Lite 格式：
+
+[source,python]
+----
+import tensorflow as tf
+
+# Load the model
+model = tf.keras.applications.MobileNetV2(weights='imagenet')
+
+# Convert to TensorFlow Lite with quantization
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+tflite_model = converter.convert()
+
+# Save the model
+with open('mobilenet_v2_quantized.tflite', 'wb') as f:
+    f.write(tflite_model)
+----
+
+量化后的模型是 3.5MB——小到可以直接打包进应用，而不会显著增加下载体积。
+
+=== Android 集成
+
+在 Android 应用中集成 TensorFlow Lite：
+
+[source,java]
+----
+// Load the model
+Interpreter tflite = new Interpreter(loadModelFile());
+
+// Enable GPU delegate for acceleration
+GpuDelegate delegate = new GpuDelegate();
+Interpreter.Options options = new Interpreter.Options();
+options.addDelegate(delegate);
+tflite = new Interpreter(loadModelFile(), options);
+
+// Prepare input buffer (224x224x3 image, normalized to [0,1])
+ByteBuffer inputBuffer = ByteBuffer.allocateDirect(224 * 224 * 3 * 4);
+inputBuffer.order(ByteOrder.nativeOrder());
+
+// Prepare output buffer (1000 classes)
+float[][] output = new float[1][1000];
+
+// Run inference
+tflite.run(inputBuffer, output);
+
+// Process results
+int predictedClass = argmax(output[0]);
+String label = labels[predictedClass];
+----
+
+=== Vulkan 集成
+
+你的 Vulkan 渲染管线负责捕获相机帧。要接入推理：
+
+1. *采集帧*：你的 Vulkan 管线把相机画面渲染到一张纹理
+2. *回读*：用 `vkCmdCopyImageToBuffer` 把纹理复制到暂存缓冲区
+3. *映射内存*：把暂存缓冲区映射到 CPU 内存
+4. *预处理*：缩放到 224×224，归一化到 [0,1]，转换成 TensorFlow Lite 期望的格式
+5. *推理*：在后台线程上运行 TensorFlow Lite 推理
+6. *显示结果*：推理完成后，用预测出的标签更新 UI
+
+关键在于异步运行推理。GPU 渲染下一帧的同时，CPU 处理上一帧的推理。这样计算重叠，帧率保持平稳。
+
+=== 性能优化
+
+初始测试显示推理耗时 40ms——25 FPS，可接受但不够好。你做如下优化：
+
+*使用 GPU 委托*：推理降到 20ms（50 FPS）。GPU 委托利用移动 GPU 来执行卷积运算。
+
+*缩小输入尺寸*：MobileNetV2 可以接受更小的输入。用 192×192 代替 224×224，推理降到 15ms（66 FPS），精度损失极小。
+
+*量化*：模型已经量化过，但你进一步确保 GPU 委托使用整数运算。这又带来 20% 的提速，推理降到 12ms（83 FPS）。
+
+*批量推理*：不要每帧都跑推理，而是每 3 帧跑一次。这降低了平均开销，渲染保持 60 FPS，同时物体识别依然灵敏。
+
+最终实现让用户感觉是即时的，在主流设备上运行流畅，对电池的影响也极小。
+
+== 何时适合用 TensorFlow Lite
+
+TensorFlow Lite 并不总是正确选择。下面说说它何时出彩、何时该考虑替代方案。
+
+=== 理想用例
+
+*移动应用*：如果你部署在 Android 或 iOS 上，TensorFlow Lite 是默认选择。它的生态、工具和优化都无可匹敌。
+
+*体积受限的环境*：当二进制体积很重要时（移动应用、嵌入式系统），TensorFlow Lite 的小巧运行时是巨大优势。
+
+*电池供电设备*：效率优化让 TensorFlow Lite 成为电池供电设备的理想之选。
+
+*对量化友好的模型*：如果你的模型量化效果好（大多数视觉模型都不错），TensorFlow Lite 的量化支持会带来巨大收益。
+
+*标准架构*：如果你的模型使用常见算子（卷积、池化、标准激活函数），TensorFlow Lite 优化过的算子集正合适。
+
+=== 何时考虑替代方案
+
+*桌面/服务器部署*：在桌面或服务器上，TensorFlow Lite 的移动端优化意义不大。ONNX Runtime 或完整 TensorFlow 可能是更好的选择。
+
+*自定义算子*：如果你的模型用了 TensorFlow Lite 算子集里没有的偏门运算，你就得实现自定义算子，或者换一个运行时。
+
+*动态模型*：带动态形状或控制流的模型在 TensorFlow Lite 上更难部署。ONNX Runtime 处理得更好。
+
+*跨框架兼容*：如果你用 PyTorch 训练，转成 TensorFlow Lite 要多绕一步（PyTorch → ONNX → TensorFlow → TensorFlow Lite）。ONNX Runtime 可能更简单。
+
+*与 Vulkan 紧密集成*：如果你需要在 ML 推理与 Vulkan 渲染之间共享内存和同步原语，自定义 Vulkan 计算着色器可能比 TensorFlow Lite 更合适。
+
+== 小结
+
+TensorFlow Lite 是 Google 面向移动 ML 部署的方案，从底层开始就为资源受限设备设计。它的移动优先理念塑造了每个方面：FlatBuffers 格式带来瞬时加载，专注的算子集带来激进优化，轻量解释器带来可预测的性能，委托系统带来硬件加速。
+
+量化是 TensorFlow Lite 的杀手级特性，以极小的精度损失换来 4 倍体积缩减和 2 到 4 倍提速。工具有效降低了量化的门槛，运行时又能高效地执行量化推理。
+
+与 Vulkan 应用集成时，通常采用分离上下文，数据经 CPU 内存传递。它不如自定义 Vulkan 计算着色器那样紧密集成，但简单、可靠，对大多数应用来说性能也足够好。
+
+TensorFlow Lite 在移动部署、体积受限环境和电池供电设备上表现出色。若是桌面部署或需要与 Vulkan 紧密集成，请考虑 ONNX Runtime 或自定义实现这样的替代方案。
+
+xref:ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc[上一篇：ONNX Runtime 集成] | xref:ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc[下一篇：PyTorch Mobile 集成]

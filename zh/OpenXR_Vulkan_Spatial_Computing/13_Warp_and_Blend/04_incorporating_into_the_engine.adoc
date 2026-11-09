@@ -1,0 +1,74 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+加入**变形与融合**能力后，`simple_game_engine` 就能在 `renderer_rendering.cpp` 中处理几何畸变与多投影仪融合。*这目前留给读者作为练习实现。*
+
+== 增强后处理链
+
+在 `renderer_rendering.cpp` 中，我们引入一个基于计算的「变形」通道，它在主场景渲染完成后运行。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ... Main Scene Pass (Raster) ...
+
+    // NEW: Post-Process Warp Pass (Compute)
+    // This kernel maps our rectilinear render target to a warped swapchain image
+    auto& cmd = commandBuffers[currentFrame];
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *warpPipeline);
+
+    // Bind the Rectilinear Input (Descriptor Set 0)
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *warpPipelineLayout, 0, *rectilinearSets[currentFrame], nullptr);
+
+    // Bind the Warp Map LUT (Descriptor Set 1)
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *warpPipelineLayout, 1, *warpMapSets, nullptr);
+
+    // Dispatch the warp compute kernel
+    uint32_t groupCountX = (swapChainExtent.width + 15) / 16;
+    uint32_t groupCountY = (swapChainExtent.height + 15) / 16;
+    cmd.dispatch(groupCountX, groupCountY, 1);
+}
+----
+
+== Slang 变形着色器集成
+
+在我们的 `warp.slang` 着色器中，我们用变形贴图 LUT 计算畸变后的纹理坐标。
+
+[source,slang]
+----
+// warp.slang
+Texture2D<float3> inputTexture : register(t0);
+Texture2D<float2> warpMap : register(t1); // The LUT
+RWTexture2D<float4> outputSwapchain : register(u0);
+
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void computeMain(uint3 threadID : SV_DispatchThreadID) {
+    // 1. Sample the Warp Map to get the distorted coordinate
+    float2 distortedUV = warpMap.SampleLevel(sampler, float2(threadID.xy) / screenRes, 0);
+
+    // 2. Sample the main scene render target
+    float3 color = inputTexture.SampleLevel(sampler, distortedUV, 0);
+
+    // 3. Apply Edge Blending (alpha ramp) if needed
+    color *= calculateEdgeBlend(threadID.xy);
+
+    outputSwapchain[threadID.xy] = float4(color, 1.0);
+}
+
+// Edge Blending Helper: Multi-projector luminosity matching
+float3 calculateEdgeBlend(uint2 pos) {
+    // Simple 10% overlap ramp for the left-edge of a projector
+    float overlapWidth = screenRes.x * 0.1f;
+    float alpha = clamp(float(pos.x) / overlapWidth, 0.0, 1.0);
+    return float3(alpha, alpha, alpha);
+}
+----
+
+== 为什么要做这些改动？
+
+恰当的变形与融合，才能让 CAVE 房间感觉像一个统一的环境。通过在引擎基于计算的后处理链中处理畸变，我们可以支持从曲面屏幕到定制头显的各种硬件，而无需改动核心光栅化逻辑。由于我们的引擎已经有一个模块化的 `Renderer`，加入这个计算通道是现有帧循环的自然延伸。
+
+xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc[下一页]

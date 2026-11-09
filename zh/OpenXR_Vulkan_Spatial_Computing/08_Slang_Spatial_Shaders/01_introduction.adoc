@@ -1,0 +1,23 @@
+:pp: {plus}{plus}
+= 用于空间着色器的 Slang：单通道立体渲染及更多
+
+欢迎来到我们空间计算之旅中最激动人心的部分之一！到目前为止，我们关注的都是「Vulkan 到 OpenXR」这条管道——如何取得图像、如何编排帧的时间、如何追踪用户输入。现在，我们把目光转向**着色器**。在空间计算中，我们不再只是渲染到一块平面屏幕，而是为两只眼睛渲染，甚至要为注视点渲染或宽视场头显渲染更多的视图。
+
+处理立体渲染的传统做法是把整个场景画两遍——左眼一遍、右眼一遍。这在概念上很简单，效率却极低。CPU 必须提交两倍的绘制调用，GPU 必须处理两遍相同的几何体，而顶点数据往往几乎完全一样。**单通道立体渲染**正是为此而生，更具体地说，是**N 视图**的思维方式。
+
+[source,slang]
+----
+// The "N-View" mindset in Slang
+void main(uint viewID : SV_ViewID) {
+    // Shaders that know which eye they are rendering for
+    float4 eyePosition = loadEyePosition(viewID);
+}
+----
+
+在本章中，我们将探讨 **Slang** 如何让编写这类多视图着色器比传统的 GLSL 或 HLSL 自然得多、高效得多。我们先来看**原生多视图**（`VK_KHR_multiview`），这是 Vulkan 的一项核心特性，它让 GPU 能把单次绘制调用广播到图像数组的多个层，每一层代表一个不同的视图。
+
+我们还会定义一些关键概念，比如 **SIMD**（单指令多数据），以及它与我们「N 视图」架构的关系；同时你会看到 Slang 的现代语法如何让我们写出干净、可读、并针对空间硬件高度优化的着色器。无论你的目标是简单的移动 VR 头显，还是高端的桌面 AR 系统，高效多视图着色器设计的原则都是一样的。
+
+在接下来的几节里，我们将深入**原生多视图**的实现，然后看看如何架构我们的 **Slang** 着色器，以充分利用这种硬件层面的优化。
+
+xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc[下一页]

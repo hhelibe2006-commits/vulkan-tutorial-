@@ -1,0 +1,77 @@
+:pp: {plus}{plus}
+
+= 结语
+:doctype: book
+:sectnums:
+:sectnumlevels: 4
+:toc: left
+:icons: font
+:source-highlighter: highlightjs
+:source-language: c{pp}
+
+== 结语
+
+恭喜你完成核心 Vulkan 教程系列！你已在 Vulkan 开发中打下坚实的基础，这将在你的图形编程之旅中长久受用。
+
+=== 你学到了什么
+
+在本教程系列中，你获得了以下方面的知识与实践经验：
+
+1. *Vulkan 基础*——理解 Vulkan 的核心概念、架构，以及它与其他图形 API 的区别。
+
+2. *搭建 Vulkan 应用*——创建实例、选择物理设备、创建逻辑设备，并建立渲染管线。
+
+3. *绘制操作*——渲染三角形、使用顶点缓冲区，并理解 Vulkan 的渲染流程。
+
+4. *高级渲染技术*——实现深度缓冲、纹理映射、mipmap 和多重采样。
+
+5. *资产管理*——加载 3D 模型与纹理，供你的 Vulkan 应用使用。
+
+6. *性能优化*——使用计算着色器与多线程提升应用性能。
+
+7. *生态系统集成*——使用工具库、确保兼容性，并理解 Vulkan 配置文件。
+
+8. *平台相关开发*——为 Android 适配你的 Vulkan 应用。
+
+9. *现代图形技术*——迁移到 glTF 与 KTX2 格式，以改进资产管理。
+
+=== 接下来往哪里走
+
+本教程系列为你进行更高级的 Vulkan 开发提供了必备工具。掌握了这些基础，你现在可以探索更复杂的主题，构建更精妙的应用程序。
+
+1. xref:Building_a_Simple_Engine/introduction.adoc[*构建简易引擎：简介*] - 准备好把你的 Vulkan 技能提升到下一个层次了吗？
+本教程系列将教你如何把 Vulkan 代码组织成可复用、可维护的引擎架构。
+你将学习引擎架构与设计模式、使用层级对象系统进行场景管理、相机系统与控制、高效的资源与内存管理、实体组件系统（ECS）模式、渲染系统抽象、输入处理，以及带恰当计时的健壮游戏循环设计。
+本系列还涵盖高级技术所需的数学与渲染概念，例如使用分块光照的 Forward+ 渲染、阴影贴图技术、HRTF 空间音频集成、使用计算着色器的 GPU 加速物理模拟，以及用于混合渲染效果的光线查询。
+本系列建立在你在这里学到的基础之上，帮助你创建更有条理、更可复用的渲染方案，并假设你已完成本核心 Vulkan 系列的所有章节。
+
+2. link:AI_Assisted_Vulkan/introduction.adoc[*AI 辅助的 Vulkan 开发*] - 一次在 Vulkan 工作流中使用 AI 工具的实践考察。
+本系列涵盖云端与本地 LLM、基于 MCP 的代理工具，以及多模态视觉模型，并说明每一种在 Vulkan 工作中适合与不适合的场景。
+你将用 Ollama 和 MCP 服务器搭建一个 AI 辅助环境，挑选适合图形编程的模型，减少样板代码，并使用视觉模型帮助根据截图诊断视觉错误。
+本系列以一个综合项目收尾：你用这些工具构建、实现并调试一个自定义后处理效果。
+它面向那些希望更清晰、少一些炒作地了解 AI 工具能为 Vulkan 代码库实际做些什么的开发者。
+
+未来的规划教程将引导你实现更复杂的渲染技术与架构。
+
+请记住，Vulkan 开发是一个持续学习的过程。图形编程的版图在不断演进，总有更多东西值得学习与探索。
+
+=== 社区资源与寻求帮助
+
+随着 Vulkan 之旅的继续，你可能会遇到挑战或产生疑问。幸运的是，有若干活跃的社区可以为你提供帮助：
+
+1. *Khronos Slack* - 加入官方 Khronos Group Slack 工作区与 #vulkan 频道，直接与 Vulkan 开发者和专家交流。你可以在 https://khr.io/slack[khr.io/slack] 获取邀请。
+
+2. *Vulkan Discord* - 社区运营的 Vulkan Discord 服务器是实时讨论、故障排查以及与其他 Vulkan 开发者建立联系的好地方。加入地址：https://discord.gg/vulkan[discord.gg/vulkan]。
+
+3. *Reddit* - r/vulkan 子版块（https://www.reddit.com/r/vulkan/[reddit.com/r/vulkan]）是一个活跃的社区，用于分享新闻、提问和讨论 Vulkan 开发。
+
+4. *Stack Overflow* - 对于具体的编程问题，请使用 Stack Overflow 上的
+https://stackoverflow.com/questions/tagged/vulkan[vulkan] 标签。
+
+5. *Vulkan 规范* - 拿不准时，请查阅官方 https://docs.vulkan.org/spec/latest/[Vulkan 规范] 以获取权威信息。
+
+不要犹豫，尽管向这些社区求助——那里满是热爱 Vulkan、乐于帮助他人成功的开发者。
+
+感谢你跟随本教程系列学习。在漫长的旅程中，你已经迈出了重要的第一步。
+
+xref:17_Multithreading.adoc[上一篇：使用 Vulkan 进行多线程编程] | xref:Building_a_Simple_Engine/introduction.adoc[下一篇：构建简易引擎：简介]

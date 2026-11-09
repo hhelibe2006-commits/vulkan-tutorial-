@@ -1,0 +1,74 @@
+:pp: {plus}{plus}
+
+= ML 编译器：概览与使用时机
+
+== 简介
+
+ML 编译器把训练好的模型转换为面向特定设备的程序。它不在运行时逐个算子地解释计算图，而是让模型经由一系列中间表示（IR）逐层下降，施加图级与内核级优化（融合、分块、布局特化、精度变更），并生成针对你的硬件调优的代码（GPU、CPU、DSP/NPU；对我们来说，是通过 SPIR-V 走 Vulkan）。
+
+本节介绍我们推理三条路径中的 ML 编译器路径，并教你如何思考它，好让你真的能把东西交付出去：
+
+*路径 1：第三方运行时*（ONNX Runtime、TensorFlow Lite 等）——集成快、支持广泛。
+
+*路径 2：自定义 Vulkan*——有教学价值，有时为了实现紧密的图形集成也确实必要。
+
+*路径 3：ML 编译器*——一条中间路线：既保留高层工作流，又生成高效、可移植的二进制或命令流，通常带 Vulkan/WebGPU/Metal 后端。应用仍然“归你所有”；编译器给你一个紧凑的产物，以及一个执行它的小型运行时。
+
+== 心智模型：编译与解释，以及边界契约
+
+最有用的思路转变，是把编译后的模型当成一个 API 面很窄的程序。
+
+- 你的应用继续拥有相机、UI、文件 I/O、日志、功耗/散热策略，以及任何 Vulkan 预处理/后处理着色器。
+- 编译器的运行时负责模型执行：SPIR-V 模块、描述符布局、派发调度，以及模型内部的同步。
+
+让这个交换过程尽量乏味：“张量进，张量出。”一开始在边界上用简单的主机可见拷贝。等正确性变得乏味之后，再只在真正重要的地方优化数据移动（零拷贝、外部内存，或运行时的互操作钩子）。
+
+=== 60 秒入门：MLIR、StableHLO、XLA 与 IREE
+
+- MLIR 是用于构建 IR 与变换的编译器基础设施。它把运算与类型组织进“方言”（dialect）。像 IREE 这样的项目用 MLIR 把 ML 计算图逐步下降到 Vulkan（经由 SPIR-V）这类目标。参见 xref:ML_Inference/glossary.adoc[术语表]。
+- StableHLO 是标准化的 ML IR（也是一个 MLIR 方言）。可以把从框架导出之后的神经网络看成它的可移植“汇编”。
+- XLA 是 OpenXLA 生态中的一个编译器，TensorFlow/JAX 用它把 StableHLO/HLO 下降到 CPU/GPU。
+- IREE 是另一个 OpenXLA 项目，它把 StableHLO/MLIR 编译成可部署的产物，面向 Vulkan（经由 SPIR-V）、Metal、CUDA 与 CPU 等目标，并配有一个小型运行时。
+
+你可能会看到这些常见的 MLIR 方言：StableHLO、TOSA、Linalg 和 MHLO。不必纠结细节——各章会给出具体命令与代码，术语表里有简明定义。
+
+对 Vulkan 而言，本节会用到的路径通常是：StableHLO → IREE → SPIR-V（Vulkan），或者 ONNX → TVM → SPIR-V（Vulkan）。如果你对 MLIR/StableHLO 不熟悉，可以浏览 xref:ML_Inference/Third_Party_Libraries/15_openxla.adoc[OpenXLA]，并在 xref:ML_Inference/glossary.adoc[术语表] 中查看简短定义。
+
+== ML 编译器做什么
+
+1. 导入模型（ONNX、TFLite、StableHLO/XLA、TorchScript 等）。
+2. 把它下降为一种或多种中间表示（IR）。
+3. 施加图级与内核级优化（融合、分块、量化、布局变换）。
+4. 为选定的后端（SPIR-V、LLVM、CUDA、Metal 等）生成代码。
+5. 打包产物以及用于部署的最小运行时桩。
+
+== 与模型格式的关系（包括 NNEF）
+
+编译器通常接受 ONNX 和/或 StableHLO/XLA。有些还支持 NNEF（Neural Network Exchange Format），或者提供转换工具。实践中，如今最常见的是 ONNX 与 StableHLO；不过，如果你的工具链或厂商使用 NNEF，ML 编译器也可以是把 NNEF 模型经由 SPIR-V 或 WebGPU 路径带到 Vulkan 上的实用手段。关于如何理解计算图、张量与布局，参见 xref:ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc[NNEF 简介]——同样的思路能帮你校验编译器的输出。
+
+== 何时选择 ML 编译器
+
+- 你想针对自己的具体设备做提前编译（AOT）或即时编译（JIT）特化。
+- 你需要超越通用运行时的性能，但又不想手写着色器。
+- 你需要从同一个源模型得到多个后端（Vulkan、Metal、CUDA）。
+- 你计划使用量化或混合精度，并希望由编译器驱动验证。
+
+接下来的几章会介绍若干选项：IREE（OpenXLA 项目）、Apache TVM、Modular 的 MAX/Mojo 工具链，以及 OpenXLA 的 XLA/StableHLO 生态——最后以一份简短的“选择编译器”指南收尾。
+
+== 你的第一个可运行构建（讲概念，不是购物清单）
+
+目标是乏味的可重复性，而不是把编译选项试个遍。实践中行之有效的路线是：
+
+1. 从训练产物中挑一个固定形状的模型变体。如果你的来源是 NNEF，先转成 ONNX 或 StableHLO，这样就走上了编译器支持的顺畅路径。
+2. 用你选定的工具为 Vulkan 编译：
+   - IREE：对 StableHLO/MLIR 输入使用 `--iree-hal-target-backends=vulkan` → `.vmfb` 产物。
+   - TVM：把 ONNX 导入 Relay，设置 `target="vulkan"` → 可部署模块（共享库或 AOT）。
+3. 先在开发机上运行（需要时用无头 Vulkan），把输出与 CPU 黄金参考（ONNX Runtime）对比，确认无误后再部署到设备上。
+
+把 Vulkan 的预处理/后处理留在编译器运行时之外，这样应用的其余部分在各条路径（运行时 vs 编译器 vs 自定义）之间保持一致。这能让 A/B 验证和未来的替换风险更低。
+
+=== 关于“直接给我 SPIR-V”的一点说明
+
+IREE 和 TVM 最终都会产出 SPIR-V，但它们是通过各自的运行时、按一套共用的 ABI 来执行它的。把内核单独抽出来，再在自己的 Vulkan 引擎里重新实现主机侧调度器，目前不是一条稳定或受支持的路径。像对待 ONNX Runtime/TFLite 那样对待编译器：链接运行时、加载产物、设置输入、运行、取回输出。如果你需要更紧密的互操作，就在具体运行时里寻找受支持的钩子。
+
+xref:ML_Inference/Third_Party_Libraries/10_choosing_library.adoc[上一篇：选择合适的库] | xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[下一篇：IREE（OpenXLA）：面向 ML 的提前编译与 JIT 编译]

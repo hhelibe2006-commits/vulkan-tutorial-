@@ -1,0 +1,416 @@
+:pp: {plus}{plus}
+
+= 集成模式
+
+== 简介
+
+你已经选定了自己的 ML 推理库——或许为了灵活性选了 ONNX Runtime，为了移动端优化选了 TensorFlow Lite，或者为了从训练到部署的无缝衔接选了 PyTorch Mobile。接下来的实际挑战是：究竟该怎么把它集成进你的 Vulkan 应用？
+
+这不是个小问题。你的 Vulkan 应用有自己的 GPU 上下文、命令队列、内存分配和同步原语。ML 库有自己的运行时、自己的 GPU 资源管理方式、自己的执行模型。要在两个世界之间搭桥，需要谨慎的架构决策。
+
+好消息是，这种集成已有成熟的模式，每种模式的取舍各不相同。本章探讨三种基本做法：在独立上下文中运行 ML 推理、在 Vulkan 与 ML 库之间共享 GPU 资源，以及在统一的命令流中交错执行。理解这些模式，能帮你为具体用例选出正确的做法。
+
+== 集成挑战
+
+在深入具体模式之前，先弄清楚集成为什么本身就困难。
+
+=== 两个彼此分离的世界
+
+你的 Vulkan 应用和 ML 推理库在根本上就是两套相互分离的系统。Vulkan 让你显式控制 GPU 资源——你分配缓冲区、创建命令缓冲区、管理同步，并把工作提交到队列。ML 库则把这些细节抽象掉——你加载模型、提供输入数据、调用推理函数，然后拿回结果。
+
+这种抽象对 ML 工作流很有价值，但也划出了一道边界。ML 库管理着自己的 GPU 上下文（内部无论是 **WebGPU**、**DirectML** 还是 **CUDA**）。你的 Vulkan 渲染上下文则是另一套。存在于 Vulkan 缓冲区里的数据，ML 库并不会自动获得访问权，反之亦然。
+
+=== 数据传输问题
+
+最明显的挑战是数据搬运。假设你在做一个游戏，用 ML 做基于 AI 的超分辨率。每一帧你先以较低分辨率渲染，再用 ML 模型放大到原生分辨率。渲染结果存在于一张 Vulkan 图像里。ML 模型需要这张图像作为输入。数据要怎么从你的 Vulkan 图像到达 ML 库？
+
+最朴素的做法：把图像回读到 CPU 内存，再上传到 ML 库的 GPU 上下文。这能行，但很慢。你每帧要做两次 GPU→CPU→GPU 的传输。按 60 FPS 算，每秒就是 120 次传输，每一次都有延迟和带宽成本。
+
+更好的做法：在 Vulkan 与 ML 库之间共享 GPU 内存，消除 CPU 往返。但这需要平台特定扩展、细致的同步，以及更深的集成。
+
+=== 同步问题
+
+即便解决了数据传输，同步依然棘手。Vulkan 渲染和 ML 推理都是异步操作。你开始推理时，GPU 可能还在渲染；或者下一帧已经要用结果了，推理还没结束。
+
+你必须保证：
+
+- 推理开始读取渲染图像之前，渲染已经完成
+- 渲染使用放大结果之前，推理已经完成
+- 为了吞吐量，可以同时有多个飞行帧
+
+这需要在 Vulkan 的同步原语（信号量、栅栏、屏障）与 ML 库的同步机制（因库和执行提供程序而异）之间做协调。
+
+=== 性能问题
+
+集成开销不容忽视。如果你的集成每帧增加 5 ms 延迟，那就是 5 ms 不能花在渲染或玩法上。按 60 FPS 的目标（每帧 16.67 ms）算，5 ms 几乎是帧预算的三分之一。
+
+你选择的集成模式直接影响这笔开销。有些模式把延迟压到最低，但增加了复杂度；有些模式很简单，却带来了开销。理解这些取舍，能帮你做出有依据的决定。
+
+== 模式 1：独立上下文
+
+最简单的集成模式，是把 ML 推理放在与 Vulkan 渲染完全独立的上下文中运行。两套系统不共享资源——它们只通过 CPU 内存通信。
+
+=== 工作原理
+
+你的应用有两个相互独立的 GPU 上下文：
+
+*Vulkan 上下文*：负责全部渲染。你照常创建 Vulkan 实例、设备、命令缓冲区和管线。渲染完全发生在这个上下文里。
+
+*ML 上下文*：ML 库创建自己的 GPU 上下文（**WebGPU**、**DirectML** 等）。推理完全发生在这个上下文里。
+
+数据流动是这样的：
+
+1. 在 Vulkan 中渲染一帧，写入一张 Vulkan 图像
+2. 把图像回读到 CPU 内存（vkCmdCopyImageToBuffer + vkMapMemory）
+3. 把 CPU 缓冲区交给 ML 库的推理函数
+4. ML 库把数据上传到它的 GPU 上下文，运行推理，再把结果下载回 CPU
+5. 你的应用从 CPU 内存读取结果
+6. 如有需要，把结果上传回 Vulkan 供后续渲染使用
+
+=== 实现
+
+实现很直接，因为两套系统完全解耦：
+
+[source,cpp]
+----
+// Vulkan rendering
+commandBuffer.draw(...);  // Render your scene
+commandBuffer.copyImageToBuffer(renderedImage, stagingBuffer, ...);  // Copy to staging buffer
+
+// Wait for rendering to complete
+graphicsQueue.waitIdle();
+
+// Map staging buffer to CPU
+void* data = stagingBufferMemory.mapMemory(0, imageSize);
+
+// Run ML inference (library handles its own GPU context)
+std::vector<float> input = preprocessImage(data, width, height);
+std::vector<float> output = mlRuntime->run(input);
+
+// Unmap staging buffer
+stagingBufferMemory.unmapMemory();
+
+// Use output for next frame or display
+processResults(output);
+----
+
+不共享资源、没有复杂的同步、不需要平台特定扩展。只是直截了当的、经 CPU 中转的数据传输。
+
+=== 优点
+
+*简单*：这是最容易实现的模式。你不需要理解外部内存扩展、跨上下文同步或平台特定的互操作机制。只要能把数据从 Vulkan 读到 CPU 再交给 ML 库，就算完成了。
+
+*可移植性*：无需平台特定代码，在任何平台上都能工作。Linux、Windows、macOS、Android、iOS——同一套做法到处都可行，因为你用标准 CPU 内存作为中介。
+
+*调试*：出问题时很容易调试。你可以检查 Vulkan 与 ML 之间的 CPU 缓冲区、确认数据是否正确、检查有无损坏，并判断问题出在渲染还是推理。
+
+*灵活性*：两套系统完全独立。你可以换掉 ML 库而不动 Vulkan 代码，也可以更新 Vulkan 渲染而不影响 ML 推理。一方的改动不会波及另一方。
+
+=== 缺点
+
+*性能开销*：CPU 往返很昂贵。GPU→CPU 传输会让管线停顿，等待渲染完成；为 ML 输入做的 CPU→GPU 传输又添一层延迟。对一张 1920×1080 的 RGB 图像（约 6 MB）来说，在常见硬件上这些传输要花 2-5 ms——对实时应用是相当可观的开销。
+
+*带宽浪费*：你把 PCIe 带宽用了两遍：一次 GPU→CPU，一次 CPU→GPU。在带宽受限的系统上（比如移动设备或集成 GPU），这可能成为瓶颈。
+
+*延迟*：同步点（vkQueueWaitIdle、等待 ML 推理完成）会带来延迟。你很难让渲染与推理重叠，因为它们是通过 CPU 内存通信的。
+
+*内存重复*：数据同时存在于三处：Vulkan GPU 内存、CPU 暂存缓冲区、ML 库的 GPU 内存。这让被传输数据的内存占用变成三倍。
+
+=== 何时使用这种模式
+
+以下情况适合用独立上下文：
+
+*原型验证*：你正在探索 ML 集成，想尽快跑通一个能用的版本。先做简单，之后再优化。
+
+*低频推理*：如果推理每秒只跑一次或更少（例如分析截图、处理用户输入），开销无所谓。每次推理几毫秒是可以接受的。
+
+*小数据量*：如果输入/输出数据很小（几 KB），传输开销可以忽略。例如把一个小的特征向量交给 ML 模型做决策。
+
+*跨平台优先*：如果你要支持很多平台，又不想写平台特定代码，那么简单和可移植比性能代价更重要。
+
+*调试阶段*：在排查 ML 集成问题时，能检查各阶段之间的 CPU 缓冲区非常宝贵。开发期先用这个模式，需要时再优化到共享资源。
+
+== 模式 2：共享资源
+
+第二种模式直接在 Vulkan 与 ML 库之间共享 GPU 内存，从而消除 CPU 往返。数据留在 GPU 上，两个上下文都能访问。
+
+=== 工作原理
+
+你不再做两份独立的内存分配，而是创建一块 Vulkan 和 ML 库都能访问的 GPU 内存：
+
+1. 用外部内存扩展在 Vulkan 中分配内存
+2. 导出指向这块内存的句柄（平台相关：Linux 上是文件描述符，Windows 上是 NT 句柄，等等）
+3. 把这个句柄导入 ML 库的 GPU 上下文
+4. 现在两个上下文都能读写同一块 GPU 内存
+5. 用同步原语（信号量、栅栏）协调访问
+
+数据流动是这样的：
+
+1. 在 Vulkan 中渲染一帧，写入一张共享图像
+2. 渲染完成时对信号量发信号
+3. ML 库等待该信号量，然后从共享图像读取数据并运行推理
+4. 推理完成时 ML 库对另一个信号量发信号
+5. Vulkan 在使用推理结果之前等待该信号量
+
+没有 CPU 传输。数据自始至终留在 GPU 上。
+
+=== 实现概览
+
+实现更复杂，因为它需要平台特定扩展和细致的同步。下面是高层次的概览（具体代码因平台和 ML 库而异）：
+
+[source,cpp]
+----
+// 1. Create Vulkan image with external memory
+vk::ExternalMemoryImageCreateInfo externalInfo{
+    .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd  // Linux
+};
+
+vk::ImageCreateInfo imageInfo{
+    .pNext = &externalInfo
+    // ... other image creation parameters
+};
+vk::raii::Image sharedImage(device, imageInfo);
+
+// 2. Allocate memory with external memory
+vk::ExportMemoryAllocateInfo exportInfo{
+    .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd
+};
+
+vk::MemoryAllocateInfo allocInfo{
+    .pNext = &exportInfo
+    // ... other allocation parameters
+};
+vk::raii::DeviceMemory sharedMemory(device, allocInfo);
+sharedImage.bindMemory(*sharedMemory, 0);
+
+// 3. Export memory handle
+vk::MemoryGetFdInfoKHR getFdInfo{
+    .memory = *sharedMemory,
+    .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd
+};
+
+int memoryFd = device.getMemoryFdKHR(getFdInfo);
+
+// 4. Import into ML library (library-specific API)
+// For OpenCL:
+cl_mem clMem;
+cl_mem_properties_khr desc = {};
+desc.type = CL_EXTERNAL_MEMORY_HANDLE_OPAQUE_FD_KHR;
+desc.handle.fd = memoryFd;
+desc.size = memorySize;
+clCreateBufferWithProperties(&clMem, &desc);
+
+// 5. Create semaphores for synchronization
+vk::SemaphoreCreateInfo semaphoreInfo;
+// ... create Vulkan semaphores
+// Export and import semaphores similarly to memory
+----
+
+真正的实现要处理平台差异（Linux 用文件描述符，Windows 用 NT 句柄，macOS 用 IOSurface）、各库特有的导入 API，以及细致的同步。
+
+=== 优点
+
+*性能*：消除 CPU 往返。数据留在 GPU 上，避免昂贵的传输。对大图像或高频推理，每帧能省下 2-10 ms。
+
+*带宽效率*：PCIe 带宽只用于真正的数据搬运（例如上传新帧），不做多余的 GPU→CPU→GPU 传输。
+
+*更低的延迟*：减少同步点。渲染与推理能更有效地流水化，因为它们不再等待 CPU 传输。
+
+*内存效率*：数据只存在一处——共享的 GPU 内存。不会在 CPU 和多个 GPU 上下文之间重复。
+
+=== 缺点
+
+*复杂度*：需要理解 Vulkan 外部内存扩展、平台特定的句柄类型，以及 ML 库的导入 API。代码比独立上下文复杂得多。
+
+*平台特定代码*：不同平台使用不同的句柄类型和机制。你需要条件编译或运行时平台检测，来分别处理 Linux、Windows 和 macOS。
+
+*库支持有限*：并非所有 ML 库都支持导入外部内存。ONNX Runtime 搭配 OpenCL 或 DirectML 执行提供程序时支持，但纯 CPU 的提供程序不支持。TensorFlow Lite 的 GPU 委托支持因平台而异。
+
+*调试更难*：出问题时（开发期间一定会出），排查共享内存问题更困难。你无法轻易检查各阶段之间的数据，因为它从不离开 GPU。
+
+*同步复杂度*：协调两个上下文之间的访问需要谨慎使用信号量和栅栏。一旦出错就会导致竞态、数据损坏或死锁。
+
+=== 何时使用这种模式
+
+以下情况适合用共享资源：
+
+*性能关键*：你每帧都要跑推理，目标 60+ FPS，每毫秒都很重要。此时复杂度的代价值得换来性能提升。
+
+*大数据量*：你要传输大尺寸图像（1080p、4K）或大体量数据，CPU 传输开销很显著。
+
+*紧密集成*：你的应用与 ML 深度结合——例如实时风格迁移、基于 AI 的渲染，或神经降噪，这些场景里 ML 是核心渲染管线的一部分。
+
+*平台可控*：你只针对特定平台（例如 Windows + DirectML，或 Linux + OpenCL），可以充分测试和验证平台特定代码。
+
+*生产环境优化*：你已经用独立上下文做过原型、验证了正确性，现在要为生产性能做优化。
+
+== 模式 3：交错执行
+
+最先进的模式把 Vulkan 渲染和 ML 推理交错在单一命令流里。ML 库不再使用独立上下文，而是在内部使用 Vulkan，你则把渲染命令和推理命令混在同一个命令缓冲区中。
+
+=== 工作原理
+
+这种模式要求 ML 库支持把 WebGPU 作为执行提供程序。历史上这很少见——大多数库内部使用 CUDA、DirectML 或 TensorRT。但现代框架越来越多地支持 WebGPU 这类跨厂商 API（它在内部利用 Vulkan 或 DirectML），从而实现最紧密的集成：
+
+1. ML 库把它的推理操作创建成 Vulkan 计算管线
+2. 你在同一个 Vulkan 命令缓冲区里录制渲染命令和推理命令
+3. 把命令缓冲区提交到单个队列
+4. 用管线屏障在渲染阶段与推理阶段之间同步
+
+数据流动是这样的：
+
+1. 录制渲染命令（vkCmdDraw 等）
+2. 插入管线屏障，确保渲染完成
+3. 录制 ML 推理命令（用 vkCmdDispatch 派发实现 ML 运算的计算着色器）
+4. 插入管线屏障，确保推理完成
+5. 录制使用推理结果的命令（例如合成放大后的图像）
+6. 提交整个命令缓冲区
+
+一切都在一个上下文、一个命令缓冲区、一次提交中完成。
+
+=== 实现思路
+
+实现方式在很大程度上取决于 ML 库对跨厂商 API 的支持。概念上像这样：
+
+[source,cpp]
+----
+// Begin command buffer
+commandBuffer.begin(beginInfo);
+
+// Render scene
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *renderPipeline);
+commandBuffer.draw(...);
+
+// Barrier: rendering -> inference
+vk::ImageMemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead,
+    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .image = *renderedImage
+    // ... other barrier fields
+};
+
+commandBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, {}, {}, barrier);
+
+// ML inference (library records compute dispatches)
+mlRuntime->recordInferenceCommands(commandBuffer, renderedImage, outputImage);
+
+// Barrier: inference -> next stage
+// ... another barrier
+
+// Use inference results
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *compositePipeline);
+commandBuffer.draw(...);
+
+// End and submit
+commandBuffer.end();
+queue.submit(submitInfo, *fence);
+----
+
+关键在于，ML 库会暴露一个 API，把自己的操作录制进你的命令缓冲区，而不是自己管理命令提交。
+
+=== 优点
+
+*最佳性能*：没有上下文切换、没有独立提交、没有跨上下文同步开销。一切都在单一且经过优化的命令流中运行。
+
+*细粒度同步*：用 Vulkan 的管线屏障做精确同步。你可以让相互独立的操作重叠，只在必要处同步。
+
+*统一内存管理*：所有内存都是 Vulkan 内存。没有外部内存扩展、没有平台特定句柄、没有导入/导出的麻烦。
+
+*调试*：Vulkan 调试工具（RenderDoc、Nsight）能抓取并可视化整个帧，包括 ML 推理操作。你在一条时间线上就能看到渲染和推理。
+
+=== 缺点
+
+*库支持有限*：情况在改善，但并非所有 ML 库都能对所有算子同等地支持这种模式。多数库仍优先用 CUDA 或 DirectML 追求峰值性能。你需要一个 Vulkan 或 WebGPU 支持较强的库，或者自己构建推理引擎（本教程后面的章节教的正是这个）。
+
+*灵活性受限*：你在 ML 推理上被锁死在 Vulkan 里。想换成别的执行提供程序（OpenCL、TensorRT）做性能对比或平台特定优化就不容易了。
+
+*复杂度*：即便库支持到位，管理同时包含渲染与推理的统一命令缓冲区，也需要深入理解 Vulkan 同步、内存屏障和管线阶段。
+
+*可移植性顾虑*：不同设备的 Vulkan 计算支持参差不齐。有些移动 GPU 的计算能力有限。对 Vulkan 计算性能不佳的设备，你可能需要回退路径。
+
+=== 何时使用这种模式
+
+以下情况适合用交错执行：
+
+*自定义推理引擎*：你用 Vulkan 计算着色器构建自己的 ML 推理引擎（本教程系列教的正是这个）。你完全掌控推理操作如何实现、如何录制。
+
+*极致性能*：你需要绝对最低的延迟和最高吞吐量，无法接受独立上下文、甚至共享资源带来的开销。
+
+*Vulkan 优先的架构*：你的应用完全围绕 Vulkan 构建。你已经在用 Vulkan 计算做其他任务（物理、粒子系统、后处理），把 ML 推理加进这条管线是顺理成章的。
+
+*硬件可控*：你只针对特定硬件，对其 Vulkan 计算性能有充分了解和验证。
+
+*学习与实验*：你想在最低层理解 ML 推理。构建基于 Vulkan 的推理引擎，能让你确切看到 ML 运算如何映射到 GPU 计算。
+
+== 选择合适的模式
+
+该怎么决定用哪种模式？考虑这些因素：
+
+=== 性能需求
+
+*大数据量下的 60+ FPS*：共享资源或交错执行。独立上下文很可能撑不住帧预算。
+
+*30 FPS 或更低*：独立上下文大概就够了。帧率较低时这点开销可以接受。
+
+*低频推理*：独立上下文。如果推理每秒只跑一次或更少，性能无所谓。
+
+=== 开发资源
+
+*小团队、工期紧*：独立上下文。先快速跑通，需要时再优化。
+
+*有经验的团队、有时间优化*：共享资源。对经验丰富的开发者来说，这个复杂度是可控的。
+
+*学习项目*：交错执行加自定义推理引擎。学得最多，但时间投入很大。
+
+=== 目标平台
+
+*单一平台（例如只做 Windows）*：共享资源更容易，因为你只需要实现一个平台的外部内存。
+
+*多平台*：独立上下文可以避开平台特定代码。或者投入共享资源，为每个平台写条件编译。
+
+*移动端*：先考虑独立上下文。移动 GPU 和驱动在外部内存支持上的差异更大。
+
+=== ML 库的选择
+
+*ONNX Runtime + WebGPU*：共享资源支持得很好。
+
+*TensorFlow Lite*：独立上下文更简单。GPU 委托对共享内存的支持参差不齐。
+
+*PyTorch Mobile*：用独立上下文。共享内存支持有限。
+
+*自定义 Vulkan 引擎*：交错执行是自然而然的选择。
+
+=== 迭代策略
+
+一种常见做法是依次迭代这些模式：
+
+1. *用独立上下文做原型*：快速让 ML 集成跑通。验证正确性、测试模型、调优超参数。
+
+2. *性能分析并测量*：判断性能是否可以接受。如果已经达到帧率目标，就到此为止。
+
+3. *优化到共享资源*：如果性能不够，实现共享内存。测量改善幅度。
+
+4. *考虑自定义引擎*：如果共享资源仍不够，或者你需要库中不具备的功能，就构建自定义的 Vulkan 推理引擎。
+
+不要过早过度优化。从简单做起，先测量，再按需优化。
+
+== 小结
+
+有三种集成模式在 Vulkan 渲染与 ML 推理之间搭桥：
+
+*独立上下文*：简单、可移植、易于调试。以 CPU 内存作为中介。最适合原型验证、低频推理，或者简单性比性能更重要的场合。
+
+*共享资源*：通过共享 GPU 内存消除 CPU 往返。复杂、平台相关，但对大数据量或高频推理明显更快。最适合平台可控的性能关键型应用。
+
+*交错执行*：把渲染与推理混合在统一命令流中。性能最佳，但需要库支持或自行实现。最适合自定义 Vulkan 推理引擎或追求极致性能的场景。
+
+根据你的性能需求、开发资源、目标平台和 ML 库能力来选择。从简单做起，先测量，再按需优化。
+
+理解了这些模式之后，下一章将深入 GPU 资源共享的技术细节——如何真正实现 Vulkan 与 ML 库之间的共享内存和同步。
+
+xref:ML_Inference/Third_Party_Libraries/05_directml.adoc[上一篇：DirectML 集成] | xref:ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc[下一篇：GPU 资源共享]

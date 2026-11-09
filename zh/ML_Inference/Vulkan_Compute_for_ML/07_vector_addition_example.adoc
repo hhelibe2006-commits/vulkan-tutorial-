@@ -1,0 +1,561 @@
+:pp: {plus}{plus}
+
+= 向量加法示例
+
+== 简介
+
+我们已经讲了很多理论：计算管线、运算、数据管理和同步。现在该把它们整合起来，做一个完整可运行的示例——你可以编译它、运行它，并从头到尾理解它。
+
+向量加法看起来可能很平凡——不过是把两个数组中对应的元素相加。但正是因为简单，它才是完美的第一个示例。它演示了完整的 Vulkan 计算管线，又不会有真实 ML 运算的复杂性掩盖基础。一旦理解了这个模式，扩展到卷积、矩阵乘法和完整的神经网络都很直接。
+
+本章完整走一遍向量加法的实现：Vulkan 初始化、缓冲区分配、着色器创建、命令缓冲区录制、执行和结果验证。读完之后，你将拥有一个可用的模板，能够改造它来实现任何 ML 运算。
+
+== 问题
+
+我们要计算：对向量 A 和 B 中的所有元素，`C[i] = A[i] + B[i]`。
+
+例如：
+
+- A = [1.0, 2.0, 3.0, 4.0]
+- B = [5.0, 6.0, 7.0, 8.0]
+- C = [6.0, 8.0, 10.0, 12.0]
+
+这是一个高度并行的任务——每个输出元素都相互独立。元素 C[0] 不依赖 C[1]，所以我们可以在 GPU 上同时计算所有元素。
+
+== 计算着色器
+
+先看着色器，因为它是计算的核心：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(binding = 0) readonly buffer InputA {
+    float data[];
+} inputA;
+
+layout(binding = 1) readonly buffer InputB {
+    float data[];
+} inputB;
+
+layout(binding = 2) writeonly buffer Output {
+    float data[];
+} output;
+
+layout(push_constant) uniform PushConstants {
+    uint elementCount;
+} pc;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    if (index < pc.elementCount) {
+        output.data[index] = inputA.data[index] + inputB.data[index];
+    }
+}
+----
+
+我们逐条拆解：
+
+*工作组大小*：`local_size_x = 256` 表示每个工作组有 256 个线程。这对大多数 GPU 都是不错的默认值——足够大以充分利用硬件，又足够小以不至于耗尽资源。
+
+*描述符绑定*：三个存储缓冲区——两个输入（readonly）和一个输出（writeonly）。readonly/writeonly 限定符有助于编译器优化。
+
+*推送常量*：我们把元素数量作为推送常量传入。对于少量数据，这比统一缓冲区更高效。
+
+*边界检查*：`if (index < pc.elementCount)` 确保在元素数量不是 256 的整数倍时，我们不会写到缓冲区末尾之外。
+
+*全局调用 ID*：`gl_GlobalInvocationID.x` 给每个线程一个唯一索引。线程 0 处理元素 0，线程 1 处理元素 1，依此类推。
+
+== C++ 实现
+
+现在我们来实现主机端代码。我们把它拆成几个逻辑小节。
+
+=== 准备工作：Vulkan 初始化
+
+首先需要基本的 Vulkan 初始化。这是标准的 Vulkan 初始化——还没有任何 ML 专属的内容。
+
+[source,cpp]
+----
+class VectorAddition {
+private:
+    vk::raii::Context context;
+    vk::raii::Instance instance;
+    vk::raii::PhysicalDevice physicalDevice;
+    vk::raii::Device device;
+    vk::raii::Queue computeQueue;
+    uint32_t queueFamilyIndex;
+
+    vk::raii::CommandPool commandPool;
+    vk::raii::CommandBuffer commandBuffer;
+
+    vk::raii::DescriptorPool descriptorPool;
+    vk::raii::DescriptorSetLayout descriptorSetLayout;
+    vk::raii::DescriptorSet descriptorSet;
+
+    vk::raii::PipelineLayout pipelineLayout;
+    vk::raii::Pipeline pipeline;
+
+    vk::raii::Buffer bufferA, bufferB, bufferC;
+    vk::raii::DeviceMemory memoryA, memoryB, memoryC;
+
+    const uint32_t ELEMENT_COUNT = 1024 * 1024;  // 1M elements
+
+public:
+    void initialize() {
+        createInstance();
+        selectPhysicalDevice();
+        createDevice();
+        createCommandPool();
+        createDescriptorSetLayout();
+        createPipeline();
+        createBuffers();
+        createDescriptorSet();
+        createCommandBuffer();
+    }
+
+    void run() {
+        fillInputBuffers();
+        executeCompute();
+        verifyResults();
+    }
+
+    // RAII handles cleanup automatically - no explicit cleanup needed!
+};
+----
+
+=== 创建描述符集布局
+
+描述符集布局描述了着色器期望哪些资源：
+
+[source,cpp]
+----
+void createDescriptorSetLayout() {
+    std::array<vk::DescriptorSetLayoutBinding, 3> bindings{{
+        // Binding 0: Input A (readonly)
+        {
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute
+        },
+        // Binding 1: Input B (readonly)
+        {
+            .binding = 1,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute
+        },
+        // Binding 2: Output C (writeonly)
+        {
+            .binding = 2,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eCompute
+        }
+    }};
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
+        .pBindings = bindings.data()
+    };
+
+    descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+}
+----
+
+=== 创建管线
+
+计算管线把着色器和描述符集布局组合起来：
+
+[source,cpp]
+----
+void createPipeline() {
+    // Load shader (assume we have compiled SPIR-V from slang)
+    std::vector<uint32_t> shaderCode = loadShaderCode("vector_add.comp.spv");
+
+    vk::ShaderModuleCreateInfo shaderInfo{
+        .codeSize = shaderCode.size() * sizeof(uint32_t),
+        .pCode = shaderCode.data()
+    };
+
+    vk::raii::ShaderModule shaderModule(device, shaderInfo);
+
+    // Push constant range for element count
+    vk::PushConstantRange pushConstantRange{
+        .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        .offset = 0,
+        .size = sizeof(uint32_t)
+    };
+
+    // Pipeline layout
+    vk::PipelineLayoutCreateInfo layoutInfo{
+        .setLayoutCount = 1,
+        .pSetLayouts = &*descriptorSetLayout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pushConstantRange
+    };
+
+    pipelineLayout = vk::raii::PipelineLayout(device, layoutInfo);
+
+    // Compute pipeline
+    vk::PipelineShaderStageCreateInfo stageInfo{
+        .stage = vk::ShaderStageFlagBits::eCompute,
+        .module = *shaderModule,
+        .pName = "main"
+    };
+
+    vk::ComputePipelineCreateInfo pipelineInfo{
+        .stage = stageInfo,
+        .layout = *pipelineLayout
+    };
+
+    pipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
+    // Shader module is automatically cleaned up by RAII
+}
+----
+
+=== 创建缓冲区
+
+我们需要三个缓冲区：两个用于输入，一个用于输出。
+
+[source,cpp]
+----
+void createBuffers() {
+    vk::DeviceSize bufferSize = ELEMENT_COUNT * sizeof(float);
+
+    // Create buffer A
+    bufferA = createBuffer(bufferSize,
+                           vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                           vk::MemoryPropertyFlagBits::eDeviceLocal,
+                           memoryA);
+
+    // Create buffer B
+    bufferB = createBuffer(bufferSize,
+                           vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                           vk::MemoryPropertyFlagBits::eDeviceLocal,
+                           memoryB);
+
+    // Create buffer C
+    bufferC = createBuffer(bufferSize,
+                           vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc,
+                           vk::MemoryPropertyFlagBits::eDeviceLocal,
+                           memoryC);
+}
+
+vk::raii::Buffer createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                               vk::MemoryPropertyFlags properties,
+                               vk::raii::DeviceMemory& memory) {
+    vk::BufferCreateInfo bufferInfo{
+        .size = size,
+        .usage = usage,
+        .sharingMode = vk::SharingMode::eExclusive
+    };
+
+    vk::raii::Buffer buffer(device, bufferInfo);
+
+    auto memReqs = buffer.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{
+        .allocationSize = memReqs.size,
+        .memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, properties)
+    };
+
+    memory = vk::raii::DeviceMemory(device, allocInfo);
+    buffer.bindMemory(*memory, 0);
+
+    return buffer;
+}
+----
+
+=== 填充输入缓冲区
+
+我们需要把数据上传到 GPU。这里用一个暂存缓冲区：
+
+[source,cpp]
+----
+void fillInputBuffers() {
+    vk::DeviceSize bufferSize = ELEMENT_COUNT * sizeof(float);
+
+    // Create staging buffer
+    vk::raii::DeviceMemory stagingMemory = nullptr;
+    vk::raii::Buffer stagingBuffer = createBuffer(bufferSize,
+                                                   vk::BufferUsageFlagBits::eTransferSrc,
+                                                   vk::MemoryPropertyFlagBits::eHostVisible |
+                                                   vk::MemoryPropertyFlagBits::eHostCoherent,
+                                                   stagingMemory);
+
+    // Fill buffer A
+    float* data = static_cast<float*>(stagingMemory.mapMemory(0, bufferSize));
+    for (uint32_t i = 0; i < ELEMENT_COUNT; i++) {
+        data[i] = static_cast<float>(i);
+    }
+    stagingMemory.unmapMemory();
+    copyBuffer(stagingBuffer, bufferA, bufferSize);
+
+    // Fill buffer B
+    data = static_cast<float*>(stagingMemory.mapMemory(0, bufferSize));
+    for (uint32_t i = 0; i < ELEMENT_COUNT; i++) {
+        data[i] = static_cast<float>(i * 2);
+    }
+    stagingMemory.unmapMemory();
+    copyBuffer(stagingBuffer, bufferB, bufferSize);
+
+    // RAII handles cleanup automatically
+}
+
+void copyBuffer(vk::raii::Buffer& src, vk::raii::Buffer& dst, vk::DeviceSize size) {
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = *commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1
+    };
+
+    vk::raii::CommandBuffers cmdBuffers(device, allocInfo);
+    vk::raii::CommandBuffer& cmdBuffer = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    };
+
+    cmdBuffer.begin(beginInfo);
+
+    vk::BufferCopy copyRegion{.size = size};
+    cmdBuffer.copyBuffer(*src, *dst, copyRegion);
+
+    cmdBuffer.end();
+
+    vk::SubmitInfo submitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*cmdBuffer
+    };
+
+    computeQueue.submit(submitInfo);
+    computeQueue.waitIdle();
+
+    // Command buffer automatically freed when cmdBuffers goes out of scope
+}
+----
+
+=== 录制命令缓冲区
+
+现在录制真正的计算工作：
+
+[source,cpp]
+----
+void createCommandBuffer() {
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = *commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1
+    };
+
+    vk::raii::CommandBuffers cmdBuffers(device, allocInfo);
+    commandBuffer = std::move(cmdBuffers[0]);
+
+    vk::CommandBufferBeginInfo beginInfo;
+
+    commandBuffer.begin(beginInfo);
+
+    // Bind pipeline
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
+
+    // Bind descriptor set
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                     *pipelineLayout, 0, *descriptorSet, nullptr);
+
+    // Push constants (element count)
+    commandBuffer.pushConstants(*pipelineLayout,
+                                vk::ShaderStageFlagBits::eCompute,
+                                0, sizeof(uint32_t), &ELEMENT_COUNT);
+
+    // Dispatch compute work
+    // Work groups = ceil(ELEMENT_COUNT / 256)
+    uint32_t workGroupCount = (ELEMENT_COUNT + 255) / 256;
+    commandBuffer.dispatch(workGroupCount, 1, 1);
+
+    commandBuffer.end();
+}
+----
+
+=== 执行计算着色器
+
+提交命令缓冲区并等待完成：
+
+[source,cpp]
+----
+void executeCompute() {
+    vk::SubmitInfo submitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffer
+    };
+
+    vk::FenceCreateInfo fenceInfo;
+    vk::raii::Fence fence(device, fenceInfo);
+
+    computeQueue.submit(submitInfo, *fence);
+    auto result = device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+
+    // Fence automatically cleaned up by RAII
+}
+----
+
+=== 验证结果
+
+最后回读结果并验证正确性：
+
+[source,cpp]
+----
+void verifyResults() {
+    vk::DeviceSize bufferSize = ELEMENT_COUNT * sizeof(float);
+
+    // Create staging buffer for readback
+    vk::raii::DeviceMemory stagingMemory = nullptr;
+    vk::raii::Buffer stagingBuffer = createBuffer(bufferSize,
+                                                   vk::BufferUsageFlagBits::eTransferDst,
+                                                   vk::MemoryPropertyFlagBits::eHostVisible |
+                                                   vk::MemoryPropertyFlagBits::eHostCoherent,
+                                                   stagingMemory);
+
+    // Copy result from GPU to staging buffer
+    copyBuffer(bufferC, stagingBuffer, bufferSize);
+
+    // Map and verify
+    float* results = static_cast<float*>(stagingMemory.mapMemory(0, bufferSize));
+
+    bool allCorrect = true;
+    for (uint32_t i = 0; i < ELEMENT_COUNT; i++) {
+        float expected = static_cast<float>(i) + static_cast<float>(i * 2);
+        float actual = results[i];
+
+        if (std::abs(expected - actual) > 0.001f) {
+            std::cout << "Mismatch at index " << i
+                      << ": expected " << expected
+                      << ", got " << actual << std::endl;
+            allCorrect = false;
+            break;
+        }
+    }
+
+    if (allCorrect) {
+        std::cout << "Success! All " << ELEMENT_COUNT
+                  << " elements computed correctly." << std::endl;
+    }
+
+    stagingMemory.unmapMemory();
+    // RAII handles cleanup automatically
+}
+----
+
+== 运行示例
+
+main 函数把所有部分串起来：
+
+[source,cpp]
+----
+int main() {
+    try {
+        VectorAddition app;
+        app.initialize();
+        app.run();
+        // No cleanup needed - RAII handles everything!
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+}
+----
+
+== 理解流程
+
+我们来梳理一下运行这个程序时发生了什么：
+
+*初始化阶段*：
+
+1. 创建 Vulkan 实例和设备
+2. 创建命令池，用于分配命令缓冲区
+3. 创建描述符集布局，描述着色器资源
+4. 加载并编译着色器，创建计算管线
+5. 在 GPU 上分配三个缓冲区（A、B、C）
+6. 创建描述符集，把缓冲区绑定到着色器的各绑定
+7. 录制带计算派发的命令缓冲区
+
+*执行阶段*：
+
+1. 通过暂存缓冲区把输入数据（A 和 B）上传到 GPU
+2. 把命令缓冲区提交到计算队列
+3. GPU 执行着色器：4096 个工作组 × 256 个线程 = 1,048,576 个线程
+4. 每个线程计算一个元素：C[i] = A[i] + B[i]
+5. 等待 GPU 完成
+6. 通过暂存缓冲区把结果拷回 CPU
+7. 验证结果与期望值一致
+
+*清理阶段*：
+
+1. 销毁所有 Vulkan 对象
+2. 释放所有内存
+
+== 关键要点
+
+这个示例演示了几个重要的模式：
+
+*暂存缓冲区*：GPU 内存（DEVICE_LOCAL）很快，但 CPU 无法直接访问。我们用暂存缓冲区（HOST_VISIBLE）在 CPU 与 GPU 之间传输数据。
+
+*工作组数量计算*：100 万个元素、每个工作组 256 个线程时，需要 4096 个工作组。公式 `(elementCount + workGroupSize - 1) / workGroupSize` 能正确处理不能整除的情况。
+
+*边界检查*：着色器检查 `if (index < elementCount)`，以处理线程总数超过元素数量的情况。
+
+*同步*：为了简单，我们使用 `vkQueueWaitIdle()`。在生产环境中，你会用栅栏或信号量做更高效的同步。
+
+*内存管理*：我们为每个缓冲区单独分配内存。在生产环境中，你会用内存分配器从更大的块中再分配。
+
+== 扩展到 ML 运算
+
+这个模式可以扩展到任何 ML 运算：
+
+*逐元素运算*（ReLU、sigmoid）：结构相同，只需改着色器里的计算。
+
+*矩阵运算*：给派发增加更多维度（workGroupsX、workGroupsY），调整着色器以计算矩阵索引。
+
+*卷积*：着色器逻辑更复杂，但整体结构相同——绑定输入、权重、输出，派发工作组，同步。
+
+基础始终不变：创建缓冲区、把它们绑定到着色器、派发计算工作、同步、读取结果。本章学到的一切都适用于实现完整的神经网络推理。
+
+== 常见陷阱
+
+*忘记边界检查*：一定要在着色器里检查 `if (index < elementCount)`。否则超出数据范围的线程会写非法内存。
+
+*工作组数量算错*：用 `elementCount / 256` 而不是 `(elementCount + 255) / 256`，在 elementCount 不是 256 的整数倍时会出错。
+
+*缺少同步*：读取结果前忘记等待计算完成，会读到不完整或垃圾数据。
+
+*内存属性选错*：给暂存缓冲区用 DEVICE_LOCAL 内存（CPU 无法映射），或给计算缓冲区用 HOST_VISIBLE 内存（GPU 访问更慢）。
+
+*描述符集不匹配*：把缓冲区绑定到错误的描述符绑定，会让着色器读写错误的数据。
+
+== 性能考量
+
+本示例优先考虑清晰，而不是性能。面向生产时：
+
+*持久缓冲区*：在多次推理之间复用缓冲区，而不是每次都分配和释放。
+
+*异步传输*：使用单独的传输队列，让数据上传与计算重叠。
+
+*内存池化*：从大的内存块中再分配，而不是为每个缓冲区单独分配。
+
+*管线缓存*：把编译好的管线缓存到磁盘，避免重复编译。
+
+*批处理*：把多个输入一起处理，以摊薄开销。
+
+== 总结
+
+这个向量加法示例演示了面向 ML 运算的完整 Vulkan 计算管线。我们创建缓冲区、加载着色器、录制命令、在 GPU 上执行、验证结果。这个模式简单而强大——它是实现任何 ML 运算的基础。
+
+关键洞察是：ML 推理不过是以恰当的数据管理和同步来派发计算着色器。向量加法用这个模式，矩阵乘法用这个模式，卷积也用这个模式。完整的神经网络只是把许多这样的模式串联起来。
+
+有了这个可运行的示例作为模板，你就可以实现更复杂的 ML 运算了。基础始终不变——变化的只是着色器逻辑和缓冲区布局。
+
+xref:ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc[上一页：同步] | xref:ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc[下一页：以模型格式作为输入]

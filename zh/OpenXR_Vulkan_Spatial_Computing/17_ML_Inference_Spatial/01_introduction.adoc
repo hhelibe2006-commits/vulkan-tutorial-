@@ -1,0 +1,10 @@
+:pp: {plus}{plus}
+= 使用协作矩阵进行 ML 推理
+
+正如我们在上一章看到的，现代 XR 头显上的传感器会涌出大量原始物理数据。但捕获三角形只是战斗的一半。要打造真正智能的空间应用，我们需要实时「理解」这些数据。
+
+那一簇移动的顶点是用户的手吗？是跳上沙发的猫吗？要在不拖住渲染管线的前提下回答这些问题，我们就得借助 **ML 推理**（机器学习）。本章将探讨如何利用 Vulkan 1.3 中的**协作矩阵**，直接在 GPU 上完成高速的神经网络计算。
+
+把推理从 CPU 搬到 GPU 的专用矩阵硬件（例如 **Tensor Core** 或**矩阵加速器**）上之后，手部姿态细化、语义分割、网格重建这类任务就能达到亚毫秒级延迟。我们将学习如何把这些 ML 内核集成到引擎的计算管线中，把嘈杂的传感器数据变成干净、可交互的输入。
+
+xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc[下一页]

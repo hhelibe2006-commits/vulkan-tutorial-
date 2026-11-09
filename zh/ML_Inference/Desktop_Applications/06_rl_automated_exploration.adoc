@@ -1,0 +1,414 @@
+= 用于自动化探索的强化学习
+:stem: latexmath
+
+到目前为止，我们一直在教 CI 去验证那些我们已经知道的东西。我们会告诉它：「检查这个按钮」，或者「验证这张纹理」。但那些你*没*想到的 bug 呢？那个只有在关卡加载时恰好点三次「选项」菜单才会出现的罕见崩溃呢？
+
+在桌面应用部分的最后一章，我们要构建一个真正自主的东西：一个**强化学习（Reinforcement Learning，RL）智能体**——一位不知疲倦的数字 QA 测试员，它唯一的职责就是探索你的应用，找出那些看起来「新」或者「坏掉」的地方。
+
+== 超越脚本化测试
+
+传统测试就像一张清单。你按照步骤走，勾掉勾选框。但应用是复杂的，状态空间是无限的。你不可能为每一种可能的输入序列都写一个测试。
+
+RL 智能体不按脚本行事，它通过交互来学习。它点击按钮、移动相机、浏览菜单。但与人类不同，它可以在你的 CI 流水线里全天候地每小时做上数千次。
+
+=== 马尔可夫决策过程（MDP）
+
+要构建我们的探索器，必须把 Vulkan 应用建模成一个 **MDP**。
+*   **状态（State，latexmath:[s]）**：当前屏幕像素（智能体「看到」的东西）。
+*   **动作（Action，latexmath:[a]）**：一次点击或一次按键（智能体「做」的事）。
+*   **转移**：应用基于该动作进入下一帧／下一个菜单。
+*   **奖励（Reward，latexmath:[r]）**：一个数值，告诉智能体它的动作有多「好」。
+
+在大多数 RL 问题中（比如 Atari 游戏），奖励来自游戏得分。但在 Vulkan 应用里没有得分，我们必须自己发明一个。
+
+== 好奇心驱动的探索
+
+我们将专注于**好奇心驱动的探索**。我们不因为「赢」而奖励智能体，而是因为它感到意外而奖励它。
+
+.随机网络蒸馏（RND）好奇心机制
+image::images/ML_Inference/Desktop_Applications/rnd_diagram.svg[展示 Target 网络与 Predictor 网络以及预测误差如何产生奖励的 RND 示意图,800]
+
+== 挑战：如何奖励一位 QA 测试员？
+
+在典型的 RL 场景中——比如教智能体下棋——奖励很简单：赢了（+1），输了（-1）。但在 Vulkan 应用里没有「赢」这回事，我们只希望智能体尽可能多地探索。
+
+如果我们因为它找到崩溃就奖励它，它可能会找到一个崩溃，然后为了最大化自己的「得分」反复做同一件事。那没有用。
+
+所以我们改用一种叫**随机网络蒸馏（Random Network Distillation，RND）**的技术。我们因为它看到了以前没见过的东西而奖励它。
+
+=== 「意外」机制：RND
+
+想象你有两个朋友：Alice 和 Bob。
+*   **Alice** 把应用里每一种可能的画面都看过一遍，而且记忆力完美。你给她看任何画面，她都能立刻准确说出它长什么样。
+*   **Bob** 目前正在向 Alice 学习。
+
+当你给他们看一个两人都见过上千次的画面（比如主菜单）时，Bob 能准确预测 Alice 会说什么。没有任何意外。
+
+但如果你给他们看一个罕见的画面——比如崩溃报告或隐藏的调试菜单——Bob 就很难预测 Alice 的回应。这个「预测误差」就是我们的奖励！
+
+==== 为什么叫「蒸馏」？
+在 RND 中，我们并没有一个人类 Alice。我们改用一个**随机固定网络**。这个网络用随机权重初始化，并且*从不训练*。它代表一片复杂的数学「地形」。
+
+智能体的「好奇心网络」试图**蒸馏**（预测）那个随机网络的输出。
+*   对熟悉的像素，它能成功（误差低）。
+*   对新的像素，它会失败（误差高）。
+
+[latexmath]
+++++
+\text{Intrinsic Reward} = || \hat{f}(s) - f(s) ||^2
+++++
+
+其中 latexmath:[f(s)] 是固定的随机目标，latexmath:[\hat{f}(s)] 是我们要训练的那个预测器。
+
+== 架构：把智能体接到 Vulkan 上
+
+要让这套东西跑起来，我们需要三个部分：
+1.  **环境**：我们的 Vulkan 应用。它需要把帧发给智能体，并接受返回的输入（点击／按键）。
+2.  **大脑**：RL 智能体（我们会用一个叫 PPO 的算法），它决定下一步做什么。
+3.  **好奇心**：RND 模块，它计算每一帧有多「令人意外」。
+
+.RL 智能体与 Vulkan 集成架构
+image::images/ML_Inference/Desktop_Applications/rl_system_architecture.svg[展示 Vulkan 应用、RL 智能体与 RND 模块之间循环的架构图,800]
+
+== 实现 RND 模块
+
+先从好奇心奖励系统开始：
+
+[source,python]
+----
+class RNDCuriosityModule:
+    """Computes a reward based on how 'surprised' we are by a frame."""
+    def __init__(self, device='cuda'):
+        # Alice: Fixed random network (the 'Target')
+        self.random_net = RandomNetwork().to(device)
+        # Bob: Trainable network (the 'Predictor')
+        self.predictor_net = PredictorNetwork().to(device)
+
+    def compute_intrinsic_reward(self, frames):
+        with torch.no_grad():
+            target_features = self.random_net(frames)
+
+        predicted_features = self.predictor_net(frames)
+
+        # The more Bob struggles to predict Alice's output,
+        # the higher the 'curiosity' reward.
+        reward = torch.mean((predicted_features - target_features) ** 2, dim=1)
+        return reward
+----
+
+随着训练进行，预测器在熟悉的状态上逐渐学会匹配随机网络，这些状态的奖励也就变低了。而新颖状态会一直保持高奖励，直到智能体看过足够多次。
+
+== Vulkan 应用接口
+
+智能体需要与你的 Vulkan 应用交互。有两种做法：
+
+=== 方案一：程序化控制
+
+在你的应用里插桩，让它接受来自 RL 智能体的命令：
+
+[source,cpp]
+----
+class RLControllableApp {
+public:
+    void run() {
+        while (!shouldClose_) {
+            // 1. Check for actions from the RL agent
+            if (popAction(action)) executeAction(action);
+
+            // 2. Standard Vulkan Render
+            render();
+
+            // 3. Capture observation (frame) for the agent
+            auto pixels = readFramebuffer();
+            sendToAgent(pixels);
+        }
+    }
+
+private:
+    void executeAction(const Action& action) {
+        // Map agent actions to UI events (e.g. ImGui mouse/key injection)
+        if (action.type == Action::Click) injectClick(action.x, action.y);
+        // ...
+    }
+};
+----
+
+=== 方案二：外部控制（Linux）
+
+用 X11 或 Wayland 从外部注入输入事件：
+
+[source,python]
+----
+class ExternalVulkanController:
+    """Uses OS-level tools (like xdotool) to control a standard Vulkan app."""
+    def __init__(self, app_command):
+        self.process = subprocess.Popen(app_command)
+        self.window_id = self.find_window("VulkanApp")
+
+    def capture_frame(self):
+        # Capture the window region using OS screenshot tools
+        screenshot = ImageGrab.grab(bbox=self.get_window_geometry())
+        return np.array(screenshot)
+
+    def click(self, x, y):
+        # Inject mouse click via xdotool
+        subprocess.run(['xdotool', 'mousemove', '--window', self.window_id, str(x), str(y), 'click', '1'])
+----
+
+程序化控制更快、更可靠。外部控制则更容易在不改动现有应用的情况下加进去。
+
+== RL 智能体：PPO（近端策略优化）
+
+智能体的大脑我们用 **PPO**。这个算法是稳定、可靠学习的行业标准。
+
+=== 为什么用 PPO？
+较早的算法（比如原始策略梯度）并不稳定。只要智能体做了一次「糟糕」的更新，性能就会崩溃，而且再也恢复不过来。PPO 使用**裁剪机制**，确保每次更新都不会把智能体的行为改变得*太*多。
+
+=== Actor-Critic 架构
+PPO 智能体有两个「头」：
+1.  **Actor（策略）**：输出每个动作的概率（例如 80% 的概率点按钮 A，20% 的概率点按钮 B）。
+2.  **Critic（价值）**：预测当前状态的未来奖励。
+
+通过把实际奖励与 Critic 的预测相比较，智能体算出**优势值（Advantage）**——即这个动作比预期好多少（或差多少）。
+
+[latexmath]
+++++
+\text{Advantage} = \text{Actual Reward} - \text{Predicted Value}
+++++
+
+如果优势值为正，智能体就会提高该动作在未来的概率。
+
+[source,python]
+----
+class PPOAgent:
+    def select_action(self, state):
+        # 1. Pass the screen pixels through the CNN
+        # 'logits' come from the Actor head, 'value' from the Critic head
+        logits, value = self.policy_net(state)
+
+        # 2. Sample an action (exploration vs exploitation)
+        # We don't always pick the best action; sometimes we pick
+        # a less likely one to keep exploring.
+        action = sample_from_distribution(logits)
+
+        return action, value
+----
+
+== 动作空间设计
+
+定义智能体能做哪些动作：
+
+[source,python]
+----
+class ActionSpace:
+    """Discrete actions the agent can take (e.g., Click X,Y or Press Key)."""
+    def action_to_command(self, action_id):
+        if action_id < self.num_click_actions:
+            # Map grid cell to screen pixel coordinates
+            return {'type': 'click', 'x': px, 'y': py}
+        elif action_id < self.total_actions:
+            # Map to specific keyboard keys (ESC, Space, etc.)
+            return {'type': 'key', 'key': key_map[action_id - offset]}
+        return {'type': 'wait'}
+----
+
+基于网格的点击是离散的（大多数 RL 算法都要求离散动作），但它对 UI 元素能有合理的覆盖。
+
+== 训练循环
+
+把它们拼在一起：
+
+[source,python]
+----
+def train_explorer():
+    # 1. Initialize our curiosity module and the agent
+    curiosity = RNDCuriosityModule()
+    agent = PPOAgent()
+
+    while True:
+        # 2. Agent interacts with the Vulkan app
+        action = agent.select_action(current_screen)
+        execute_in_vulkan(action)
+
+        # 3. Calculate 'Surprise' reward
+        reward = curiosity.compute_intrinsic_reward(next_screen)
+
+        # 4. If the app crashed, give a huge bonus reward!
+        if app_crashed(): reward += 10.0
+
+        # 5. Learn from this experience
+        agent.update(experience_buffer)
+        curiosity.update(next_screen)
+----
+
+== 用例 1：CI 中的 bug 发现
+
+在 CI 里让智能体通宵训练：
+
+[source,yaml]
+----
+name: RL Exploration Testing
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run nightly at 2 AM
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build application
+        run: |
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Install RL dependencies
+        run: |
+          pip install torch torchvision numpy opencv-python pyautogui
+
+      - name: Run RL exploration
+        run: |
+          python scripts/rl_explorer.py \
+            --app ./build/my_vulkan_app \
+            --episodes 1000 \
+            --checkpoint models/explorer_checkpoint.pt
+
+      - name: Upload crash logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: rl-discovered-crashes
+          path: crashes/
+----
+
+智能体会花上几个小时探索你的应用，记录每次崩溃及复现步骤。更重要的是，它发现的每一个视觉异常都可以自动汇入我们在第 4 章建立的 **Bug Harvesting** 流水线，用真实世界的失败案例进一步强化你的语义校验器。
+
+=== 面向 QA 的超参数调优
+探索型智能体的设置与游戏智能体不同：
+*   **latexmath:[\gamma]（Gamma）**：「折扣因子」。我们把它设得很高（0.999），因为我们关心的是能通向新菜单的长序列点击。
+*   **latexmath:[\lambda]（Lambda）**：用于 GAE（广义优势估计），有助于平衡方差与偏差。
+*   **熵系数**：我们把它设得很高（0.01 到 0.1），以**迫使**智能体即使认为自己找到了好路径也继续随机点击。这正是我们 QA 测试员「不知疲倦」的地方。
+
+== 用例 2：自动化基准测试
+
+训练一个能导航到性能密集型场景的智能体：
+
+[source,python]
+----
+class BenchmarkingAgent(PPOAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fps_history = []
+
+    def compute_reward(self, frame, fps):
+        """Reward agent for finding slow scenes"""
+        # Intrinsic curiosity reward
+        intrinsic = self.curiosity.compute_intrinsic_reward(frame)
+
+        # Extrinsic reward: finding low FPS is good (for benchmarking)
+        extrinsic = 0.0
+        if fps < 30:
+            extrinsic = (30 - fps) / 30.0  # Reward proportional to slowness
+
+        return intrinsic + extrinsic
+----
+
+运行这个智能体，就能自动发现你应用里的性能瓶颈。
+
+== 用例 3：自动演示模式
+
+训练一个智能体来展示特性：
+
+[source,python]
+----
+# Reward function for impressive demos
+def demo_reward(state, action, next_state):
+    # High reward for visual variety
+    visual_change = np.mean(np.abs(next_state - state))
+
+    # High reward for accessing different menus
+    ui_diversity = measure_ui_diversity(next_state)
+
+    # Penalty for getting stuck
+    stuck_penalty = -1.0 if visual_change < 0.01 else 0.0
+
+    return visual_change + ui_diversity + stuck_penalty
+----
+
+训练好的智能体可以在展会上或宣传片里以「演示模式」运行，自动穿行于那些令人印象深刻的特性之间。
+
+== 调试与监控
+
+跟踪智能体在学什么：
+
+[source,python]
+----
+import matplotlib.pyplot as plt
+from collections import deque
+
+class ExplorationMonitor:
+    def __init__(self):
+        self.visited_states = {}  # Hash -> visit count
+        self.crashes_found = []
+        self.episode_rewards = deque(maxlen=100)
+
+    def record_state(self, state):
+        state_hash = hash(state.tobytes())
+
+        if state_hash not in self.visited_states:
+            self.visited_states[state_hash] = 0
+
+        self.visited_states[state_hash] += 1
+
+    def plot_exploration(self):
+        # Histogram of state visit counts
+        visit_counts = list(self.visited_states.values())
+
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.hist(visit_counts, bins=50)
+        plt.xlabel('Visit Count')
+        plt.ylabel('Number of States')
+        plt.title('State Visit Distribution')
+
+        # Reward over time
+        plt.subplot(1, 2, 2)
+        plt.plot(self.episode_rewards)
+        plt.xlabel('Episode')
+        plt.ylabel('Total Reward')
+        plt.title('Learning Progress')
+
+        plt.tight_layout()
+        plt.savefig('exploration_stats.png')
+
+    def coverage_stats(self):
+        total_states = len(self.visited_states)
+        novel_states = sum(1 for c in self.visited_states.values() if c == 1)
+
+        print(f"Total unique states: {total_states}")
+        print(f"Novel states (seen once): {novel_states}")
+        print(f"Crashes found: {len(self.crashes_found)}")
+----
+
+== 小结
+
+基于 RL 的自动化探索把好奇心驱动的学习与实际的 Vulkan 应用测试结合起来：
+
+**随机网络蒸馏**：为发现新颖的应用状态提供内在奖励，而无需任何得分。
+
+**PPO 智能体**：学习在应用中导航，在探索（发现新状态）与利用（重复带来奖励的动作）之间取得平衡。
+
+**程序化／外部控制**：与 Vulkan 应用对接，捕获帧并注入输入事件。
+
+**多种用例**：CI bug 发现、自动化基准测试、演示模式，以及通用的 GUI 自动化。
+
+**实用的 CI 集成**：在 GitHub Actions 中通宵运行，自动发现崩溃与边界情况。
+
+这种方法能找出人类想不到要测的 bug，自动探索性能特征，甚至能学会演示你的应用——这一切都是把 ML 技术应用到真实的 Vulkan 应用上。
+
+xref:ML_Inference/Desktop_Applications/05_real_time_camera.adoc[上一章：实时相机集成] | xref:ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc[下一章：光线追踪优化：降噪与自适应采样]

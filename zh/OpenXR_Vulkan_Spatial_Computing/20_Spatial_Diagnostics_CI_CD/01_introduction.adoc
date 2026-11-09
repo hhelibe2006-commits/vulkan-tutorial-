@@ -1,0 +1,12 @@
+:pp: {plus}{plus}
+= 高级空间诊断与 CI/CD
+
+在这最后一个技术章节里，我们的引擎已经走到功能完备的阶段。但在空间计算的世界里，一个「功能完备」的引擎如果无法在数百种各异的头显与 GPU 组合上保持绝对稳定和 90+ FPS，那就是没用的。
+
+调试空间引擎出了名地困难。XR 运行时及其内部合成器往往是「黑盒」，因此很难判断一个视觉伪影究竟来自你引擎的逻辑、同步竞态，还是运行时自己的重投影算法。
+
+本章将探讨拨开这些层面所需的工具与技巧。我们会学习如何用 RenderDoc 这类**空间调试**工具检查多视图缓冲区，如何借助 OpenXR 模拟器实现**无头 CI/CD**（持续集成/持续部署），以及如何利用 **AI 视觉分析**在渲染回归真正流到物理头显之前自动发现它们。
+
+读完本章，你将拥有一套诊断工具，足以交付专业级、既视觉惊艳又稳如磐石的空间应用。
+
+xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/02_spatial_debugging.adoc[下一页]

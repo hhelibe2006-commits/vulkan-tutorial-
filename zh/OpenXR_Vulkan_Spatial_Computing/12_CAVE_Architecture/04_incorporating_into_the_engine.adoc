@@ -1,0 +1,50 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+要让 `simple_game_engine` 扩展到支持 **CAVE 架构**与**多 GPU 同步**，需要在 `renderer_rendering.cpp` 中转向硬件层面的屏障。*这目前留给读者作为练习实现。*
+
+== 加入交换屏障
+
+在 `renderer_rendering.cpp` 中，我们必须更新 `createSwapChain` 逻辑，以支持 `VK_NV_present_barrier` 扩展，实现同步的集群渲染。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+bool Renderer::createSwapChain() {
+    // ...
+    vk::SwapchainPresentBarrierCreateInfoNV barrierInfo{
+        .presentBarrierEnable = vk::True,
+        .presentBarrierName = 1 // All nodes in the CAVE must use the same ID
+    };
+
+    if (hasPresentBarrierSupport) {
+        createInfo.pNext = &barrierInfo;
+    }
+
+    // Create the synchronized swapchain
+    swapChain = vk::raii::SwapchainKHR(device, createInfo);
+    // ...
+}
+----
+
+== 同步的呈现调用
+
+在我们的 `Render` 函数中，`presentKHR` 调用现在变成了一个同步事件。GPU 会自动阻塞，直到交换组中所有其他节点都准备好翻转缓冲区。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ... record and submit ...
+
+    // This call now blocks at the hardware level if a Swap Barrier is active
+    // ensuring no tearing or "seams" between CAVE walls
+    presentQueue.presentKHR(presentInfo);
+}
+----
+
+== 为什么要做这些改动？
+
+硬件同步是确保 CAVE 房间各个转角看起来无缝的唯一办法。没有 `VK_NV_present_barrier`，投影仪之间的「接缝」总会以一条撕裂或卡顿的线显现出来。通过把这一点集成进 `createSwapChain` 与 `Render` 逻辑，我们把引擎改造成了能够驱动多投影仪环境的专业级仿真平台。
+
+xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc[下一页]

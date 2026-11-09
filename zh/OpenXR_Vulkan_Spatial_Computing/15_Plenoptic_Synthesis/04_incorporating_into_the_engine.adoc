@@ -1,0 +1,75 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+把**全光合成**集成进我们的 `simple_game_engine`，需要一个灵活的渲染架构，能够在 `renderer_rendering.cpp` 中于传统光栅化与高级光线追踪之间切换。*这部分目前留作读者的练习，由你自行实现。*
+
+== 实现光栅合成路径
+
+在 `renderer_rendering.cpp` 中，我们把光栅合成当作一次全屏片元通道来处理。我们用之前实现的四线性插值逻辑对光场缓冲区进行采样。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::RenderSynthesisRaster(...) {
+    // ...
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *rasterSynthesisPipeline);
+
+    // Bind the LightField buffer (using BDA address from push constants)
+    cmd.pushConstants<LightFieldPushConstants>(*pipelineLayout,
+        vk::ShaderStageFlagBits::eFragment, 0, synthesisPushConstants);
+
+    // Draw full-screen triangle to trigger fragment synthesis
+    cmd.draw(3, 1, 0, 0);
+}
+----
+
+== 实现光线追踪路径
+
+如果引擎检测到 `VK_KHR_ray_tracing_pipeline` 支持，我们就可以使用更精确的光线追踪合成路径。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::RenderSynthesisRayTraced(...) {
+    // ...
+    cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, *rtSynthesisPipeline);
+
+    // Dispatch rays through our virtual microlens array
+    // One ray per pixel of the high-res spatial display
+    cmd.traceRaysKHR(sbtRayGen, sbtMiss, sbtHit, sbtCallable,
+        swapChainExtent.width, swapChainExtent.height, 1);
+}
+----
+
+== 通过 Slang 模块共享逻辑
+
+我们用 Slang 来确保两条路径的核心插值逻辑完全一致。
+
+[source,slang]
+----
+// synthesis_utils.slang
+// Common logic for both paths
+float3 samplePlenopticFunction(uint64_t bufferPtr, float4 ray) {
+    // Shared quadrilinear interpolation math
+    // ...
+}
+
+// fragment_synthesis.slang
+[shader("pixel")]
+float4 fragmentMain(V2P input) : SV_Target {
+    return float4(samplePlenopticFunction(pushConstants.ptr, input.ray), 1.0);
+}
+
+// raygen_synthesis.slang
+[shader("raygeneration")]
+void raygenMain() {
+    float4 ray = calculateRayFromMicrolens(DispatchRaysIndex().xy);
+    outputImage[DispatchRaysIndex().xy] = samplePlenopticFunction(pushConstants.ptr, ray);
+}
+----
+
+== 为什么要做这些改动？
+
+通过在我们的 `Renderer` 中提供双路径，引擎可以从低功耗的移动 AR 眼镜（走光栅路径）一直伸缩到高端全息工作站显示器（走光线追踪路径）。由于我们的引擎已经具备模块化的 `Render` 结构并使用 Slang，在这两条路径之间共享复杂的 4D 插值逻辑，就能保证数学上的一致性与视觉保真度。
+
+xref:OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc[下一页]

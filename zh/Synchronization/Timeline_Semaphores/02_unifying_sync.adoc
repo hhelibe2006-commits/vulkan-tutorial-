@@ -1,0 +1,73 @@
+:pp: {plus}{plus}
+= 统一同步：取代栅栏与二值信号量
+
+== 简化
+
+迁移到时间线信号量最直接的好处是，你可以干脆删掉处理栅栏与二值信号量的代码。与其维护几套独立的原语，不如创建一个 `vk::raii::Semaphore`，并把它配置成**时间线**类型。
+
+在 RAII 语境中，这项配置通过 `vk::SemaphoreTypeCreateInfo` 完成，它作为标准 `vk::SemaphoreCreateInfo` 的 `pNext` 传入。
+
+[,cpp]
+----
+auto typeCreateInfo = vk::SemaphoreTypeCreateInfo{
+    .semaphoreType = vk::SemaphoreType::eTimeline,
+    .initialValue = 0
+};
+
+auto createInfo = vk::SemaphoreCreateInfo{
+    .pNext = &typeCreateInfo
+};
+
+auto timelineSemaphore = vk::raii::Semaphore(device, createInfo);
+----
+
+== 处理 CPU 等待
+
+过去需要 `vk::Fence` 的 CPU 等待操作，现在改用 `vk::Device::waitSemaphores` 函数。该函数可以同时等待多个信号量，并在所有指定的值都达到后立即返回。
+
+[,cpp]
+----
+auto waitInfo = vk::SemaphoreWaitInfo{
+    .semaphoreCount = 1,
+    .pSemaphores = &(*timelineSemaphore),
+    .pValues = &targetValue
+};
+
+// Wait for the GPU to reach targetValue (equivalent to vkWaitForFences)
+auto result = device.waitSemaphores(waitInfo, timeoutInNanoseconds);
+----
+
+这里的妙处在于，我们现在可以随时用 `device.getSemaphoreCounterValue` 查询信号量的当前值。相比栅栏那种「完成了吗？」的二元状态，这让引擎逻辑灵活得多。
+
+== 处理 GPU 等待
+
+过去需要二值信号量的 GPU 到 GPU 同步，现在在 `vk::SubmitInfo2`（Synchronization 2 的一部分）中完成。你指定时间线信号量，以及队列在开始执行前必须等待的具体值。
+
+[,cpp]
+----
+auto waitSemaphoreInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *timelineSemaphore,
+    .value = requiredValue,
+    .stageMask = vk::PipelineStageFlagBits2::eAllCommands
+};
+
+auto submitInfo = vk::SubmitInfo2{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &waitSemaphoreInfo,
+    // ...
+};
+
+queue.submit2(submitInfo);
+----
+
+通过对两者使用同一套原语，我们消除了在栅栏与信号量之间做同步的需要。GPU 向时间线发出信号，CPU 和其他 GPU 队列都能等待相应的值，从而响应同一个信号。
+
+== 简易引擎：通往时间线的路线图
+
+目前，`Simple Engine` 使用 `inFlightFences`（用于 CPU 到 GPU 的同步）与 `imageAvailableSemaphores` / `renderFinishedSemaphores`（用于 GPU 到 GPU 的同步）这套旧的组合。这要求我们小心管理 `MAX_FRAMES_IN_FLIGHT` 组各自的这类原语，于是就有了你可能在 `Renderer::Render` 中见过的「乒乓」逻辑。
+
+我们的下一次重大架构更新会用单个 `Renderer::frameTimeline` 信号量取代它们。这样一来，我们就能统一等待逻辑。我们将用 `device.waitSemaphores` 等待特定的帧索引值，而不再调用 `device.waitForFences`。这大大简化了 `Renderer::Render` 函数，让帧循环更容易推理，尤其是在我们引入更复杂的异步任务之后。
+
+== 导航
+
+上一篇：xref:Synchronization/Timeline_Semaphores/01_introduction.adoc[时间线信号量：主时钟] | 下一篇：xref:Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc[单调计数器：跟踪全局进度]

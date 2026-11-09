@@ -1,0 +1,64 @@
+:pp: {plus}{plus}
+= 使用协作矩阵在 GPU 上推理
+
+神经网络依赖大量矩阵乘法。为了按空间频率处理传感器数据，我们使用**协作矩阵**（详见高级计算系列）来挖掘 GPU 上专用的 ML 硬件。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+标准的 OpenXR 运行时只负责传感器数据的摄取，并不规定这些数据如何处理。你可以使用 Vulkan 的协作矩阵扩展在 GPU 上实现高速 ML 推理，从而实现标准 OpenXR 帧循环并不会原生协调的预测性滤波与物体识别。
+
+== 概念：专用的 ML 硬件
+
+神经网络依赖大量矩阵乘法。标准计算着色器非常擅长通用任务，但对于 ML，我们使用**协作矩阵**（详见高级计算系列）。它让整个**子组**（32 或 64 个线程）作为一个单元工作，一次操作就完成大块矩阵的乘法，绕过传统的缓存层级以获得最大吞吐量：
+
+[source,cpp]
+----
+// Enabling cooperative matrix features using designated initializers
+vk::PhysicalDeviceCooperativeMatrixFeaturesKHR coopMatrixFeatures{
+    .cooperativeMatrix = VK_TRUE
+};
+
+vk::DeviceCreateInfo deviceCreateInfo{
+    .pNext = &coMatrixFeatures
+};
+----
+
+在 Slang 中，我们用 `cooperative_matrix` 类型来挖掘专用硬件：
+
+[source,slang]
+----
+// Using Slang's Matrix fragments for cooperative ML inference
+[shader("compute")]
+[numthreads(32, 1, 1)]
+void performHandRefinement() {
+    cooperative_matrix<float16_t, id_Subgroup, 16, 16> input;
+    cooperative_matrix<float16_t, id_Subgroup, 16, 16> weights;
+
+    input.load(rawJointBuffer, jointOffset);
+    weights.load(weightBuffer, weightOffset);
+
+    // High-speed Matrix-Multiply-Accumulate (MMA)
+    auto result = mul(input, weights);
+
+    result.store(refinedPoseBuffer, poseOffset);
+}
+----
+
+== 进阶：预测性注视与多 GPU 推理
+
+Vulkan 让我们能把 ML 性能推到标准摄取流程之外：
+
+*   **预测性注视平滑**：借助**协作矩阵**与**子组操作**，你可以在帧循环中直接运行一个小型神经网络，根据最近的 OpenXR 遥测数据预测用户未来的注视点，速度比扩展上报得更快。
+*   **多 GPU 推理**：你可以使用 Vulkan 的**设备组**，把 ML 推理负载（例如物体识别）分摊到多块 GPU 上，并在 OpenXR 合成通道之前汇总结果。
+
+== 为什么要在 GPU 上做？延迟与功耗
+
+在 GPU 上执行 ML 推理对空间计算至关重要：
+1.  **延迟**：把传感器数据送到 CPU 做 ML 处理会造成可见的滞后，破坏**临场感**。
+2.  **能效**：矩阵加速器比通用 ALU 显著更省电。对移动端头显来说，这能减少热降频。
+
+TIP: 关于协作矩阵与 ML 推理的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#VK_KHR_cooperative_matrix[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc[下一页]

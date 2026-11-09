@@ -1,0 +1,82 @@
+:pp: {plus}{plus}
+= 注视驱动逻辑与眼动追踪遥测
+
+静态周边优化是很好的基线，但注视点渲染真正的威力，在于让高细节区域与用户实际的注视点对齐。这就是**动态注视点渲染（DFR）**。为此，我们通过 **XR_EXT_eye_gaze_interaction** 扩展从 OpenXR 运行时获取眼动追踪数据。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+OpenXR 通过扩展提供原始的眼动追踪遥测，但把这些数据投影到 2D 视口坐标、并实时更新着色率图的复杂过程，属于由 Vulkan 驱动的优化。你用 Vulkan 在运行时的输入与引擎的着色密度之间架起桥梁。
+
+== 生物学上的突破口：扫视抑制
+
+要理解动态注视点渲染（DFR）为何如此有效，我们得看看人脑如何处理视觉信息。我们的眼睛一直在做细小而快速的运动，称为**扫视**。在扫视期间，大脑会「屏蔽」视觉输入——这一现象称为**扫视抑制**。
+
+DFR 正是利用了这一点。借助高速眼动追踪（通常为 120Hz 或更高），我们的引擎可以在扫视发生的瞬间把高细节的中央凹区域移动到用户新的注视点。用户永远不会「撞见」低分辨率的周边，因为眼睛移动时大脑会忽略视觉输入。
+
+在你的引擎处理这些更新时，运行时会以高频率采样内部红外相机，并应用用户的个人校准，以报告尽可能准确的 `XrEyeGaze` 位姿。
+
+== 实现注视驱动的 VRS
+
+该过程包含三步：
+
+1.  **采集**：查询 `XrEyeGaze` 位姿，找出用户在 3D 空间中注视的位置。
+2.  **投影**：把该 3D 注视向量投影到视口的 2D 平面上，求出 UV 坐标中的「中央凹中心」。
+3.  **更新**：用计算着色器重新生成或移动**着色率图像**。
+
+[source,cpp]
+----
+// Updating the shading rate image based on projected gaze coordinates
+void updateShadingRateMap(vk::raii::CommandBuffer& cmd, const glm::vec2& gazeCenter) {
+    // We use a simple compute shader to fill a small R8_UINT texture.
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *gazeVrsPipeline);
+    cmd.pushConstants<glm::vec2>(*pipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, gazeCenter);
+    cmd.dispatch(shadingRateWidth / 8, shadingRateHeight / 8, 1);
+}
+----
+
+[source,glsl]
+----
+// Simple Compute Shader to generate a Gaze-Driven Shading Rate Map
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, r8ui) uniform writeonly uimage2D shadingRateImage;
+
+layout(push_constant) uniform PushConstants {
+    vec2 gazeCenter; // UV coordinates of the eye gaze
+};
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    vec2 uv = vec2(pos) / vec2(imageSize(shadingRateImage));
+
+    float dist = distance(uv, gazeCenter);
+
+    // Shading Rate values: 0 = 1x1, 4 = 2x1, 5 = 2x2
+    uint rate = 0; // 1x1 (Full Quality)
+    if (dist > 0.35) {
+        rate = 5;  // 2x2 (Coarse)
+    } else if (dist > 0.15) {
+        rate = 4;  // 2x1 (Medium)
+    }
+
+    imageStore(shadingRateImage, pos, uvec4(rate));
+}
+----
+
+== 进阶：预测性注视与条件渲染
+
+Vulkan 让你能实现超越标准注视交互的主动式优化：
+
+*   **预测性注视平滑**：借助 Vulkan 的 **ML 推理**扩展，你可以分析注视点的历史，在扫视期间预测下一个注视停留点，提前更新着色率图，从而把可感知的延迟降到最低。
+*   **眨眼感知优化**：如果用户眨眼，你可以用 Vulkan 的**条件渲染**立即跳过高细节中央凹内嵌视图的渲染，在眨眼期间节省 GPU 功耗。
+
+== 延迟：沉浸感的杀手
+
+如果你的眼动追踪遥测或着色率更新延迟过大，用户会先看到视野边缘的模糊，然后高细节区块才「追上来」。
+
+这就是**延迟锁存**（第 6 章）至关重要的原因。我们希望在发送时间线信号量、启动 GPU 工作之前的最后一微秒才采样视线的注视点。把这个间隔压到最小，我们就能维持一个完美高分辨率世界的错觉。
+
+TIP: 关于眼动追踪的更多信息，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_EXT_eye_gaze_interaction[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc[下一页]

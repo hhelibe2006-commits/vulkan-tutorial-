@@ -1,0 +1,74 @@
+= SIGGRAPH 2025：基于动态渲染的 Vulkan 光线追踪实战
+
+== 概览
+
+欢迎！在本系列中，我们将为 Vulkan 渲染器增强光线追踪特性，实现实时、像素级精确的阴影（带透明度与不带透明度两种），并额外实现一个反射效果。你将使用提供的脚手架代码（基于 Vulkan Tutorial），按照分步说明补全关键的着色器函数。
+
+'''
+
+* **幻灯片可用**：link:/attachments/Vulkan%20Ray%20Tracing%20With%20Dynamic%20Rendering.pdf[这里]。
+* **源代码可用**：link:https://github.com/KhronosGroup/Vulkan-Tutorial/blob/main/attachments/38_ray_tracing.cpp[这里]。
+
+'''
+
+到结束时，你将学会如何：
+
+- 使用 Vulkan *动态渲染*（无需预定义渲染通道），并用 *RenderDoc* 验证。
+- 为光线追踪创建底层与顶层*加速结构*（BLAS 与 TLAS）。
+- 实现基于光线查询的*阴影光线*（先用全不透明几何体，再处理带 alpha 测试的*透明度*）。
+- 在 *Nsight Graphics* 中调试/查看加速结构。
+- （附加）实现基于光线查询的*反射*。
+
+*前置条件*：
+本系列面向中级 Vulkan 程序员。我们假设你已完成基础 Vulkan 教程（图形管线、描述符集等）。如果尚未完成，你仍然可以从概念上跟上。我们会提供一台装有最新 Vulkan SDK（1.4.311）、支持光线追踪的 GPU（Vulkan Ray Query），以及 RenderDoc 和 Nsight Graphics 的 Windows 机器。
+
+*移动端最佳实践提示*：
+
+- 我们使用 `VK_KHR_dynamic_rendering`（Vulkan 1.3 中的核心特性）而不是传统的渲染通道。这不仅简化了 API，配合 `VK_KHR_dynamic_rendering_local_read` 扩展，还能实现类似子通道的瓦片本地存储读取——这对移动端基于瓦片的 GPU 节省带宽意义重大。
+- 我们在片元着色器中使用光线查询（来自 `VK_KHR_ray_query`），而不是单独的光线追踪管线。在移动端，光线查询的支持范围广泛得多，而且（取决于具体用例）往往比完整的光线追踪管线更高效。光线查询能很好地融入片元着色，受益于片上压缩，并避免上下文切换。
+
+*提供的代码*：
+提供的代码是一个 Vulkan 渲染器，已经实现了带动态渲染的基础图形管线。它基于 Vulkan Tutorial，自包含在一个 C++ 源文件和一个 Slang 着色器文件中：
+
+- link:/attachments/38_ray_tracing.cpp[38_ray_tracing.cpp]
+- link:/attachments/38_ray_tracing.slang[38_ray_tracing.slang]
+- 如果你在着色器任务上卡住了，可以参考提供的参考解法：link:/attachments/38_ray_tracing_complete.slang[38_ray_tracing_complete.slang]
+
+源代码的结构会引导你逐步完成任务，其中提供了提示和样板代码。它还设置好了所有必需的扩展与特性，包括 `VK_KHR_acceleration_structure` 和 `VK_KHR_ray_query`。
+你会看到一些标记为 `// TASKxx` 的代码段，我们会在每一章中引用它们。
+
+在 C++ 文件的顶部，注意以下变量：
+
+[,c{pp}]
+----
+#define LAB_TASK_LEVEL 1
+----
+
+在某些节点，你会被要求更新这个变量并重新构建，以验证关键改动的效果，无需编写新代码。
+
+NOTE: `LAB_TASK_LEVEL` 只控制 *C++ 侧*的设置（加速结构的构建/绑定、TLAS 动画以及类似的宿主端脚手架）。它不会选择或切换着色器。只有当你按照每一章的说明，自己补全 `38_ray_tracing.slang` 中对应的 `// TASKxx` 部分后，阴影、透明度和反射才会出现——仅提高 `LAB_TASK_LEVEL` 不会改变你在屏幕上看到的内容。如果你想先看到完成后的效果，`38_ray_tracing_complete.slang` 就是参考解法；把它复制覆盖到 `38_ray_tracing.slang`（构建时始终编译后者），就能在不编写任何任务的情况下构建出功能完整的着色器。
+
+== 本系列的章节
+
+- xref:./00_Overview.adoc[概览]
+- xref:./01_Dynamic_rendering.adoc[动态渲染]
+- xref:./02_Acceleration_structures.adoc[加速结构（BLAS/TLAS）]
+- xref:./03_Ray_query_shadows.adoc[光线查询阴影（不透明几何体）]
+- xref:./04_TLAS_animation.adoc[TLAS 动画]
+- xref:./05_Shadow_transparency.adoc[在阴影中实现透明度]
+- xref:./06_Reflections.adoc[光线查询反射]
+- xref:./07_Conclusion.adoc[结语]
+
+== 构建并运行
+
+你可以从 Visual Studio（把 38_ray_tracing 设为启动项目）或通过命令行构建并运行提供的示例：
+
+[,shell]
+----
+cmake --build build --target 38_ray_tracing --parallel; start .\build\38_ray_tracing\Debug\38_ray_tracing.exe -wo .\build\38_ray_tracing\
+----
+
+注意，以上内容与基础教程相比没有变化，你也可以像教程其余部分那样在其他平台上继续构建。
+
+== 导航
+- 下一篇：xref:./01_Dynamic_rendering.adoc[动态渲染]

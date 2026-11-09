@@ -1,0 +1,82 @@
+:pp: {plus}{plus}
+= 将场景理解集成到引擎中
+
+集成**场景理解**之后，我们的 `simple_game_engine` 就能把物理房间当作动态几何体来处理。为此，我们把 OpenXR 空间数据与引擎的 `Entity` 和 `MeshComponent` 系统对接起来。该实现的一个示例见 link:../../../attachments/openxr_engine/xr_context.cpp[xr_context.cpp]。
+
+== 追踪空间网格的生命周期
+
+在 `engine.cpp` 中，我们在 `Engine::update()` 循环里增加了一个同步步骤，向 OpenXR 查询更新后的空间网格。这样一来，虚拟物体就能随着房间被扫描而与之交互。
+
+我们新增了专门的方法 `Engine::updateSpatialMeshes()`，它遍历运行时推送的网格流。
+
+[source,cpp]
+----
+// engine.cpp
+// Supporting Struct: Spatial Mesh Bridge
+struct XrSpatialMesh {
+    XrUuidMSFT meshGuid;
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    glm::mat4 transform;
+};
+
+void Engine::updateSpatialMeshes() {
+    if (!xrMode) return;
+
+    // 1. Retrieve current spatial meshes from the OpenXR context
+    auto xrMeshes = xrContext.getLatestSpatialMeshes();
+
+    for (const auto& xrMesh : xrMeshes) {
+        // 2. Map the XR mesh ID to an Engine Entity
+        // We use a internal map: std::unordered_map<XrUuidMSFT, Entity*>
+        Entity* spatialEntity = getOrCreateSpatialEntity(xrMesh.meshGuid);
+
+        auto* meshComp = spatialEntity->getComponent<MeshComponent>();
+        auto* transform = spatialEntity->getComponent<TransformComponent>();
+
+        // 3. Update the GPU resources via our Renderer
+        // This transfers raw XrVector3f data into our vk::raii::Buffer
+        renderer->updateDynamicMesh(
+            meshComp->getBuffer(),
+            xrMesh.vertices,
+            xrMesh.indices
+        );
+
+        // 4. Update the transform to match the physical room coordinates
+        // OpenXR spatial data is already provided as a 4x4 matrix
+        transform->setLocalMatrix(xrMesh.transform);
+    }
+}
+----
+
+== 应用语义智能
+
+在 `mesh_component.h` 中，我们扩展了这个组件，让它存储**语义标签**。这样，物理系统和 AI 系统就能查询某块几何体到底代表「地板」「桌子」还是「墙」。
+
+当引擎检测到新的网格时，我们在 `engine.cpp` 中为它设置属性：
+
+[source,cpp]
+----
+// engine.cpp
+void Engine::configureSpatialEntity(Entity* entity, XrSceneComponentTypeMSFT type) {
+    auto* meshComp = entity->getComponent<MeshComponent>();
+
+    if (type == XR_SCENE_COMPONENT_TYPE_PLANE_MSFT) {
+        // High-level plane: Perfect for floor-based AI navigation
+        meshComp->setSemanticTag("Floor");
+        entity->addComponent<RigidBodyComponent>(Physics::Static);
+    } else if (type == XR_SCENE_COMPONENT_TYPE_OBJECT_MSFT) {
+        // Physical object: Enable shadows and complex physics
+        meshComp->setSemanticTag("Prop");
+        entity->addComponent<RigidBodyComponent>(Physics::Kinematic);
+    }
+}
+----
+
+== 架构上的胜利：统一管线
+
+把空间数据映射进现有的 `Entity` 系统之后，我们就不需要为真实世界单独准备一套「特殊」渲染器了。`renderer_rendering.cpp` 中的 **PBR**（基于物理的渲染）管线只是把这些空间实体当作普通几何体。它们会自动接收虚拟光照、投下虚拟阴影，并为我们的透明通道提供深度信息。
+
+这种「统一几何体」的做法是构建可信混合现实的基础，它让我们把物理房间和虚拟资产当作同一个连贯的场景来处理。
+
+xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc[下一页]

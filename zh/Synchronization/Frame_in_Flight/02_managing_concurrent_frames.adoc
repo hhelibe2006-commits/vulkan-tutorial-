@@ -1,0 +1,106 @@
+:pp: {plus}{plus}
+= 管理并发帧：重建主循环
+
+== 目标：重叠而不混乱
+
+飞行帧系统的目的很简单：在 CPU 准备后续帧时让 GPU 保持忙碌。诀窍在于做到这件事的同时不破坏数据、不引入无上限的延迟。有了时间线信号量，我们可以用一个表示“第 N 帧已完成”的单一单调值干净地表达它。
+
+== 一种实用的结构
+
+我们会用一组按帧轮转的数据（命令缓冲区、描述符集、瞬态缓冲区）。每一帧都关联一个时间线值，标记何时可以安全复用这些资源。
+
+[,cpp]
+----
+struct FrameContext {
+    vk::raii::CommandPool   pool{nullptr};
+    vk::raii::CommandBuffer cmd{nullptr};
+    vk::raii::Fence         fence{nullptr}; // optional if you only use timeline waits on CPU
+    uint64_t                retireValue = 0; // timeline value when this frame finishes
+};
+
+std::array<FrameContext, MaxFramesInFlight> frames;
+
+vk::raii::Semaphore timeline = createTimelineSemaphore(device, /*initial=*/0);
+uint64_t nextSubmitValue = 1; // monotonically increasing
+----
+
+== 带时间线门控的主循环
+
+每一帧都从环上选出下一个 `FrameContext`。在触碰它的任何资源之前，先确认全局时间线已经推进到超过这些资源上次被使用的值。
+
+[,cpp]
+----
+FrameContext& fc = frames[currentFrameIndex];
+
+// Wait until GPU has reached the value when this frame's resources were last retired
+if (fc.retireValue != 0) {
+    auto waitInfo = vk::SemaphoreWaitInfo{
+        .semaphoreCount = 1,
+        .pSemaphores    = &(*timeline),
+        .pValues        = &fc.retireValue
+    };
+    device.waitSemaphores(waitInfo, /*timeoutNs=*/UINT64_C(1'000'000'000)); // 1s timeout
+}
+
+// Record & submit this frame
+recordCommands(fc.cmd /*, ... */);
+
+// Define the value that represents "this frame complete"
+const uint64_t frameComplete = nextSubmitValue++;
+
+vk::SemaphoreSubmitInfo signalInfo{
+    .semaphore = *timeline,
+    .value     = frameComplete,
+    .stageMask = vk::PipelineStageFlagBits2::eAllCommands
+};
+
+vk::CommandBufferSubmitInfo cmdInfo{ .commandBuffer = *fc.cmd };
+
+vk::SubmitInfo2 submit{
+    .commandBufferInfoCount  = 1,
+    .pCommandBufferInfos     = &cmdInfo,
+    .signalSemaphoreInfoCount= 1,
+    .pSignalSemaphoreInfos   = &signalInfo
+};
+
+graphicsQueue.submit2(submit);
+
+// Tag this frame's resources with the value at which they're safe to reuse
+fc.retireValue = frameComplete;
+----
+
+== 不用栅栏的 CPU 节流
+
+为了限制延迟（例如只保留 2–3 个飞行帧），在开始新一帧之前，等待“最老的飞行帧已完成”对应的值。不需要每帧一个栅栏。
+
+[,cpp]
+----
+const uint64_t minAllowedValue = frameCompleteValueFor(currentFrameIndex - (MaxFramesInFlight - 1));
+if (minAllowedValue) {
+    auto waitInfo = vk::SemaphoreWaitInfo{
+        .semaphoreCount = 1,
+        .pSemaphores    = &(*timeline),
+        .pValues        = &minAllowedValue
+    };
+    device.waitSemaphores(waitInfo, UINT64_MAX);
+}
+----
+
+这种做法把流控集中到一个可调试的计数器上。下一节我们会用同一个计数器，对资源的销毁和复用做出精确、低开销的判断。
+
+== 如何在 Simple Engine 中实现
+
+要在 `Simple Engine` 中实现这一点，我们会重构 `Renderer::Render` 方法。目前它依赖 `inFlightFences[currentFrame]` 来阻塞 CPU。我们会把它替换为单个 `Renderer::frameTimeline` 信号量。
+
+新逻辑会是这样的：
+
+1.  **计算退役值**：不再用 `waitForFences`，而是为当前帧槽计算 `retireValue`。它就是上一次提交时赋给这个槽的时间线值（例如 `frameTimelineValue[currentFrame]`）。
+2.  **等待时间线**：我们调用 `device.waitSemaphores` 等待那个 `retireValue`。这确保 GPU 已经用完与该帧槽关联的资源（命令缓冲区、描述符集）。
+3.  **提交并发出信号**：调用 `queue.submit2` 时，我们加入一个 `vk::SemaphoreSubmitInfo`，用一个新的、递增的值向 `frameTimeline` 发出信号。
+4.  **更新帧槽**：我们把这个新的信号值存进 `frameTimelineValue[currentFrame]`，以便下次这个槽在环上轮到时等待它。
+
+这次重构让我们能完全移除 `inFlightFences` 数组，简化资源管理，也更容易把其他异步系统接入同一个“主时钟”。
+
+== 导航
+
+上一节：xref:Synchronization/Frame_in_Flight/01_introduction.adoc[飞行帧架构：引擎的心跳] | 下一节：xref:Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc[资源生命周期：无需 deviceWaitIdle() 的安全复用]

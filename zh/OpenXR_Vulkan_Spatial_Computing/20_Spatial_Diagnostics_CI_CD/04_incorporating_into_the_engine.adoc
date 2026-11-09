@@ -1,0 +1,63 @@
+:pp: {plus}{plus}
+= 将空间诊断集成到引擎中
+
+集成**空间诊断与 CI/CD**，能让我们的 `simple_game_engine` 通过自动化测试与深入的资源检查保持绝对稳定。做法是在 `Renderer` 中加入遥测钩子，并在 `engine.cpp` 中配置「无头」模式。*这部分目前留作读者的实现练习。*
+
+== 添加诊断标签
+
+在 `renderer_core.cpp` 中，我们扩展资源创建逻辑，加入 OpenXR 与 Vulkan 调试标签。这样在 RenderDoc 中捕获帧时，我们就能确切看到每个资源代表什么。
+
+[source,cpp]
+----
+// renderer_core.cpp
+void Renderer::setupSpatialResourceLabels(const XrInstance& xrInstance) {
+    if (!xrMode || !hasDebugUtilsSupport) return;
+
+    // 1. Tag the spatial swapchain for RenderDoc identification
+    XrDebugUtilsObjectNameInfoEXT nameInfo{
+        .type = XR_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = XR_OBJECT_TYPE_SWAPCHAIN,
+        .objectHandle = reinterpret_cast<uint64_t>(spatialSwapchain),
+        .objectName = "Spatial Swapchain"
+    };
+
+    xrSetDebugUtilsObjectNameEXT(xrInstance, &nameInfo);
+
+    // 2. Add a diagnostic hook to our main command buffer
+    // This allows us to track the frame's progress in a GPU capture
+    vk::DebugUtilsLabelEXT frameLabel{ .pLabelName = "Spatial Frame Rendering" };
+    commandBuffer.beginDebugUtilsLabelEXT(frameLabel);
+}
+----
+
+== 启用自动化 CI/CD 无头模式
+
+为了自动化测试，我们在 `engine.cpp` 中把引擎配置成「无头」模式。在这种状态下，我们把真实的 OpenXR 运行时换成模拟器，并保存截图供 AI 视觉分析使用。
+
+[source,cpp]
+----
+// engine.cpp
+void Engine::runSpatialCITest(uint32_t totalFrames) {
+    // 1. Configure the XR Context for the Headless Simulator
+    xrContext.enableSimulatorMode("Baseline_Tests.json");
+
+    for (uint32_t i = 0; i < totalFrames; ++i) {
+        // 2. Perform the standard update and render
+        update(fixedTimeStep);
+        render();
+
+        // 3. Capture every 100th frame for AI-driven visual validation
+        if (i % 100 == 0) {
+            renderer->captureFrameToDisk("CI_Spatial_Capture_" + std::to_string(i) + ".png");
+        }
+    }
+}
+----
+
+== 为什么要做这些改动？
+
+把诊断钩子和自动化测试直接构建进引擎，我们就能确保新的空间特性（例如**光场**合成或**延迟锁存**）不会引入视觉回归或性能回归。`simple_game_engine` 在其内部的 **Watchdog** 系统中使用这些遥测点，一旦**动作到光子**的间隙超过目标阈值，就向开发者告警。
+
+这种「空间优先」的 CI/CD 方法，正是专业团队能在各种硬件目标上维持高保真体验、同时让代码库保持稳定可靠的原因。
+
+xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/03_automated_qa.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/conclusion.adoc[下一页]

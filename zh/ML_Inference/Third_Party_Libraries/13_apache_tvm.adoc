@@ -1,0 +1,159 @@
+:pp: {plus}{plus}
+
+= Apache TVM：端到端编译器栈
+
+== 概述
+
+Apache TVM 是一个端到端 ML 编译器栈，能把高层模型变成面向多种目标的优化可执行文件：Vulkan/OpenCL GPU、CPU（LLVM）以及各类加速器。TVM 以 Relay（图 IR）和一套调度系统为核心，后者能为你的具体设备自动调优内核。如果你想要一个既能引导又能测量的编译器，TVM 同时提供了图级与内核级优化的调节手段。
+
+== 需要的工具
+
+第一段路你会在 Python 里走。准备好 NumPy、一个 ONNX 读取器和 TVM。安装方式因平台而异；预编译包或从源码构建都请遵循 TVM 的文档。先在 Python 里把一切验证好，等结果令你满意后再加 C/C++ 集成，完全没问题。
+
+== 何时适合用 TVM
+
+如果你的首要目标是带 Vulkan 优先 AOT 流程的小运行时，xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE] 通常更简单。当你需要针对特定 GPU/SoC 的设备专属自动调优来榨取额外性能、广泛的导入支持（ONNX、TensorFlow、经 TorchScript 的 PyTorch）、多种 GPU 选择（Vulkan 与 OpenCL），或者需要灵活定制调度并引入新内核时，就选 TVM。
+
+== 命令之前，先讲思路
+
+Relay 表示你的模型。你把模型导入 Relay，选一个目标（这里是 `"vulkan"`），然后让 TVM 构建。TVM 生成内核和一小段知道如何在你设备上执行的运行时包装代码。如果你需要在一部特定手机或 iGPU 上更快，TVM 的自动调度器可以用真实测量搜索更好的调度，然后你用这些结果重新构建。先从一个正确的基线开始；只调优真正重要的部分。
+
+== 端到端 Vulkan 工作流（实战）
+
+TVM 面向 Vulkan 的「hello world」是：把 ONNX 模型导入 Relay，为 `target="vulkan"` 构建，保存产物，再用 TVM 运行时运行它。下面是该流程在 Python 中的形态。
+
+[source,python]
+----
+import onnx
+import numpy as np
+import tvm
+from tvm import relay
+from tvm.contrib import graph_executor
+
+# 1) Load ONNX and convert to Relay
+onnx_model = onnx.load("model.onnx")
+input_name = "input"
+shape_dict = {input_name: (1, 3, 224, 224)}  # adjust to your model
+mod, params = relay.frontend.from_onnx(onnx_model, shape_dict, freeze_params=True)
+
+# 2) Build for Vulkan
+target = tvm.target.Target("vulkan")
+with tvm.transform.PassContext(opt_level=3):
+    lib = relay.build(mod, target=target, params=params)
+
+# 3) Run on a Vulkan device
+dev = tvm.vulkan(0)
+rt_mod = graph_executor.GraphModule(lib["default"](dev))
+
+x = np.random.randn(1, 3, 224, 224).astype("float32")
+rt_mod.set_input(input_name, tvm.nd.array(x, device=dev))
+rt_mod.run()
+out = rt_mod.get_output(0).numpy()
+print(out.shape)
+
+# 4) Export artifact for deployment (shared library with embedded graph/params)
+lib.export_library("model_vulkan.so")
+----
+
+== 优化之前先验证正确性
+
+调优之前，先与黄金参考做对比，确认你在数值上与训练好的模型一致。用 ONNX Runtime 快速检查一下就够了。
+
+[source,python]
+----
+import onnxruntime as ort
+
+sess = ort.InferenceSession("model.onnx", providers=["CPUExecutionProvider"])
+ref = sess.run(None, {input_name: x.astype(np.float32)})[0]
+
+tv = rt_mod.get_output(0).numpy()
+mae = np.mean(np.abs(tv - ref))
+print("MAE:", mae)
+----
+
+导出的 `.so` 是一个自包含产物，你可以从 Python 或 C/C++ 加载。Vulkan 工作由 TVM 的运行时负责；你不会亲手写 SPIR‑V——TVM 会生成并派发它。
+
+== 最小 C++ 运行时（草图）
+
+下面是从 C++ 加载模块的高层样貌。具体的辅助函数会随时间变化；请查阅 TVM 的运行时文档，选用与你版本匹配的头文件。
+
+[source,cpp]
+----
+#include <tvm/runtime/module.h>
+#include <tvm/runtime/packed_func.h>
+
+int main() {
+  tvm::runtime::Module mod = tvm::runtime::Module::LoadFromFile("model_vulkan.so");
+
+  // Create a device: kVulkan(0) selects the first Vulkan device
+  DLDevice dev{kDLVulkan, 0};
+
+  // Create the graph executor module (symbol name is "default")
+  tvm::runtime::Module gmod = mod.GetFunction("default")(dev);
+  tvm::runtime::PackedFunc set_input = gmod.GetFunction("set_input");
+  tvm::runtime::PackedFunc run       = gmod.GetFunction("run");
+  tvm::runtime::PackedFunc get_output= gmod.GetFunction("get_output");
+
+  // Allocate input NDArray on device and set it
+  // (Allocation helpers omitted; in practice you create a DLTensor/NDArray)
+  // set_input("input", input_dlpack_or_ndarray);
+
+  run();
+  // get_output(0, output_dlpack_or_ndarray);
+  return 0;
+}
+----
+
+如果你追求最小体积，TVM 也支持配合 C 运行时（CRT）的 AOT 执行器。该流程会生成可直接调用的 C 函数，代价是构建步骤更繁琐。对于你能完全掌控平台的嵌入式目标，它很有用。
+
+== 需要最后 20% 时的调优
+
+基线正确且测量完毕后，你可以让 TVM 的自动调度器（MetaSchedule/Ansor）在你真实的设备上搜索更快的调度。它使用真实测量，并产出可在 CI 中复用的记录。
+
+[source,python]
+----
+from tvm import meta_schedule as ms
+
+with tvm.transform.PassContext(opt_level=3):
+    tuned_lib = ms.tune_relay(
+        mod=mod,
+        params=params,
+        target=target,
+        work_dir="tuning_logs",
+        max_trials_global=1000,
+    )
+
+tuned_lib.export_library("model_vulkan_tuned.so")
+----
+
+最大的收益通常出现在移动端与集成 GPU 上。桌面独立显卡往往不调优也能表现良好。
+
+== 与 Vulkan 应用集成
+
+最简单的路径是让 TVM 为其编译模块拥有自己的 Vulkan 上下文，并在 API 边界通过主机缓冲区通信：在 Vulkan 中做前处理（缩放/归一化到暂存缓冲区或设备缓冲区），拷贝到 TVM 输入张量，运行推理，再把结果拷回做后处理。
+
+如果你需要更紧的互操作（例如包装已有的 `VkDevice` 或共享内存），要注意 Vulkan 运行时集成存在于 TVM 内部。句柄级的直接互操作仅限于 TVM 暴露的部分；大多数应用都从简单拷贝起步，等管线正确之后再优化数据搬运。
+
+=== 关于运行时（以及如何绕开它）
+
+TVM 产出一个编译产物（例如共享库或 AOT 模块），由 TVM 的运行时（图执行器或 AOT/CRT）执行。在 Vulkan 应用中，这类似于使用 ONNX Runtime 或 TFLite：你链接 TVM 的运行时，加载产物，设置输入，运行，再取回输出。
+
+尽管 TVM 的 Vulkan 后端最终会生成 SPIR‑V，但它目前并不导出一个干净、稳定的「独立 SPIR‑V + 可直接使用的宿主调度代码」接口。试图把内核剥离出来、在你自己的引擎里重新实现宿主侧，意味着要重建运行时管理的那些 ABI 细节（描述符集布局、缓冲区绑定顺序、管线生命周期、同步等）。实际上，请像对待任何其他模型运行时那样，计划嵌入 TVM 运行时。
+
+== Android 与嵌入式说明
+
+Vulkan 让 TVM 在 Android 上跨厂商可移植。为你的 ABI 交叉编译运行时，部署编译好的模块，并用设备端 runner（或 RPC）配合自动调度器来获得调优后的调度。对于非常小的设备，可研究 AOT + CRT 路径以压缩体积。
+
+== 数值与布局
+
+与任何编译器驱动的路径一样，布局很重要。通道在后与通道在前会显著改变性能特征。尽量让前处理布局与编译器在 Relay 变换后所选的一致。如果你的模型能安全支持 fp16，就启用它并重新测量；许多内核受内存带宽支配。
+
+== 故障排查
+
+如果 `from_onnx` 失败，就简化模型（跑一遍 ONNX simplifier）、冻结参数，并确保所有输入形状都已指定。如果运行时结果看起来不对，就逐层与黄金参考比较张量，先修正第一处偏差再继续。
+
+== NNEF 互操作
+
+TVM 的稳定路径是经 ONNX。如果你的源是 NNEF，先做 NNEF→ONNX 转换，再走上面展示的 ONNX→Relay→Vulkan 流程。这与 NNEF 深入章节中的建议一致，也能让你的构建保持稳健。
+
+xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[上一章：IREE（OpenXLA）：面向 ML 的提前编译与 JIT 编译] | xref:ML_Inference/Third_Party_Libraries/14_mojo_max.adoc[下一章：Mojo / MAX：来自 Modular 的编译器驱动推理]

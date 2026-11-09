@@ -1,0 +1,40 @@
+:pp: {plus}{plus}
+= 使用视口重排优化投影
+
+在一些宽视场头显中，物理显示面板可能以不与标准笛卡尔坐标系对齐的角度安装。这正是 **VK_NV_viewport_swizzle** 扩展大显身手的地方。
+
+== 重排阶段：重新路由管线
+
+要理解视口重排，你必须考察一个像素在硬件中的处理路径。顶点着色器结束后，GPU 会执行**透视除法**与**视口变换**。通常这是固定的：X 映射到 X，Y 映射到 Y。
+
+借助**视口重排**，你可以*在硬件层面*重新路由这些分量。
+
+*   **为什么？**：有些头显使用旋转的显示面板，以便在特定 FOV 内塞进更多像素。
+*   **着色器的问题**：在着色器里翻转 X 和 Y 很容易，但它发生在光栅化*之前*，可能破坏深度测试与硬件剔除。
+*   **硬件方案**：重排发生在着色器*之后*、像素被绘制*之前*。它让硬件能以零性能代价处理旋转或反转的坐标轴。
+
+[source,cpp]
+----
+// Configuring a viewport swizzle for non-standard display layouts
+vk::PipelineViewportSwizzleStateCreateInfoNV swizzleState{};
+vk::ViewportSwizzleNV leftEyeSwizzle{
+    vk::ViewportCoordinateSwizzleNV::ePositiveX,
+    vk::ViewportCoordinateSwizzleNV::eNegativeY, // Invert vertical axis for hardware-level flip
+    vk::ViewportCoordinateSwizzleNV::ePositiveZ,
+    vk::ViewportCoordinateSwizzleNV::ePositiveW
+};
+swizzleState.pViewportSwizzles = &leftEyeSwizzle;
+
+vk::GraphicsPipelineCreateInfo pipelineInfo{};
+pipelineInfo.pNext = &swizzleState;
+----
+
+== 设备相关性与可移植性
+
+虽然视口重排是低层硬件优化的有力工具，但要记住它往往是**厂商专属**的（正如 `NV` 后缀所示）。
+
+在现代空间引擎中，你应把重排视为一种「硬件驱动」特性。引擎的核心逻辑应保持直线式的轴对齐形态，但 `VulkanContext` 可以根据握手期间探查到的头显需求来应用这些重排。这样游戏代码保持干净，同时仍能在奇特的宽视场硬件上压榨出绝对最大的性能。
+
+下一章，我们将看看如何用 **CAVE 架构与多 GPU 同步**把这些空间技术扩展到更大的环境。
+
+xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc[下一页]

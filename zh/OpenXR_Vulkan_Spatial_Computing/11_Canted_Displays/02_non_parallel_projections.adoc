@@ -1,0 +1,69 @@
+:pp: {plus}{plus}
+= 用于倾斜显示的不对称视锥
+
+当你调用 `xrLocateViews` 时，OpenXR 会为每只眼睛返回一个 `pose` 和一个 `fov`。在透镜倾斜（旋转）的头显上，这些值每只眼睛都不同，需要专门的矩阵构建方式。
+
+== 生态系统视角
+
+本章属于以下类别：**将 Vulkan 与 OpenXR 运行时配合使用**。
+
+从运行时提供的 FOV 正切值正确计算投影矩阵，是支持现代宽 FOV 头显的必要步骤。你必须使用运行时的视图元数据，确保 Vulkan 的渲染与物理硬件对齐。
+
+== 正切视锥：把角度映射到像素
+
+要理解 OpenXR 为什么使用正切值，我们得看看相机如何观察世界。GPU 工作在**裁剪空间**中——一个从 -1 到 1 的盒子。要从 3D 世界进入这个 2D 盒子，我们需要 FOV 角度的正切值。
+
+`xrLocateViews` 提供的 `fov` 以四个正切值表示：`angleLeft`、`angleRight`、`angleUp` 和 `angleDown`。
+
+*   **对称（桌面）**：Left = -Right，Up = -Down。光学中心位于中间。
+*   **不对称（XR）**：Left != -Right。光学中心被偏移，以与物理透镜对齐。
+
+运行时根据头显精确的出厂校准来计算这些正切值，其中考虑了显示面板的倾斜以及透镜到眼睛的距离。
+
+== 构建矩阵
+
+要根据这些正切值构建正确的 4x4 投影矩阵，我们使用如下逻辑：
+
+[source,cpp]
+----
+// Constructing an asymmetric projection matrix from OpenXR FOV tangents
+glm::mat4 createProjectionMatrix(const XrFovf& fov, float zNear, float zFar) {
+    const float tanLeft = std::tan(fov.angleLeft);
+    const float tanRight = std::tan(fov.angleRight);
+    const float tanUp = std::tan(fov.angleUp);
+    const float tanDown = std::tan(fov.angleDown);
+
+    const float tanWidth = tanRight - tanLeft;
+    const float tanHeight = tanUp - tanDown;
+
+    glm::mat4 projection(0.0f);
+    projection[0][0] = 2.0f / tanWidth;
+    projection[1][1] = 2.0f / tanHeight;
+
+    // The "Shift" components align the frustum with the lens optical center
+    projection[2][0] = (tanRight + tanLeft) / tanWidth;
+    projection[2][1] = (tanUp + tanDown) / tanHeight;
+
+    projection[2][2] = zFar / (zNear - zFar);
+    projection[2][3] = -1.0f;
+    projection[3][2] = -(zFar * zNear) / (zFar - zNear);
+    return projection;
+}
+----
+
+== 倾斜显示：旋转问题
+
+在 Valve Index 这类头显上，显示面板向外旋转（倾斜）。这意味着你的**视图矩阵**对每只眼睛也各不相同。
+
+使用**多视图**时，你必须向着色器推送各自的投影矩阵与视图矩阵。如果你试图使用一个带固定偏移的单一「立体」矩阵，世界看起来就会扭曲，因为 GPU 是在为一块非直线显示的屏幕绘制直线世界。
+
+== 进阶：透视校正插值与动态 FOV
+
+Vulkan 能提供原始 OpenXR 数据无法企及的几何精度：
+
+*   **透视校正插值**：使用 Vulkan 的**动态状态**与**推送常量**，你可以把每只眼睛各自的裁剪平面数据传给着色器，确保即使面板旋转极端的头显上，光照与阴影计算也能保持稳定。
+*   **视口重排**：你可以用 Vulkan 的**视口重排**根据实时的光学变化动态调整每只眼睛的渲染区域，相比固定的 OpenXR 视图配置提供更灵敏的体验。
+
+TIP: 关于不对称投影的更多信息，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#projection-matrices[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc[下一页]

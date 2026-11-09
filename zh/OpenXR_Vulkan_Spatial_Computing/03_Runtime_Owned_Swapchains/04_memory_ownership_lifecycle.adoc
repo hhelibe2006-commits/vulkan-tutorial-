@@ -1,0 +1,105 @@
+:pp: {plus}{plus}
+= 内存所有权生命周期
+
+在标准桌面 Vulkan 应用中，我们用 `vkAcquireNextImageKHR` 从交换链取得图像索引。用毕调用 `vkQueuePresentKHR`。在 OpenXR 中，这被一个更显式的三步生命周期取代：**等待**、**获取**与**释放**。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+等待-获取-释放循环是 OpenXR 帧处理的核心同步机制。正确实现它，对任何高性能空间引擎都是强制要求。
+
+== 三步舞：与合成器同步
+
+桌面窗口可以在 GPU 就绪时随时处理图像，而 XR 头显是一块严格、对时间敏感的显示器。合成器通过三步生命周期管理**异步重投影**这类高频任务，同时让引擎的渲染管线保持高效：
+
+1.  **等待**：「有没有一张图像可以让我开始绘制？」
+2.  **获取**：「把那张图像的索引给我，并锁定供我使用。」
+3.  **释放**：「我画完了，现在还给你。」
+
+这支舞确保引擎与合成器永远不会同时访问同一块内存，从而避免「撕裂」或「卡顿」。
+
+== 1. 等待（`xrWaitSwapchainImage`）
+
+第一步是 `xrWaitSwapchainImage`。该调用是阻塞操作，会一直等到 XR 运行时准备好让应用开始写入交换链中的下一张图像。
+
+[source,cpp]
+----
+XrSwapchainImageWaitInfo waitInfo{
+    .type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+    .timeout = XR_INFINITE_DURATION
+};
+xrWaitSwapchainImage(xrSwapchain, &waitInfo);
+----
+
+**节奏控制与耗尽**：如果你的引擎渲染速度快于头显刷新率，`xrWaitSwapchainImage` 会阻塞引擎线程，充当天然的节奏控制机制。不过，如果你不及时释放图像，这个调用会无限期阻塞，导致整个引擎停顿。
+
+== 2. 获取（`xrAcquireSwapchainImage`）
+
+等待满足后，我们调用 `xrAcquireSwapchainImage`。该函数确定我们应该渲染进交换链中的哪个具体图像索引。
+
+[source,cpp]
+----
+uint32_t imageIndex;
+XrSwapchainImageAcquireInfo acquireInfo{
+    .type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO
+};
+xrAcquireSwapchainImage(xrSwapchain, &acquireInfo, &imageIndex);
+----
+
+调用之后，我们的应用正式「拥有」`imageIndex` 处的图像。这是 Vulkan 层面的保证：合成器不再读取这块特定的 VRAM。
+
+== 3. 同步与布局转换
+
+尽管所有权由 OpenXR 管理，我们仍要负责 Vulkan 侧的同步。我们使用**同步 2**（Vulkan 1.3）在使用前把图像转换到 `VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL`。
+
+[source,cpp]
+----
+vk::ImageMemoryBarrier2 barrier{
+    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    .srcAccessMask = {},
+    .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+    .oldLayout = vk::ImageLayout::eUndefined,
+    .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .image = framebuffers[imageIndex].image,
+    .subresourceRange = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1
+    }
+};
+
+vk::DependencyInfo depInfo{
+    .imageMemoryBarrierCount = 1,
+    .pImageMemoryBarriers = &barrier
+};
+commandBuffer.pipelineBarrier2(depInfo);
+----
+
+== 4. 释放（`xrReleaseSwapchainImage`）
+
+最后，命令缓冲区提交到 GPU 之后，我们调用 `xrReleaseSwapchainImage`。这告诉 XR 运行时：「我对这张图像的写入已完成，你可以拿回去做合成。」
+
+[source,cpp]
+----
+XrSwapchainImageReleaseInfo releaseInfo{
+    .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO
+};
+xrReleaseSwapchainImage(xrSwapchain, &releaseInfo);
+----
+
+**异步重投影**：你 `Release` 图像之后，运行时把它纳入自己的高优先级队列。如果你的引擎错过了下一帧截止时间，运行时会取*最后*释放的那张图像，依据用户最新的头部运动对它做「扭曲」，即使性能下滑也能维持舒适度。
+
+== 进阶：协调异步计算
+
+虽然获取周期由 OpenXR 管理，但 Vulkan 的**时间线信号量**让你能与自己的异步计算队列或物理队列建立细粒度的同步关系。
+
+*   **细粒度释放**：你可以确保只有在渲染通道与一个次级计算通道（例如基于帧数据的实时音频合成）都完成后，才释放图像。
+*   **延迟监控**：你可以用 Vulkan **查询池**监控自己的 GPU 计时，确保资源释放得足够快，不会让引擎停顿。
+
+TIP: 更多细节请参阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#xrWaitSwapchainImage[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc[下一页]

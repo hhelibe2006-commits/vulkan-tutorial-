@@ -1,0 +1,529 @@
+:pp: {plus}{plus}
+
+= 矩阵运算
+
+== 引言
+
+矩阵运算是神经网络的计算主力。激活函数因为引入非线性而备受关注，但真正干重活的是矩阵运算。全连接层就是矩阵-向量乘法。卷积层的核心可以重写成矩阵乘法。注意力机制——Transformer 的基础——建立在矩阵-矩阵乘法之上。
+
+理解如何在 GPU 上高效实现矩阵运算，是构建高性能推理引擎的必修课。逐元素运算是内存受限、极易并行的，矩阵运算则不同：它的访问模式更复杂，也存在通过数据复用进行优化的空间。
+
+本章讲解矩阵-向量乘法（全连接层的基础）和矩阵-矩阵乘法（GEMM，通用矩阵乘法，贯穿现代各种架构）。我们会从朴素实现入手理解基本原理，再逐步过渡到利用共享内存和分块（tiling）的优化版本，后者能带来显著的性能提升。
+
+== 为什么矩阵运算很重要
+
+在深入实现之前，先弄清楚这些运算为什么主导了神经网络的计算，以及它们难在哪里。
+
+=== 计算强度
+
+矩阵运算是计算密集型的。一个 M×N 的矩阵与一个 N 维向量相乘，需要 M×N 次乘加运算。对于输入输出都是 4096 的典型全连接层，这就是 1600 万次运算。
+
+矩阵-矩阵乘法的计算强度更高。两个 N×N 矩阵相乘需要 N³ 次乘加运算。对于 1024×1024 的矩阵，那就是 10 亿次以上的运算。正是这种计算强度，让 GPU 在神经网络领域大放异彩——它们可以并行执行成千上万次运算。
+
+=== 内存访问模式
+
+矩阵运算的挑战不只在计算，还在内存访问模式。以矩阵-向量乘法为例：每个输出元素都需要读取矩阵的一整行以及整个输入向量。如果你独立地计算各个输出，输入向量就会被读很多遍，浪费内存带宽。
+
+矩阵-矩阵乘法的模式更复杂。朴素实现会多次读取输入矩阵的每个元素。优化实现使用分块和共享内存来复用数据，从而大幅降低内存流量。
+
+=== 数据复用机会
+
+逐元素运算中每个输入只用一次，矩阵运算则不同，它有大量数据复用。在矩阵-矩阵乘法中，输入矩阵的每个元素会被使用 N 次（N 是矩阵维度）。通过共享内存挖掘这种复用，是获得高性能的关键。
+
+== 矩阵-向量乘法
+
+矩阵-向量乘法是全连接（稠密）层的基础。给定一个 M×N 的矩阵 A 和一个 N 维向量 x，我们计算 y = A×x，其中 y 是 M 维向量。
+
+数学上，每个输出元素是：
+
+[source]
+----
+y[i] = Σ(j=0 to N-1) A[i][j] * x[j]
+----
+
+每个输出元素都是矩阵的一行与输入向量的点积。
+
+=== 朴素实现
+
+我们先从一个直白的实现开始，每个线程计算一个输出元素：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer MatrixBuffer {
+    float matrix[];  // M x N matrix in row-major order
+};
+
+layout(set = 0, binding = 1) readonly buffer VectorBuffer {
+    float vector[];  // N-dimensional vector
+};
+
+layout(set = 0, binding = 2) writeonly buffer OutputBuffer {
+    float output[];  // M-dimensional output vector
+};
+
+layout(push_constant) uniform PushConstants {
+    uint M;  // Number of rows
+    uint N;  // Number of columns
+} pc;
+
+void main() {
+    uint row = gl_GlobalInvocationID.x;
+
+    if (row >= pc.M) {
+        return;
+    }
+
+    // Compute dot product of matrix row with vector
+    float sum = 0.0;
+    for (uint col = 0; col < pc.N; col++) {
+        uint matrix_index = row * pc.N + col;
+        sum += matrix[matrix_index] * vector[col];
+    }
+
+    output[row] = sum;
+}
+----
+
+这个实现简单且正确。每个线程：
+
+1. 确定自己在计算哪个输出元素（它的行）
+2. 遍历所有列，累加点积
+3. 写出结果
+
+内存访问模式很直接：每个线程顺序读取矩阵的一行（对合并访存有利），并读取整个输入向量（所有线程共享）。
+
+=== 性能分析
+
+朴素实现有一个问题：每个线程都要读取整个输入向量。对于 M 个线程，我们把这个向量读了 M 遍，尽管数据完全相同。这白白浪费了内存带宽。
+
+好的一面是，矩阵读取是合并的——线程读取连续的行，因此相邻线程访问相邻的内存位置。这对内存效率有利。
+
+计算本身是高效的——现代 GPU 执行乘加运算非常快。瓶颈在内存带宽，具体来说就是那些重复的向量读取。
+
+=== 使用共享内存的优化实现
+
+我们可以每个工作组只把向量加载到共享内存一次，从而消除重复的向量读取：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer MatrixBuffer {
+    float matrix[];
+};
+
+layout(set = 0, binding = 1) readonly buffer VectorBuffer {
+    float vector[];
+};
+
+layout(set = 0, binding = 2) writeonly buffer OutputBuffer {
+    float output[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint M;
+    uint N;
+} pc;
+
+// Shared memory for the input vector
+shared float shared_vector[256];  // Adjust size based on N
+
+void main() {
+    uint local_id = gl_LocalInvocationID.x;
+    uint row = gl_GlobalInvocationID.x;
+
+    // Cooperatively load vector into shared memory
+    // Each thread loads one element (or more if N > 256)
+    for (uint i = local_id; i < pc.N; i += 256) {
+        shared_vector[i] = vector[i];
+    }
+
+    // Synchronize to ensure all threads have loaded their data
+    barrier();
+
+    if (row >= pc.M) {
+        return;
+    }
+
+    // Compute dot product using shared memory
+    float sum = 0.0;
+    for (uint col = 0; col < pc.N; col++) {
+        uint matrix_index = row * pc.N + col;
+        sum += matrix[matrix_index] * shared_vector[col];
+    }
+
+    output[row] = sum;
+}
+----
+
+关键改进有三点：
+
+*协作加载*：工作组内所有线程一起把向量加载到共享内存。每个线程加载一个或多个元素，保证整个向量被高效载入。
+
+*屏障同步*：`barrier()` 确保所有线程都加载完毕，任何线程才开始计算。这防止了竞争条件。
+
+*共享内存访问*：线程从共享内存而不是全局内存读取数据。共享内存快得多——通常比全局内存快 10-100 倍。
+
+对于大向量，这个优化能带来 2-5 倍的性能提升，具体取决于硬件和向量大小。
+
+=== 处理大向量
+
+如果向量大到共享内存装不下（例如 N > 16384），你就需要把计算分块：
+
+[source,slang]
+----
+// Process vector in tiles
+const uint TILE_SIZE = 256;
+
+for (uint tile_start = 0; tile_start < pc.N; tile_start += TILE_SIZE) {
+    uint tile_end = min(tile_start + TILE_SIZE, pc.N);
+    uint tile_size = tile_end - tile_start;
+
+    // Load tile into shared memory
+    if (local_id < tile_size) {
+        shared_vector[local_id] = vector[tile_start + local_id];
+    }
+    barrier();
+
+    // Compute partial dot product for this tile
+    for (uint i = 0; i < tile_size; i++) {
+        uint col = tile_start + i;
+        uint matrix_index = row * pc.N + col;
+        sum += matrix[matrix_index] * shared_vector[i];
+    }
+    barrier();
+}
+----
+
+这样就把向量分块处理，内存占用保持有界，同时仍然享受共享内存带来的好处。
+
+== 矩阵-矩阵乘法（GEMM）
+
+矩阵-矩阵乘法更复杂，但遵循相似的原理。给定矩阵 A（M×K）和 B（K×N），我们计算 C = A×B，其中 C 是 M×N 的矩阵。
+
+数学上：
+
+[source]
+----
+C[i][j] = Σ(k=0 to K-1) A[i][k] * B[k][j]
+----
+
+每个输出元素都是 A 的一行与 B 的一列的点积。
+
+=== 朴素实现
+
+最简单的做法：每个线程计算一个输出元素：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) readonly buffer MatrixA {
+    float A[];  // M x K matrix
+};
+
+layout(set = 0, binding = 1) readonly buffer MatrixB {
+    float B[];  // K x N matrix
+};
+
+layout(set = 0, binding = 2) writeonly buffer MatrixC {
+    float C[];  // M x N output matrix
+};
+
+layout(push_constant) uniform PushConstants {
+    uint M;
+    uint K;
+    uint N;
+} pc;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    if (row >= pc.M || col >= pc.N) {
+        return;
+    }
+
+    float sum = 0.0;
+    for (uint k = 0; k < pc.K; k++) {
+        float a_val = A[row * pc.K + k];
+        float b_val = B[k * pc.N + col];
+        sum += a_val * b_val;
+    }
+
+    C[row * pc.N + col] = sum;
+}
+----
+
+我们使用 2D 工作组（16×16），因为计算的是 2D 输出。每个线程：
+
+1. 确定自己的输出位置（row、col）
+2. 遍历 K，累加点积
+3. 写出结果
+
+这个实现正确但低效。A 和 B 的每个元素都要从全局内存中读取多次。对于大矩阵，这会浪费巨量的内存带宽。
+
+=== 基于共享内存的分块实现
+
+关键优化是分块：把矩阵划分成小块，把小块加载到共享内存，再计算部分结果。这就利用了数据复用——每个小块元素在共享内存中会被使用多次。
+
+下面是优化后的实现：
+
+[source,slang]
+----
+#version 450
+
+#define TILE_SIZE 16
+
+layout(local_size_x = TILE_SIZE, local_size_y = TILE_SIZE) in;
+
+layout(set = 0, binding = 0) readonly buffer MatrixA {
+    float A[];
+};
+
+layout(set = 0, binding = 1) readonly buffer MatrixB {
+    float B[];
+};
+
+layout(set = 0, binding = 2) writeonly buffer MatrixC {
+    float C[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint M;
+    uint K;
+    uint N;
+} pc;
+
+// Shared memory for tiles
+shared float tile_A[TILE_SIZE][TILE_SIZE];
+shared float tile_B[TILE_SIZE][TILE_SIZE];
+
+void main() {
+    uint local_row = gl_LocalInvocationID.y;
+    uint local_col = gl_LocalInvocationID.x;
+    uint global_row = gl_GlobalInvocationID.y;
+    uint global_col = gl_GlobalInvocationID.x;
+
+    float sum = 0.0;
+
+    // Loop over tiles
+    uint num_tiles = (pc.K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (uint tile = 0; tile < num_tiles; tile++) {
+        // Load tile of A into shared memory
+        uint a_col = tile * TILE_SIZE + local_col;
+        if (global_row < pc.M && a_col < pc.K) {
+            tile_A[local_row][local_col] = A[global_row * pc.K + a_col];
+        } else {
+            tile_A[local_row][local_col] = 0.0;
+        }
+
+        // Load tile of B into shared memory
+        uint b_row = tile * TILE_SIZE + local_row;
+        if (b_row < pc.K && global_col < pc.N) {
+            tile_B[local_row][local_col] = B[b_row * pc.N + global_col];
+        } else {
+            tile_B[local_row][local_col] = 0.0;
+        }
+
+        // Synchronize to ensure tiles are loaded
+        barrier();
+
+        // Compute partial dot product using tiles
+        for (uint k = 0; k < TILE_SIZE; k++) {
+            sum += tile_A[local_row][k] * tile_B[k][local_col];
+        }
+
+        // Synchronize before loading next tile
+        barrier();
+    }
+
+    // Write result
+    if (global_row < pc.M && global_col < pc.N) {
+        C[global_row * pc.N + global_col] = sum;
+    }
+}
+----
+
+这个实现更复杂，但快得多。我们来拆解一下它做了什么：
+
+*分块策略*：我们把 K 维度划分成大小为 TILE_SIZE 的小块。对于每个小块，我们从 A 和 B 中各加载一个 TILE_SIZE×TILE_SIZE 的数据块到共享内存。
+
+*协作加载*：工作组内所有线程一起加载这些小块。每个线程从 A 加载一个元素、从 B 加载一个元素。
+
+*基于小块计算*：装载完成后，线程用共享内存计算部分点积。小块里的每个元素会被复用 TILE_SIZE 次。
+
+*累加*：我们在所有小块上累加部分结果，得到最终输出。
+
+*边界处理*：`if` 语句处理矩阵维度不是 TILE_SIZE 整数倍的情况，用零补齐。
+
+=== 性能分析
+
+分块实现大幅降低了内存流量。以 1024×1024 的矩阵相乘为例：
+
+*朴素实现*：每个输出元素需要从 A 读 1024 个元素、从 B 读 1024 个元素。总计：1024² × 2 × 1024 = 20 亿次读取。
+
+*分块实现（16×16 小块）*：每个小块只加载一次，然后被复用 16 次。总读取次数约为 2 × 1024² × 1024 / 16 = 1.28 亿次。
+
+内存流量降低了 16 倍！在实践中，由于计算时间、内存延迟等因素，加速通常只有 5-10 倍，但这仍然相当可观。
+
+=== 优化分块大小
+
+分块大小会影响性能。块越大，数据复用越多，但需要的共享内存也越多。常见的小块尺寸有 8×8、16×16 和 32×32。
+
+需要考虑的因素：
+
+*共享内存上限*：GPU 每个工作组的共享内存是有限的（通常 16-64 KB）。两个 TILE_SIZE×TILE_SIZE 的 float 小块需要 2 × TILE_SIZE² × 4 字节。对于 32×32 的小块，那就是 8 KB——完全在限制之内。
+
+*占用率*：工作组越大（小块越大），能并发运行的工作组就越少。这会降低占用率（GPU 资源被实际使用的比例）。
+
+*寄存器压力*：小块越大，每个线程可能需要的寄存器越多，同样会降低占用率。
+
+最优的分块大小取决于你的 GPU 架构。对不同的尺寸做性能分析，找出最适合你硬件的那个。对大多数现代 GPU，16×16 是个不错的默认值。
+
+== 进阶优化
+
+在基本分块之外，还有若干进阶技巧能进一步提升性能。
+
+=== 向量化
+
+用向量类型让每个线程处理多个元素：
+
+[source,slang]
+----
+// Load 4 elements at once
+vec4 a_vec = vec4(A[index], A[index+1], A[index+2], A[index+3]);
+vec4 b_vec = vec4(B[index], B[index+1], B[index+2], B[index+3]);
+sum += dot(a_vec, b_vec);
+----
+
+在某些 GPU 上，这能更好地利用内存带宽和计算单元，从而把吞吐量提升 10-30%。
+
+=== 寄存器分块
+
+让每个线程计算多个输出元素，以提高算术强度：
+
+[source,slang]
+----
+// Each thread computes a 2x2 block of outputs
+float sum00 = 0.0, sum01 = 0.0;
+float sum10 = 0.0, sum11 = 0.0;
+
+for (uint k = 0; k < TILE_SIZE; k++) {
+    float a0 = tile_A[local_row * 2 + 0][k];
+    float a1 = tile_A[local_row * 2 + 1][k];
+    float b0 = tile_B[k][local_col * 2 + 0];
+    float b1 = tile_B[k][local_col * 2 + 1];
+
+    sum00 += a0 * b0;
+    sum01 += a0 * b1;
+    sum10 += a1 * b0;
+    sum11 += a1 * b1;
+}
+----
+
+这提高了计算与内存之比，让 GPU 的算术单元得到更好的利用。
+
+=== 预取
+
+把加载下一块与计算当前块重叠起来：
+
+[source,slang]
+----
+// Load first tile
+load_tile(0);
+barrier();
+
+for (uint tile = 0; tile < num_tiles - 1; tile++) {
+    // Start loading next tile (asynchronous if supported)
+    load_tile(tile + 1);
+
+    // Compute using current tile
+    compute_tile();
+
+    // Wait for next tile to finish loading
+    barrier();
+}
+
+// Compute last tile
+compute_tile();
+----
+
+这把内存延迟藏在计算背后，从而提高整体吞吐量。
+
+== 派发矩阵运算
+
+下面是你在 Vulkan 应用中派发分块矩阵乘法的方式：
+
+[source,cpp]
+----
+// Assuming matrices are M x K, K x N, producing M x N output
+uint32_t M = 1024, K = 1024, N = 1024;
+const uint32_t TILE_SIZE = 16;
+
+// Calculate work group counts
+uint32_t num_groups_x = (N + TILE_SIZE - 1) / TILE_SIZE;
+uint32_t num_groups_y = (M + TILE_SIZE - 1) / TILE_SIZE;
+
+// Update descriptor sets with matrix buffers
+// ... (similar to previous examples)
+
+// Record commands
+commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *gemmPipeline);
+commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                 *pipelineLayout, 0, *descriptorSet, nullptr);
+
+// Push constants
+struct {
+    uint32_t M, K, N;
+} pushConstants = {M, K, N};
+
+commandBuffer.pushConstants(*pipelineLayout,
+                           vk::ShaderStageFlagBits::eCompute, 0, sizeof(pushConstants), &pushConstants);
+
+// Dispatch
+commandBuffer.dispatch(num_groups_x, num_groups_y, 1);
+----
+
+关键在于根据输出维度和分块大小计算工作组数量。
+
+== 性能考量
+
+矩阵运算很复杂，性能取决于很多因素：
+
+*矩阵大小*：小矩阵（< 256×256）可能无法充分占满 GPU。大矩阵（> 4096×4096）能提供更好的并行性。
+
+*内存布局*：行主序与列主序会影响访问模式。确保你的布局与访问模式匹配，以便合并访存。
+
+*数据类型*：在带有专用硬件的 GPU 上，float16（半精度）可以比 float32 快 2 倍，而对许多模型来说精度损失很小。
+
+*批处理*：并行处理多个矩阵乘法（批处理）能提高 GPU 利用率。
+
+*专用硬件*：现代 GPU 配有张量核心或矩阵引擎来加速矩阵乘法。使用厂商专属扩展可以获得 5-10 倍的加速。
+
+== 小结
+
+矩阵运算是神经网络的计算核心。要点如下：
+
+*矩阵-向量乘法*是全连接层的基础。用共享内存消除重复的向量读取来优化它。
+
+*矩阵-矩阵乘法*（GEMM）更复杂，但遵循相似的原理。用共享内存分块对性能至关重要，能把内存流量降低 10-20 倍。
+
+*分块大小*影响性能。16×16 是个不错的默认值，但要针对你的硬件实测不同尺寸。
+
+*进阶优化*如向量化、寄存器分块和预取能带来额外加速，但会增加复杂度。
+
+*内存布局*与访问模式很重要。确保合并访存，并考虑数据复用的机会。
+
+有了高效的矩阵运算实现，你就具备了神经网络推理的计算基础。下一章讲数据管理——如何高效地组织与传输张量数据。
+
+xref:ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc[上一篇：逐元素运算] | xref:ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc[下一篇：数据管理]

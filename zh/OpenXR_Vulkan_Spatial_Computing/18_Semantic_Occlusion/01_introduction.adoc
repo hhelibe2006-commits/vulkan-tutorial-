@@ -1,0 +1,10 @@
+:pp: {plus}{plus}
+= 语义遮挡：深度感知的真实与虚拟合成
+
+在前面的章节中，我们学会了如何摄取物理世界的几何体。但光有这些几何体，还不足以带来令人信服的体验。如果你把一台虚拟机器人放在地板上，当现实中的咖啡桌挡在你和机器人之间时，它就应该被遮住。这就是**语义遮挡**的挑战。
+
+本章将探讨如何通过深度感知遮挡与**语义分割**，弥合真实世界与虚拟世界之间的差距。我们将学习如何用 ML 模型在像素级别为现实打标签——区分「人的手」与「桌子」——以及如何用 Vulkan 的**模板缓冲区**与**深度感知合成**，以亚像素精度确保虚拟物体「藏到」真实物体后面。
+
+读完本章，你将能够实现稳定、无闪烁的掩码，让虚拟资产真正仿佛占据着与用户双手和家具相同的物理空间。
+
+xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc[下一页]

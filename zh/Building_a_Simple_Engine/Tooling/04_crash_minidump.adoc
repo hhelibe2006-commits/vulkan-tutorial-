@@ -364,13 +364,13 @@ minidump 最适合用来理解崩溃前后的 CPU 侧状态（例如哪个线程
 
 1. *使用 minidump_stackwalk*（Google Breakpad 的一部分）：
    ```
-   minidump_stackwalk minidump_file.dmp /path/to/symbols > stacktrace.txt  # 把调用栈写入文本文件
+   minidump_stackwalk minidump_file.dmp /path/to/symbols > stacktrace.txt
    ```
 
 2. *使用 GDB*：
    ```
-   gdb /path/to/executable  # 启动 GDB 并加载可执行文件
-   (gdb) core-file /path/to/minidump  # 加载 minidump 文件
+   gdb /path/to/executable
+   (gdb) core-file /path/to/minidump
    (gdb) bt
    ```
 

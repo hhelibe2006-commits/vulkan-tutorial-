@@ -1,0 +1,517 @@
+:pp: {plus}{plus}
+
+= 数据管理
+
+== 简介
+
+神经网络推理需要搬运大量数据：输入张量、权重、中间激活值以及输出。一个典型的 ResNet-50 模型有 2500 万个参数（100 MB 权重），图像要穿过几十层，每层都会产生中间结果。高效地管理这些数据——如何在内存中组织它们、何时分配与释放、如何在 CPU 与 GPU 之间传输——直接影响性能。
+
+糟糕的数据管理会让最优化过的计算着色器也成为瓶颈。如果你的着色器很快，但总在等数据传输，或者内存不够用，整体性能照样受损。本章讲在 Vulkan 中管理张量数据的实务：内存布局、分配策略、内存复用与传输优化。
+
+== 张量布局：数据如何组织
+
+张量是多维数组，而 GPU 内存是线性的（一维）。因此需要把多维索引映射到线性内存地址。映射方式的选择——也就是张量布局——会影响内存访问模式与性能。
+
+=== 理解维度
+
+对于图像数据，神经网络张量通常有 4 个维度：
+
+- *N（Batch）*：一起处理的图像数量
+- *C（Channels）*：特征图数量（RGB 输入为 3，中间层为 64/128/256 等）
+- *H（Height）*：空间维度
+- *W（Width）*：空间维度
+
+对于一批 8 张 224×224 的 RGB 图像，张量形状是 [8, 3, 224, 224]，包含 8 × 3 × 224 × 224 = 1,204,224 个元素。
+
+=== NCHW 与 NHWC 布局
+
+两种最常见的布局区别在于维度在内存中的排列顺序：
+
+*NCHW（通道在前）*：维度顺序为 [Batch, Channels, Height, Width]。通道 0 的所有值排在最前，然后是通道 1 的所有值，依此类推。
+
+一张 2×2、3 通道图像的内存布局：
+[source]
+----
+[N0_C0_H0_W0, N0_C0_H0_W1, N0_C0_H1_W0, N0_C0_H1_W1,  // Channel 0
+ N0_C1_H0_W0, N0_C1_H0_W1, N0_C1_H1_W0, N0_C1_H1_W1,  // Channel 1
+ N0_C2_H0_W0, N0_C2_H0_W1, N0_C2_H1_W0, N0_C2_H1_W1]  // Channel 2
+----
+
+*NHWC（通道在后）*：维度顺序为 [Batch, Height, Width, Channels]。同一个像素的所有通道值排在一起。
+
+同一张图像的内存布局：
+[source]
+----
+[N0_H0_W0_C0, N0_H0_W0_C1, N0_H0_W0_C2,  // Pixel (0,0)
+ N0_H0_W1_C0, N0_H0_W1_C1, N0_H0_W1_C2,  // Pixel (0,1)
+ N0_H1_W0_C0, N0_H1_W0_C1, N0_H1_W0_C2,  // Pixel (1,0)
+ N0_H1_W1_C0, N0_H1_W1_C1, N0_H1_W1_C2]  // Pixel (1,1)
+----
+
+=== 该用哪种布局？
+
+选择取决于你的运算：
+
+*NCHW 的优势*：
+
+- 更适合按整个通道处理的运算（批归一化、逐通道运算）
+- 历史上更受许多 ML 框架与高性能计算 API 青睐
+- 对逐通道运算能带来更好的向量化
+
+*NHWC 的优势*：
+
+- 在某些硬件上做卷积更好（尤其是移动 GPU 与张量核心）
+- 对空间运算更缓存友好
+- 与图像格式一致（像素的 RGB 值排在一起）
+
+现代 GPU 做卷积时用 NHWC 往往更快，但做其它运算时用 NCHW 更快。最优选择取决于硬件。请在你的目标 GPU 上对两者都做性能分析。
+
+=== 索引计算
+
+要访问线性缓冲区中的元素 [n, c, h, w]：
+
+*NCHW*：
+[source]
+----
+index = n * (C * H * W) + c * (H * W) + h * W + w
+----
+
+*NHWC*：
+[source]
+----
+index = n * (H * W * C) + h * (W * C) + w * C + c
+----
+
+在 Slang 中：
+[source,slang]
+----
+// NCHW layout
+uint get_index_nchw(uint n, uint c, uint h, uint w, uint C, uint H, uint W) {
+    return n * (C * H * W) + c * (H * W) + h * W + w;
+}
+
+// NHWC layout
+uint get_index_nhwc(uint n, uint h, uint w, uint c, uint H, uint W, uint C) {
+    return n * (H * W * C) + h * (W * C) + w * C + c;
+}
+----
+
+=== 布局转换
+
+有时你需要在布局之间转换。这需要按一种布局读完整张张量，再按另一种布局写出去：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) readonly buffer InputNCHW {
+    float input_nchw[];
+};
+
+layout(set = 0, binding = 1) writeonly buffer OutputNHWC {
+    float output_nhwc[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint N, C, H, W;
+} pc;
+
+void main() {
+    uint h = gl_GlobalInvocationID.y;
+    uint w = gl_GlobalInvocationID.x;
+
+    if (h >= pc.H || w >= pc.W) return;
+
+    for (uint n = 0; n < pc.N; n++) {
+        for (uint c = 0; c < pc.C; c++) {
+            uint nchw_idx = n * (pc.C * pc.H * pc.W) + c * (pc.H * pc.W) + h * pc.W + w;
+            uint nhwc_idx = n * (pc.H * pc.W * pc.C) + h * (pc.W * pc.C) + w * pc.C + c;
+            output_nhwc[nhwc_idx] = input_nchw[nchw_idx];
+        }
+    }
+}
+----
+
+布局转换代价很高（要读写整张张量），所以要尽量少做。尽可能选定一种布局，并在整条管线中一直沿用。
+
+== 内存分配策略
+
+神经网络需要为权重、输入、输出与中间激活值分配内存。你如何管理这些分配，既影响性能也影响内存占用。
+
+=== 静态分配与动态分配
+
+*静态分配*：在推理开始前按模型架构一次性分配全部内存。你事先知道每个张量的大小。
+
+优点：
+
+- 推理期间没有分配开销
+- 内存占用可预测
+- 可以为整个模型优化内存布局
+
+缺点：
+
+- 需要事先知道所有张量的大小
+- 无法处理动态形状（可变批大小、变长序列）
+
+*动态分配*：在推理过程中按需分配内存。
+
+优点：
+
+- 能处理动态形状
+- 能适应可用内存
+
+缺点：
+
+- 推理期间存在分配开销
+- 可能产生碎片
+- 更难优化
+
+大多数推理场景都更适合静态分配。你清楚模型架构与典型输入尺寸，那就一次性把内存全部分配好。
+
+=== 内存池
+
+不必为每个张量单独分配缓冲区，而应使用内存池：由多个张量共享的大缓冲区。
+
+[source,cpp]
+----
+class MemoryPool {
+    vk::raii::Buffer buffer;
+    vk::raii::DeviceMemory memory;
+    size_t totalSize;
+    size_t usedSize;
+
+public:
+    struct Allocation {
+        size_t offset;
+        size_t size;
+    };
+
+    Allocation allocate(size_t size, size_t alignment) {
+        // Align offset
+        size_t alignedOffset = (usedSize + alignment - 1) & ~(alignment - 1);
+
+        if (alignedOffset + size > totalSize) {
+            throw std::runtime_error("Pool exhausted");
+        }
+
+        Allocation alloc = {alignedOffset, size};
+        usedSize = alignedOffset + size;
+        return alloc;
+    }
+
+    void reset() {
+        usedSize = 0;  // Reuse the entire pool
+    }
+    // RAII handles cleanup automatically
+};
+----
+
+好处：
+- Vulkan 分配次数更少（分配本身有开销）
+- 内存局部性更好
+- 更容易管理内存上限
+
+=== 内存复用
+
+关键优化：让生命周期不重叠的中间张量复用内存。
+
+考虑这段网络片段：
+[source]
+----
+Layer 1: Input → Tensor A
+Layer 2: Tensor A → Tensor B
+Layer 3: Tensor B → Tensor C
+Layer 4: Tensor C → Output
+----
+
+第 2 层一旦结束，张量 A 就不再需要了，张量 C 可以复用 A 的内存。同理，第 4 层一开始，张量 B 就不再需要了。
+
+内存复用算法：
+1. 分析模型图，确定每个张量的生命周期（从首次使用到最后一次使用）
+2. 找出生命周期不重叠的张量
+3. 把不重叠的张量分配到同一块内存
+
+[source,cpp]
+----
+struct Tensor {
+    size_t size;
+    int firstUse;  // Layer index
+    int lastUse;   // Layer index
+    size_t memoryOffset;  // Assigned offset in pool
+};
+
+void assignMemory(std::vector<Tensor>& tensors, MemoryPool& pool) {
+    // Sort by first use
+    std::sort(tensors.begin(), tensors.end(),
+              [](const Tensor& a, const Tensor& b) { return a.firstUse < b.firstUse; });
+
+    // Track which memory regions are free at each layer
+    std::map<int, std::vector<size_t>> freeOffsets;
+
+    for (auto& tensor : tensors) {
+        // Try to reuse freed memory
+        bool reused = false;
+        for (auto& [layer, offsets] : freeOffsets) {
+            if (layer < tensor.firstUse) {
+                for (auto offset : offsets) {
+                    // Check if this offset has enough space
+                    // (simplified - real implementation needs more checks)
+                    tensor.memoryOffset = offset;
+                    reused = true;
+                    break;
+                }
+            }
+            if (reused) break;
+        }
+
+        if (!reused) {
+            // Allocate new memory
+            auto alloc = pool.allocate(tensor.size, 256);
+            tensor.memoryOffset = alloc.offset;
+        }
+
+        // Mark memory as free after last use
+        freeOffsets[tensor.lastUse].push_back(tensor.memoryOffset);
+    }
+}
+----
+
+对深层网络，这能把内存占用降低 5 到 10 倍。
+
+=== 对齐要求
+
+Vulkan 对缓冲区偏移量有对齐要求。通常是：
+
+- 存储缓冲区：256 字节对齐（查 `minStorageBufferOffsetAlignment`）
+- 统一缓冲区：256 字节对齐（查 `minUniformBufferOffsetAlignment`）
+
+分配时务必对齐：
+[source,cpp]
+----
+size_t alignedSize = (size + alignment - 1) & ~(alignment - 1);
+----
+
+未对齐的访问会导致崩溃或未定义行为。
+
+== 数据传输优化
+
+在 CPU 与 GPU 之间传输数据代价高昂。要尽量减少传输，并让必要的传输尽可能高效。
+
+=== 暂存缓冲区
+
+对于主机到设备的传输，使用暂存缓冲区：
+
+1. 分配一个主机可见的缓冲区（暂存缓冲区）
+2. 映射它，从 CPU 写入数据
+3. 通过 `vkCmdCopyBuffer` 从暂存缓冲区拷贝到设备本地缓冲区
+4. 在计算着色器中使用设备本地缓冲区
+
+[source,cpp]
+----
+// Create staging buffer (host-visible)
+vk::BufferCreateInfo stagingInfo{
+    .size = dataSize,
+    .usage = vk::BufferUsageFlagBits::eTransferSrc
+};
+vk::raii::Buffer stagingBuffer(device, stagingInfo);
+
+vk::MemoryAllocateInfo allocInfo{
+    .allocationSize = memRequirements.size,
+    .memoryTypeIndex = findMemoryType(
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)
+};
+vk::raii::DeviceMemory stagingMemory(device, allocInfo);
+stagingBuffer.bindMemory(*stagingMemory, 0);
+
+// Map and write data
+void* mapped = stagingMemory.mapMemory(0, dataSize);
+memcpy(mapped, data, dataSize);
+stagingMemory.unmapMemory();
+
+// Copy to device-local buffer
+vk::BufferCopy copyRegion{0, 0, dataSize};
+commandBuffer.copyBuffer(*stagingBuffer, *deviceBuffer, copyRegion);
+// RAII handles cleanup automatically
+----
+
+对 GPU 访问来说，设备本地内存比主机可见内存快得多，所以对于频繁访问的数据，这个两步流程是值得的。
+
+=== 持久化暂存缓冲区
+
+对于每帧都要传输的数据（比如输入图像），让暂存缓冲区保持分配并反复复用：
+
+[source,cpp]
+----
+class PersistentStaging {
+    vk::raii::Buffer stagingBuffer;
+    vk::raii::DeviceMemory stagingMemory;
+    void* mapped;  // Keep mapped
+
+public:
+    void initialize(const vk::raii::Device& device, size_t size) {
+        // Create and map staging buffer
+        // ... (as above)
+        mapped = stagingMemory.mapMemory(0, size);
+        // Keep mapped for the lifetime of the buffer
+    }
+
+    void upload(const void* data, size_t size) {
+        memcpy(mapped, data, size);
+        // No need to unmap/remap
+    }
+    // RAII handles cleanup automatically
+};
+----
+
+这样就消除了频繁传输时的映射/取消映射开销。
+
+=== 异步传输
+
+为数据上传使用专用的传输队列，让传输与计算重叠：
+
+[source,cpp]
+----
+// Frame N: Compute on GPU
+computeQueue.dispatch(...);
+
+// Frame N+1: Transfer input while Frame N computes
+commandBuffer.copyBuffer(*stagingBuffer, *deviceBuffer, ...);
+
+// Synchronize: wait for transfer before starting Frame N+1 compute
+vk::raii::Semaphore transferComplete(device, vk::SemaphoreCreateInfo{});
+transferQueue.submit(..., *transferComplete);
+computeQueue.submit(..., waitSemaphore=*transferComplete);
+----
+
+这样就把传输延迟藏到了计算背后。
+
+=== 尽量减少传输
+
+最好的传输是不传输：
+
+*把权重留在 GPU 上*：在初始化时上传一次权重，而不是每帧都传。
+
+*批处理*：把多个输入一起处理，以摊薄传输开销。
+
+*乒乓缓冲区*：对流式数据使用两个缓冲区。GPU 处理缓冲区 A 时，CPU 填充缓冲区 B。
+
+== 实战示例：管理 ResNet-50 内存
+
+我们走一遍 ResNet-50 推理的内存管理：
+
+=== 模型分析
+
+ResNet-50 有：
+
+- 2500 万个参数（100 MB）
+- 约 50 层
+- 峰值激活内存：约 200 MB（不做复用）
+- 复用之后：约 20 MB
+
+=== 内存设置
+
+[source,cpp]
+----
+class ResNet50Memory {
+    // Weights (persistent)
+    vk::raii::Buffer weightsBuffer;
+    vk::raii::DeviceMemory weightsMemory;
+
+    // Activation pool (reused across layers)
+    vk::raii::Buffer activationBuffer;
+    vk::raii::DeviceMemory activationMemory;
+
+    // Staging for input
+    vk::raii::Buffer inputStagingBuffer;
+    vk::raii::DeviceMemory inputStagingMemory;
+    void* inputMapped;
+
+public:
+    void initialize(const vk::raii::Device& device) {
+        // Allocate weights (100 MB, device-local)
+        createBuffer(device, 100 * 1024 * 1024,
+                     vk::BufferUsageFlagBits::eStorageBuffer,
+                     vk::MemoryPropertyFlagBits::eDeviceLocal,
+                     weightsBuffer, weightsMemory);
+
+        // Allocate activation pool (20 MB with reuse, device-local)
+        createBuffer(device, 20 * 1024 * 1024,
+                     vk::BufferUsageFlagBits::eStorageBuffer,
+                     vk::MemoryPropertyFlagBits::eDeviceLocal,
+                     activationBuffer, activationMemory);
+
+        // Allocate input staging (224*224*3*4 bytes = ~600 KB, host-visible)
+        createBuffer(device, 224 * 224 * 3 * sizeof(float),
+                     vk::BufferUsageFlagBits::eTransferSrc,
+                     vk::MemoryPropertyFlagBits::eHostVisible |
+                     vk::MemoryPropertyFlagBits::eHostCoherent,
+                     inputStagingBuffer, inputStagingMemory);
+
+        inputMapped = inputStagingMemory.mapMemory(0, VK_WHOLE_SIZE);
+    }
+
+    void uploadInput(const float* imageData, size_t size) {
+        memcpy(inputMapped, imageData, size);
+    }
+
+    const vk::raii::Buffer& getWeightsBuffer() { return weightsBuffer; }
+    const vk::raii::Buffer& getActivationBuffer() { return activationBuffer; }
+    // RAII handles cleanup automatically
+};
+----
+
+=== 张量偏移
+
+每一层的张量都会在激活缓冲区中被分配到偏移量：
+
+[source,cpp]
+----
+struct LayerTensors {
+    size_t inputOffset;
+    size_t outputOffset;
+    size_t weightsOffset;
+};
+
+std::vector<LayerTensors> layerTensors(50);
+
+// Assign offsets (simplified)
+size_t activationOffset = 0;
+size_t weightsOffset = 0;
+
+for (int i = 0; i < 50; i++) {
+    layerTensors[i].weightsOffset = weightsOffset;
+    weightsOffset += layerWeightSizes[i];
+
+    layerTensors[i].inputOffset = activationOffset;
+    layerTensors[i].outputOffset = activationOffset + layerInputSizes[i];
+
+    // Reuse memory after a few layers
+    if (i > 2) {
+        activationOffset = layerTensors[i-2].inputOffset;  // Reuse old input
+    } else {
+        activationOffset += layerInputSizes[i] + layerOutputSizes[i];
+    }
+}
+----
+
+这样带着复用来分配内存偏移，能把总内存保持在较低水平。
+
+== 小结
+
+高效的数据管理对神经网络推理性能至关重要：
+
+*张量布局*（NCHW 与 NHWC）影响内存访问模式。根据你的运算与硬件来选择。
+
+*内存分配*应尽可能静态，并用内存池提升效率。
+
+*内存复用*通过在生命周期不重叠的张量之间共享内存，大幅降低内存需求。
+
+*数据传输*应尽量减少并优化，手段包括暂存缓冲区、持久化映射与异步传输。
+
+*对齐*要求必须遵守，以避免崩溃与未定义行为。
+
+有了高效的数据管理，你就能确保计算着色器在需要时拿到需要的数据，既不浪费内存也不浪费带宽。下一章讲同步——确保各个运算以正确的顺序执行。
+
+xref:ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc[上一篇：矩阵运算] | xref:ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc[下一篇：同步]

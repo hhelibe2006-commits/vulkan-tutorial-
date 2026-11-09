@@ -1,0 +1,544 @@
+:pp: {plus}{plus}
+
+= 选择合适的库
+
+== 简介
+
+你已经了解了 ONNX Runtime、TensorFlow Lite、PyTorch Mobile 和 DirectML，也理解了 GPU 资源共享、数据传输优化与集成模式，还看过了实战示例。现在到了关键问题：你的项目究竟该用哪个库？
+
+这个问题并不简单，也没有放之四海而皆准的答案。“最好”的 ML 推理库取决于你的具体要求：目标平台、性能需求、模型格式、开发资源与部署约束。选错了库，可能意味着浪费开发时间、性能不佳，或者部署失败。
+
+本章给出一套系统化的决策框架。我们会从多个维度评估这些库——平台支持、性能特征、模型兼容性、集成复杂度与生态成熟度；针对常见场景给出决策树，并为不同用例提供推荐矩阵。读完之后，你会有一套清晰的方法论，为你的 Vulkan 应用选出合适的库。
+
+== 决策框架
+
+我们先从一个结构化的方法入手，来评估 ML 推理库。把它当成一份清单，帮你系统地缩小选项范围。
+
+=== 第 1 步：平台要求（先淘汰选项）
+
+从硬性约束开始。你的应用必须支持哪些平台？这一条会立刻淘汰掉一些选项。
+
+*仅桌面（Windows/Linux/macOS）*
+
+如果只面向桌面平台，你的选择空间最大：
+
+- ONNX Runtime：极佳的选择。支持所有桌面平台，以及多种执行提供程序（CPU、OpenCL、OpenCL、DirectML、OpenVINO）。
+- TensorFlow Lite：可用，但针对桌面的优化不如移动端。GPU 委托的支持因平台而异。
+- PyTorch Mobile：主要面向移动端，桌面支持属于次要。
+- DirectML：仅限 Windows，但如果你的应用只在 Windows 上跑，它非常出色。
+
+*仅移动端（Android/iOS）*
+
+对于只面向移动端的应用：
+
+- TensorFlow Lite：标准选择。成熟、经过充分优化，在两个平台上都有出色的 GPU 委托支持。
+- PyTorch Mobile：不错的替代方案，尤其当你已经在用 PyTorch 训练时。
+- ONNX Runtime：能在移动端运行，但优化不如 TFLite。如果你需要跨框架兼容性，可以考虑它。
+- DirectML：移动端不可用。
+
+*跨平台（桌面 + 移动端）*
+
+需要同时支持桌面和移动端？
+
+- ONNX Runtime：跨平台一致性最好。相同的 API、相同的模型格式，处处一致。
+- TensorFlow Lite：到处都能用，但桌面支持不够成熟。
+- PyTorch Mobile：可行，但需要更多平台相关代码。
+- DirectML：不能作为你唯一的方案（仅限 Windows）。
+
+*嵌入式/边缘设备*
+
+对于资源有限的嵌入式系统：
+
+- TensorFlow Lite：就是为这种场景设计的。Micro 版本（TFLite Micro）可以跑在微控制器上。
+- ONNX Runtime：支持嵌入式，但体积比 TFLite 大。
+- PyTorch Mobile：对大多数嵌入式系统来说太重了。
+- DirectML：不适用。
+
+**决策规则**：淘汰任何不能支持你全部目标平台的库。不要试图绕过平台限制——那不值得费力气。
+
+=== 第 2 步：模型格式兼容性
+
+你的模型是什么格式？你能转换它们吗？
+
+*你手上是 ONNX 模型*
+
+- ONNX Runtime：原生支持，无需转换。
+- TensorFlow Lite：需要转换（ONNX → TensorFlow → TFLite）。可行，但增加了复杂度。
+- PyTorch Mobile：需要转换（ONNX → PyTorch → TorchScript）。某些运算会损失精度。
+- DirectML：可以通过 ONNX Runtime 直接使用 ONNX。
+
+*你手上是 TensorFlow/Keras 模型*
+
+- TensorFlow Lite：直接转换，支持良好。
+- ONNX Runtime：需要转换（TensorFlow → ONNX）。通常效果不错。
+- PyTorch Mobile：需要转换（TensorFlow → ONNX → PyTorch）。复杂且容易出错。
+- DirectML：先做 TensorFlow → ONNX 转换，再经由 ONNX Runtime 使用。
+
+*你手上是 PyTorch 模型*
+
+- PyTorch Mobile：直接导出为 TorchScript，无缝衔接。
+- ONNX Runtime：导出为 ONNX，PyTorch 对此支持良好。
+- TensorFlow Lite：需要 PyTorch → ONNX → TensorFlow → TFLite。很痛苦。
+- DirectML：先做 PyTorch → ONNX 导出，再经由 ONNX Runtime 使用。
+
+*你在训练自定义模型*
+
+如果你掌控训练流程，就可以导出成任意格式。这时按其它标准来选，但需要考虑：
+
+- ONNX：最灵活，能与所有主流训练框架配合。
+- TFLite：如果你用 TensorFlow 训练并面向移动端，它最合适。
+- TorchScript：如果你用 PyTorch 训练并面向移动端，它最合适。
+
+**决策规则**：如果你已有特定格式的模型、而转换又很困难，就优先选原生支持该格式的库。如果你掌控训练，就选最匹配部署需求的格式。
+
+=== 第 3 步：性能要求
+
+推理需要多快？你的延迟预算是多少？
+
+*实时（60 FPS 下每帧 < 16ms）*
+
+对于游戏或 AR/VR 这类实时应用：
+
+- 带 OpenCL 的 ONNX Runtime：NVIDIA GPU 上桌面性能最佳。OpenCL 的激进优化可以带来 2-5 倍加速。
+- 带 GPU 委托的 TensorFlow Lite：移动端性能最佳。针对移动 GPU 高度优化。
+- DirectML：在 Windows 上表现出色，尤其是在没有 OpenCL 可用的 AMD/Intel GPU 上。
+- PyTorch Mobile：在移动端通常比 TFLite 慢。
+
+*交互式（< 100ms）*
+
+对于用户期望快速反馈的交互式应用：
+
+- 任何库都能胜任。重点放在集成难易度上，而不是峰值性能。
+- ONNX Runtime：追求跨平台一致性时的稳妥默认选择。
+
+*批处理（吞吐量 > 延迟）*
+
+对于看重吞吐量而非延迟的离线处理：
+
+- 带 OpenCL 的 ONNX Runtime：在 NVIDIA GPU 上做大批量处理非常出色。
+- TensorFlow Lite：对大批量的优化不足，但能用。
+- DirectML：适合 Windows 上的批处理。
+
+**决策规则**：实时应用要选在你目标硬件上性能最好的库；非实时应用则优先考虑集成难易度。
+
+=== 第 4 步：集成复杂度
+
+你能在集成上投入多少开发精力？
+
+*投入极小（几天）*
+
+如果你需要快速跑通：
+
+- TensorFlow Lite：API 最简单，文档丰富，示例众多。
+- ONNX Runtime：API 简单、文档不错，但需要理解执行提供程序。
+- PyTorch Mobile：如果你已经熟悉 PyTorch，就很省事。
+- DirectML：更复杂，需要 D3D12 知识。
+
+*中等投入（几周）*
+
+如果你愿意多花时间换取更好的性能：
+
+- 带 GPU 资源共享的 ONNX Runtime：复杂度中等，性能提升显著。
+- 带自定义委托的 TensorFlow Lite：可以实现优化，但需要理解 TFLite 的内部机制。
+- 带 Vulkan 互操作的 DirectML：复杂，但能提供出色的 Windows 性能。
+
+*大量投入（几个月）*
+
+如果你在构建生产系统，可以大量投入：
+
+- 自定义 Vulkan 计算着色器：控制力与性能拉满，但一切都要你自己实现。
+- 混合方案：大多数运算使用库，性能关键的部分用自定义着色器。
+
+**决策规则**：对自己的开发资源要有清醒认识。一个能交付的简单方案，胜过永远完成不了的完美方案。
+
+=== 第 5 步：生态与支持
+
+这个库有多成熟？社区氛围如何？
+
+*生态成熟度*
+
+- TensorFlow Lite：移动端最成熟。庞大的模型库、丰富的工具链、活跃的社区。
+- ONNX Runtime：成熟且在成长。不错的模型库、不断改进的工具链、强大的产业界支持。
+- PyTorch Mobile：较新但成长迅速。模型库较小，文档在改进。
+- DirectML：在 Windows 上成熟。局限于 Windows 生态。
+
+*社区与支持*
+
+- TensorFlow Lite：社区最大，Stack Overflow 上的答案最多，教程也最多。
+- ONNX Runtime：社区在壮大，官方文档质量好，维护者响应及时。
+- PyTorch Mobile：社区活跃，文档不错，与 PyTorch 生态紧密相连。
+- DirectML：社区较小，官方文档不错，有微软支持。
+
+*长期可行性*
+
+- TensorFlow Lite：由 Google 支持，部署广泛，长期看是安全的选择。
+- ONNX Runtime：由微软支持，有产业联盟背书，长期看是安全的选择。
+- PyTorch Mobile：由 Facebook/Meta 支持，采用率在增长，大概率是安全的。
+- DirectML：由微软支持，仅限 Windows，对 Windows 专属应用是安全的。
+
+**决策规则**：生产应用应优先选择生态成熟、支持有力的库；实验性项目则可以从较新的库中获得优势。
+
+== 各平台的具体建议
+
+下面针对具体平台给出具体建议。
+
+=== Windows 桌面
+
+*首选：ONNX Runtime + DirectML*
+
+原因：DirectML 在所有 GPU 厂商（NVIDIA、AMD、Intel）上都有出色的性能。ONNX Runtime 的 DirectML 执行提供程序成熟且优化良好。你不用被厂商锁定，也能拿到不错的性能。
+
+*替代方案：ONNX Runtime + OpenCL（仅 NVIDIA）*
+
+原因：如果你只面向 NVIDIA GPU，OpenCL 执行提供程序的性能比 DirectML 更好。OpenCL 执行提供程序还能带来更进一步的性能，但配置也更麻烦。
+
+*何时使用 TensorFlow Lite*：如果你已经在用 TensorFlow 训练，而且不需要峰值性能。集成更简单，但针对桌面的优化较弱。
+
+=== Linux 桌面
+
+*首选：ONNX Runtime + OpenCL*
+
+原因：大多数 Linux 游戏/图形系统都配备 NVIDIA GPU，OpenCL 执行提供程序能提供出色的性能。对于生产部署，OpenCL 执行提供程序还能带来更好的性能。
+
+*替代方案：ONNX Runtime + CPU*
+
+原因：如果你需要支持没有 NVIDIA GPU 的系统，CPU 执行提供程序到处都能用。性能较低，但对非实时应用可以接受。
+
+*何时使用 TensorFlow Lite*：如果你面向嵌入式 Linux 系统（Raspberry Pi、Jetson），TFLite 在这些平台上优化得很好。
+
+=== macOS 桌面
+
+*首选：ONNX Runtime + CoreML*
+
+原因：CoreML 执行提供程序利用 M1/M2 Mac 上的 Apple 神经引擎，提供出色的性能与能效。
+
+*替代方案：ONNX Runtime + CPU*
+
+原因：在所有 Mac（Intel 与 Apple Silicon）上都能用。对非实时应用来说性能可以接受。
+
+*何时使用 TensorFlow Lite*：如果你同时面向 iOS，希望各平台的代码保持一致。
+
+=== Android 移动端
+
+*首选：带 GPU 委托的 TensorFlow Lite*
+
+原因：TFLite 是 Android 上 ML 的标准方案。GPU 委托成熟、优化良好，能在各种 Android 设备上工作。文档与示例都很丰富。
+
+*替代方案：ONNX Runtime + NNAPI*
+
+原因：如果你需要跨框架兼容性，或者手上是 ONNX 模型。NNAPI 执行提供程序利用 Android 的神经网络 API，提供硬件加速。
+
+*何时使用 PyTorch Mobile*：如果你用 PyTorch 训练，并希望无缝导出。性能与 TFLite 相当。
+
+=== iOS 移动端
+
+*首选：带 GPU 委托的 TensorFlow Lite*
+
+原因：成熟、优化良好，在各种 iOS 设备上都能可靠工作。与 Metal 集成良好。
+
+*替代方案：ONNX Runtime + CoreML*
+
+原因：CoreML 执行提供程序利用 Apple 神经引擎，在较新设备（A12 及之后）上性能出色。能效优于 GPU 委托。
+
+*何时使用 PyTorch Mobile*：如果你用 PyTorch 训练。性能不错，但生态比 TFLite 小。
+
+=== 嵌入式/边缘设备
+
+*首选：TensorFlow Lite（或 TFLite Micro）*
+
+原因：专为资源受限设备设计。体积小、针对低功耗优化、支持的嵌入式平台广泛。
+
+*替代方案：ONNX Runtime*
+
+原因：如果你需要跨框架兼容性，且资源充足（>100MB RAM、>1GHz CPU）。体积比 TFLite 大，但更灵活。
+
+*何时使用自定义 Vulkan*：如果你的平台支持 Vulkan 但没有 ML 库支持，或者你需要绝对最低的延迟、并且愿意投入自定义实现。
+
+== 性能对比
+
+下面比较各库在常见运算上的性能。这些数字基于典型硬件粗略估算——你的实际结果会有所不同。
+
+=== 图像分类（ResNet-50，输入 224×224）
+
+*桌面（NVIDIA RTX 3080）*
+
+- ONNX Runtime + OpenCL：约 2ms
+- ONNX Runtime + OpenCL：约 4ms
+- ONNX Runtime + DirectML：约 6ms
+- TensorFlow Lite + GPU：约 8ms
+- ONNX Runtime + CPU：约 50ms
+
+*移动端（Snapdragon 888）*
+
+- TensorFlow Lite + GPU：约 8ms
+- ONNX Runtime + NNAPI：约 10ms
+- PyTorch Mobile + GPU：约 12ms
+- TensorFlow Lite + CPU：约 80ms
+
+*移动端（iPhone 13，A15 Bionic）*
+
+- ONNX Runtime + CoreML（神经引擎）：约 5ms
+- TensorFlow Lite + GPU：约 7ms
+- TensorFlow Lite + CPU：约 60ms
+
+=== 目标检测（YOLOv5s，输入 640×640）
+
+*桌面（NVIDIA RTX 3080）*
+
+- ONNX Runtime + OpenCL：约 5ms
+- ONNX Runtime + OpenCL：约 10ms
+- ONNX Runtime + DirectML：约 15ms
+- TensorFlow Lite + GPU：约 20ms
+
+*移动端（Snapdragon 888）*
+
+- TensorFlow Lite + GPU：约 25ms
+- ONNX Runtime + NNAPI：约 30ms
+- PyTorch Mobile + GPU：约 35ms
+
+=== 关键要点
+
+- OpenCL 在 NVIDIA GPU 上提供最佳的桌面性能（比直接使用 OpenCL 快 2-3 倍）
+- DirectML 在 Windows 上提供良好的跨厂商性能
+- TensorFlow Lite 提供最佳的移动端性能
+- CoreML 在 Apple 设备上提供出色的性能
+- CPU 推理比 GPU 推理慢 10-20 倍
+
+**决策规则**：如果性能至关重要，就用你的具体模型在你的目标硬件上做基准测试。这些数字只是参考，不是保证。
+
+== 迁移路径
+
+如果你以后需要换库怎么办？了解迁移路径能帮你避免被锁定。
+
+=== 从 TensorFlow Lite 迁移到 ONNX Runtime
+
+*难度*：中等
+
+*流程*：
+1. 把 TFLite 模型转换为 TensorFlow SavedModel
+2. 用 tf2onnx 把 TensorFlow 转换为 ONNX
+3. 用测试输入验证转换结果
+4. 更新推理代码，改用 ONNX Runtime API
+
+*坑点*：某些 TFLite 特有的优化（量化方案）可能无法完美迁移。做好重新调优的准备。
+
+=== 从 ONNX Runtime 迁移到 TensorFlow Lite
+
+*难度*：中等偏难
+
+*流程*：
+1. 用 onnx-tf 把 ONNX 转换为 TensorFlow
+2. 把 TensorFlow 转换为 TFLite
+3. 按需应用量化
+4. 充分验证——这条路径很容易出错
+
+*坑点*：并非所有 ONNX 算子都被 TFLite 支持。自定义算子尤其麻烦。
+
+=== 从 PyTorch Mobile 迁移到 ONNX Runtime
+
+*难度*：容易
+
+*流程*：
+1. 把 PyTorch 模型导出为 ONNX（支持良好）
+2. 在 ONNX Runtime 中加载
+3. 更新推理代码
+
+*坑点*：动态形状与控制流可能无法完美导出。
+
+=== 从自定义 Vulkan 迁移到库
+
+*难度*：容易（代码层面），困难（性能层面）
+
+*流程*：
+1. 把你的模型导出为库的格式
+2. 用库调用替换自定义推理代码
+3. 针对库的特性重新优化
+
+*坑点*：你很可能会损失性能。在特定用例上，自定义实现通常比库更快。
+
+**决策规则**：如果你预计以后需要换库，就优先把 ONNX 作为模型格式——它在迁移时最灵活。
+
+== 决策树
+
+下面为常见场景给出具体的决策树。
+
+=== 决策树 1：需要实时推理的桌面游戏
+
+[source]
+----
+Start: Desktop game, need real-time ML inference
+
+Q: Target only NVIDIA GPUs?
+├─ Yes → ONNX Runtime + OpenCL
+│         (Best performance, but NVIDIA-only)
+│
+└─ No → Q: Windows-only?
+        ├─ Yes → ONNX Runtime + DirectML
+        │         (Good cross-vendor performance)
+        │
+        └─ No → Q: Linux-only?
+                ├─ Yes → ONNX Runtime + OpenCL (if NVIDIA common)
+                │         or ONNX Runtime + CPU (if mixed GPUs)
+                │
+                └─ No (Cross-platform) → ONNX Runtime + best provider per platform
+                                         (DirectML on Windows, OpenCL on Linux, CoreML on macOS)
+----
+
+=== 决策树 2：移动 AR 应用
+
+[source]
+----
+Start: Mobile AR app, need real-time inference
+
+Q: iOS-only?
+├─ Yes → Q: Targeting A12+ devices?
+│        ├─ Yes → ONNX Runtime + CoreML
+│        │         (Best performance on Neural Engine)
+│        │
+│        └─ No → TensorFlow Lite + GPU
+│                 (Broader device support)
+│
+└─ No → Q: Android-only?
+        ├─ Yes → TensorFlow Lite + GPU
+        │         (Industry standard, best support)
+        │
+        └─ No (Cross-platform) → TensorFlow Lite + GPU
+                                  (Most consistent across platforms)
+----
+
+=== 决策树 3：嵌入式视觉系统
+
+[source]
+----
+Start: Embedded device, computer vision
+
+Q: Memory available?
+├─ < 1MB → TensorFlow Lite Micro
+│          (Only option for microcontrollers)
+│
+├─ 1-100MB → TensorFlow Lite
+│            (Optimized for resource-constrained devices)
+│
+└─ > 100MB → Q: Need cross-framework compatibility?
+             ├─ Yes → ONNX Runtime
+             │         (More flexible, larger footprint)
+             │
+             └─ No → TensorFlow Lite
+                      (Smaller footprint, better optimized)
+----
+
+== 推荐矩阵
+
+下面是常见场景的快速参考矩阵：
+
+[cols="3,2,2,2,2", options="header"]
+|===
+|用例 |首选 |替代方案 |避免 |备注
+
+|桌面游戏（NVIDIA）
+|ONNX Runtime + OpenCL
+|ONNX Runtime + OpenCL
+|TensorFlow Lite
+|OpenCL 能带来 2-3 倍加速
+
+|桌面游戏（AMD/Intel）
+|ONNX Runtime + DirectML
+|ONNX Runtime + CPU
+|基于 OpenCL 的方案
+|DirectML 跨厂商可用
+
+|移动游戏（Android）
+|TensorFlow Lite + GPU
+|ONNX Runtime + NNAPI
+|PyTorch Mobile
+|TFLite 是行业标准
+
+|移动游戏（iOS）
+|TensorFlow Lite + GPU
+|ONNX Runtime + CoreML
+|PyTorch Mobile
+|A12 及之后的设备用 CoreML
+
+|跨平台应用
+|ONNX Runtime
+|TensorFlow Lite
+|平台专属方案
+|ONNX 提供一致性
+
+|嵌入式视觉
+|TensorFlow Lite
+|ONNX Runtime
+|重量级库
+|TFLite 为嵌入式优化
+
+|批处理
+|ONNX Runtime + OpenCL
+|TensorFlow Lite
+|面向移动端的方案
+|OpenCL 擅长大批量
+
+|快速原型
+|TensorFlow Lite
+|ONNX Runtime
+|自定义实现
+|TFLite 的 API 最简单
+
+|生产系统
+|ONNX Runtime
+|TensorFlow Lite
+|实验性库
+|成熟的生态很重要
+|===
+
+== 做出最终决定
+
+走完这个框架后，你应该已经把选项缩小到一两个。下面是做最后决定的方法：
+
+=== 构建概念验证
+
+不要没测试就定下来。用你的首选方案构建一个最小化的概念验证：
+
+1. 加载一个有代表性的模型
+2. 在有代表性的数据上运行推理
+3. 在目标硬件上测量性能
+4. 评估集成复杂度
+5. 检查是否有意外问题
+
+花上几天做这件事。它能帮你避免几个月的后悔，值得。
+
+=== 在目标硬件上做基准测试
+
+网上的性能数字只是参考，不是保证。要用你的具体模型在你的具体硬件上做基准测试：
+
+- 测量延迟（最小值、最大值、平均值、p95、p99）
+- 测量吞吐量（每秒推理次数）
+- 测量内存占用（峰值与平均值）
+- 测量功耗（面向移动端/嵌入式）
+
+如果性能不满足要求，就重新考虑你的选择。
+
+=== 考虑团队因素
+
+你团队的技术栈是什么？如果所有人都熟悉 TensorFlow，那么即便性能略低，TensorFlow Lite 也可能更容易上手。如果所有人都熟悉 PyTorch，PyTorch Mobile 可能是阻力最小的路径。
+
+开发者的生产力很重要。一个慢 10%、但集成起来容易 50% 的库，可能是更好的选择。
+
+=== 为未来做规划
+
+你的应用要往哪里去？如果你现在从桌面起步、但计划扩展到移动端，就选一个在两端都表现良好的库。如果你现在用简单模型、但计划用更复杂的模型，就确保你的库能扛得住。
+
+不要为假想的未来过度设计，但也不要把自己逼进死角。
+
+== 小结
+
+为你的 Vulkan 应用选择合适的 ML 推理库，需要权衡多个因素：平台要求、模型格式兼容性、性能需求、集成复杂度与生态成熟度。
+
+对大多数桌面应用来说，ONNX Runtime 在性能、灵活性与跨平台支持之间提供了最好的平衡。在 NVIDIA GPU 上用 OpenCL 执行提供程序获得最高性能，在 Windows 上用 DirectML 获得跨厂商支持，或者在 macOS 上用 CoreML 针对 Apple Silicon 做优化。
+
+对移动应用来说，TensorFlow Lite 是行业标准，性能出色，生态也最成熟。如果面向较新的 iOS 设备，可以考虑带 CoreML 的 ONNX Runtime；如果需要跨框架兼容性，Android 上可以考虑带 NNAPI 的 ONNX Runtime。
+
+对嵌入式系统来说，TensorFlow Lite（微控制器上用 TFLite Micro）是明确的选择，它为资源受限的环境做了优化。
+
+关键在于系统化：按硬性约束淘汰选项，从相关维度评估剩下的选项，构建概念验证，并在承诺之前于目标硬件上做基准测试。用这种方法，你就能选出最贴合自身需求的库。
+
+xref:ML_Inference/Third_Party_Libraries/09_practical_examples.adoc[上一篇：实战示例] | xref:ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc[下一篇：ML 编译器：概览与使用时机]

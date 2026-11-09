@@ -1,0 +1,650 @@
+:pp: {plus}{plus}
+
+= 数据传输优化
+
+== 引言
+
+你已经在 Vulkan 和你的 ML 推理库之间建立起了 GPU 资源共享。内存是共享的，同步能正常工作，推理也在 GPU 上运行。但当你对应用做性能分析时，却发现数据传输仍然是瓶颈。也许你每帧要花 3-4ms 来回搬运数据，或者 GPU 利用率很低，因为它一直在等传输完成。零拷贝共享所承诺的性能，并没有达到你的预期。
+
+现实是这样的：即便有了共享内存，数据传输依然重要。你不再需要在 CPU 和 GPU 之间拷贝，但你仍然要在 GPU 的不同部分之间搬运数据、转换格式、管理内存布局，并在不同的执行上下文之间协调。这些操作都有代价，而针对实时性能而言，优化它们是必不可少的。
+
+本章探讨在 ML 推理管线中优化数据传输的技术。我们会介绍一些策略：彻底减少传输、使用异步传输队列让数据搬运与计算重叠、在需要时利用内存映射实现高效的 CPU-GPU 通信，以及通过批处理摊薄开销。目标是让数据搬运尽可能快、尽可能高效，从你的管线中榨出每一毫秒的性能。
+
+== 理解传输瓶颈
+
+在优化之前，你需要弄清楚时间到底花在哪里。Vulkan-ML 管线中的数据传输由几个部分组成，每一部分都有自己的性能特征。
+
+=== 传输的类型
+
+*GPU-GPU 传输* —— 在同一块 GPU 的不同内存区域之间搬运数据。当你从渲染目标拷贝到计算缓冲区，或者在内存布局之间转换时，就会出现这种传输。这类传输使用 GPU 的 DMA 引擎，相对较快（视 GPU 而定，10-50 GB/s），但仍然要花时间，并且消耗内存带宽。
+
+*格式转换* —— 把数据从一种格式变换成另一种。把 BGRA 转成 RGB、解包压缩纹理，或者在不同数值精度之间转换（float32 到 float16）。这些通常需要计算着色器，如果不加优化，代价可能很高。
+
+*布局转换* —— 改变数据在内存中的排列方式。Vulkan 图像为渲染使用最佳平铺（optimal tiling），而 ML 库往往需要线性布局。在这些布局之间切换需要一次重新排列数据的拷贝操作。
+
+*同步开销* —— 管线屏障、信号量等待和队列提交都有开销。每个同步点都会增加延迟，即便实际的数据传输很快。
+
+*CPU-GPU 传输* —— 当你无法避免它们时（上传模型权重、回读最终结果），这些是最慢的。PCIe 带宽有限（PCIe 3.0 x16 为 16 GB/s，PCIe 4.0 为 32 GB/s），延迟也高（视传输大小，从微秒到毫秒不等）。
+
+=== 测量传输性能
+
+你无法优化你没有测量的东西。用 GPU 性能分析工具弄清楚时间花在哪里：
+
+*RenderDoc* —— 抓取一帧并查看时间线。留意绘制调用和计算派发之间的空隙——它们通常意味着传输或同步开销。
+
+*NVIDIA Nsight Graphics* —— 提供详细的 GPU 指标，包括内存带宽利用率、传输耗时和同步停顿。
+
+*AMD Radeon GPU Profiler* —— 对 AMD GPU 提供类似能力，并有详细的内存传输分析。
+
+*Vulkan 时间戳查询* —— 在命令缓冲区中插入时间戳查询，精确测量每个操作在 GPU 上耗时多久。
+
+需要关注的关键指标：
+
+- *传输耗时* —— 每次拷贝或布局转换要花多久？
+- *内存带宽利用率* —— 你是在把 GPU 的内存带宽跑满，还是仍有余量？
+- *同步停顿* —— 有多少时间花在等待同步上？
+- *GPU 利用率* —— GPU 是忙于计算，还是空闲着等数据？
+
+一旦你知道时间花在哪里，就能有针对性地做优化。
+
+== 策略 1：最小化传输
+
+最快的传输就是你不做的传输。在优化如何传输数据之前，先问一问：你是否真的需要传输它。
+
+=== 原地操作
+
+你的 ML 推理能否直接在渲染出来的图像上运行，而不做任何拷贝？如果你正在对渲染出的一帧做目标检测，而 ML 模型期望的格式和布局恰好和 Vulkan 产出的一致，那你可能根本不需要任何传输。
+
+这需要仔细规划：
+
+*匹配格式* —— 如果你的 ML 模型期望 RGB，而 Vulkan 渲染的是 BGRA，可以考虑训练或转换模型，让它直接处理 BGRA。重新训练看起来代价很高，但如果它能消除每帧一次的格式转换，那么性能收益是值得的。
+
+*匹配布局* —— 如果可能，为你的渲染目标使用线性平铺。没错，渲染到线性平铺比最佳平铺慢，但如果它能消除 ML 推理之前的一次布局转换，净结果可能反而更快。
+
+*匹配分辨率* —— 如果你的 ML 模型期望 512×512 输入，而你按 1920×1080 渲染，那就需要降采样。但如果你能直接按 512×512 渲染（也许渲染到离屏缓冲区），就省掉了降采样操作。
+
+代价是灵活性与性能之间的权衡。把一切都完美匹配可能会约束你的渲染管线，但对性能敏感的应用来说，这通常是值得的。
+
+=== 共享内存区域
+
+当你确实需要传输数据时，把它留在 Vulkan 和你的 ML 库都能访问的共享内存区域里。上一章我们讲过 GPU 资源共享——这里的关键洞见是：围绕共享来设计你的内存分配策略。
+
+不要这样做：
+1. 渲染到仅 Vulkan 可用的纹理
+2. 拷贝到共享缓冲区
+3. ML 推理从共享缓冲区读取
+
+而要这样做：
+1. 直接渲染到共享纹理
+2. ML 推理从共享纹理读取
+
+消除中间那次拷贝，能省下时间和内存带宽。
+
+=== 持久缓冲区
+
+对于不常变的数据（模型权重、查找表、配置数据），在共享内存里分配一次并长期保留。不要每帧重新上传。
+
+这听起来显而易见，但很容易不小心就重复上传了。例如，如果你使用 ONNX Runtime 并为每次推理都新建一个会话，那你每次都在重新上传模型权重。相反，应当只创建一次会话并复用它。
+
+=== 惰性传输
+
+只在数据确实需要时才传输。如果你的 ML 推理是每 5 帧跑一次而不是每帧都跑，那就不要在推理不运行的那些帧里传输数据。
+
+实现一套脏标志系统：数据变化时把它标记为脏，只有当 ML 推理需要该数据、且数据是脏的时才传输。这对不常变化的数据（相机参数、场景元数据等）尤其有用。
+
+== 策略 2：异步传输队列
+
+现代 GPU 有专门用于数据传输的 DMA 引擎，与图形引擎和计算引擎相互独立。Vulkan 通过传输队列把它们暴露出来。借助传输队列，你可以让数据传输与渲染、计算工作重叠，从而把传输延迟隐藏起来。
+
+=== 理解队列族
+
+Vulkan 设备有多个队列族，各自能力不同：
+
+*图形队列* —— 支持图形、计算和传输操作。最通用，但也最抢手。
+
+*计算队列* —— 支持计算和传输操作。适合计算密集的工作负载。
+
+*传输队列* —— 只支持传输操作。专用 DMA 引擎，可与图形、计算并行运行。
+
+并非所有设备都有专用传输队列，但大多数现代 GPU 都有。在设备选择阶段检查：
+
+[source,cpp]
+----
+auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+
+int transferQueueFamily = -1;
+for (int i = 0; i < queueFamilies.size(); i++) {
+    // Look for a queue that supports transfer but not graphics
+    // (indicating a dedicated transfer queue)
+    if ((queueFamilies[i].queueFlags & vk::QueueFlagBits::eTransfer) &&
+        !(queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics)) {
+        transferQueueFamily = i;
+        break;
+    }
+}
+
+if (transferQueueFamily != -1) {
+    // Device has a dedicated transfer queue
+}
+----
+
+=== 让传输与计算重叠
+
+异步传输的关键在于让它与其他工作重叠。当 GPU 正在渲染或执行 ML 推理时，传输队列可以为下一帧搬运数据。
+
+下面是同步传输时的一帧：
+
+1. 渲染第 N 帧（5ms）
+2. 为 ML 推理传输数据（2ms）
+3. 运行 ML 推理（8ms）
+4. 合计：15ms
+
+采用异步传输后：
+
+1. 启动第 N+1 帧的传输（非阻塞）
+2. 渲染第 N 帧（5ms）
+3. 等待传输完成（如果重叠得好，<1ms）
+4. 运行 ML 推理（8ms）
+5. 合计：约 13ms
+
+通过把传输与渲染重叠，你把大部分传输时间隐藏掉了。
+
+=== 实现模式
+
+[source,cpp]
+----
+// Frame N: Start transfer for frame N+1
+vk::raii::CommandBuffer transferCmd = beginTransferCommandBuffer();
+transferCmd.copyImage(sourceImage, ..., destImage, ...);
+transferCmd.end();
+
+vk::SubmitInfo transferSubmit{
+    .commandBufferCount = 1,
+    .pCommandBuffers = &*transferCmd,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &*transferCompleteSemaphore
+};
+
+transferQueue.submit(transferSubmit);
+
+// Frame N: Render (runs in parallel with transfer)
+vk::raii::CommandBuffer renderCmd = beginRenderCommandBuffer();
+// ... rendering commands ...
+renderCmd.end();
+
+vk::SubmitInfo renderSubmit{
+    .commandBufferCount = 1,
+    .pCommandBuffers = &*renderCmd,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &*renderCompleteSemaphore
+};
+
+graphicsQueue.submit(renderSubmit);
+
+// Frame N: ML inference (waits for both transfer and render)
+vk::raii::CommandBuffer computeCmd = beginComputeCommandBuffer();
+// ... ML inference commands ...
+computeCmd.end();
+
+std::array<vk::Semaphore, 2> waitSemaphores = {*transferCompleteSemaphore, *renderCompleteSemaphore};
+std::array<vk::PipelineStageFlags, 2> waitStages = {
+    vk::PipelineStageFlagBits::eTransfer,
+    vk::PipelineStageFlagBits::eComputeShader
+};
+
+vk::SubmitInfo computeSubmit{
+    .waitSemaphoreCount = 2,
+    .pWaitSemaphores = waitSemaphores.data(),
+    .pWaitDstStageMask = waitStages.data(),
+    .commandBufferCount = 1,
+    .pCommandBuffers = &*computeCmd
+};
+
+computeQueue.submit(computeSubmit);
+----
+
+传输和渲染操作并行运行。计算操作会等两者都完成后再开始。如果传输在渲染之前就结束了，你就完全隐藏了传输延迟。
+
+=== 队列所有权转移
+
+使用多个队列时，你需要为共享资源处理队列所有权转移。当资源被不同队列族访问时，Vulkan 要求显式转移所有权。
+
+[source,cpp]
+----
+// Release ownership from transfer queue
+vk::ImageMemoryBarrier releaseBarrier{
+    .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+    .dstAccessMask = {},
+    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = transferQueueFamily,
+    .dstQueueFamilyIndex = computeQueueFamily,
+    .image = *sharedImage,
+    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+};
+
+transferCmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eTransfer,
+    vk::PipelineStageFlagBits::eBottomOfPipe,
+    {}, {}, {}, releaseBarrier);
+
+// Acquire ownership on compute queue
+vk::ImageMemoryBarrier acquireBarrier{
+    .srcAccessMask = {},
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead,
+    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = transferQueueFamily,
+    .dstQueueFamilyIndex = computeQueueFamily,
+    .image = *sharedImage,
+    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+};
+
+computeCmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eTopOfPipe,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, {}, {}, acquireBarrier);
+----
+
+这就保证了跨队列族的正确同步和内存可见性。
+
+== 策略 3：内存映射与暂存
+
+有时你无法避免 CPU-GPU 传输——上传新的模型权重、回读推理结果交给 CPU 处理，或者处理每帧都变的动态数据。这些情况下，要优化执行传输的方式。
+
+=== 暂存缓冲区
+
+绝不要从 CPU 直接传输到设备本地内存。使用暂存缓冲区：
+
+[source,cpp]
+----
+// Create staging buffer in host-visible memory
+vk::BufferCreateInfo stagingInfo{
+    .size = dataSize,
+    .usage = vk::BufferUsageFlagBits::eTransferSrc
+};
+
+vk::raii::Buffer stagingBuffer(device, stagingInfo);
+
+auto memReqs = stagingBuffer.getMemoryRequirements();
+vk::MemoryAllocateInfo allocInfo{
+    .allocationSize = memReqs.size,
+    .memoryTypeIndex = findMemoryType(
+        memReqs.memoryTypeBits,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)
+};
+
+vk::raii::DeviceMemory stagingMemory(device, allocInfo);
+stagingBuffer.bindMemory(*stagingMemory, 0);
+
+// Map and copy data
+void* mapped = stagingMemory.mapMemory(0, dataSize);
+memcpy(mapped, sourceData, dataSize);
+stagingMemory.unmapMemory();
+
+// Transfer from staging to device-local buffer
+vk::raii::CommandBuffer cmd = beginTransferCommandBuffer();
+vk::BufferCopy copyRegion{0, 0, dataSize};
+cmd.copyBuffer(*stagingBuffer, *deviceBuffer, copyRegion);
+cmd.end();
+
+transferQueue.submit(submitInfo);
+----
+
+为什么要用暂存缓冲区？因为主机可见的设备本地内存（如果存在的话）往往比专用的设备本地内存更慢。先经由主机可见内存做暂存，再拷贝到设备本地内存，整体上通常更快。
+
+=== 持久映射
+
+对于频繁更新的缓冲区，让它们保持持久映射，而不是每帧映射再解除映射：
+
+[source,cpp]
+----
+// Create buffer with persistent mapping
+vk::raii::Buffer frequentUpdateBuffer;
+vk::raii::DeviceMemory frequentUpdateMemory;
+// ... (create buffer and allocate memory) ...
+
+// Map once at initialization
+void* persistentMapping = frequentUpdateMemory.mapMemory(0, vk::WholeSize);
+
+// Each frame, just write to the mapped pointer
+// No need to map/unmap
+memcpy(persistentMapping, newData, dataSize);
+
+// Ensure visibility (if not using HOST_COHERENT)
+vk::MappedMemoryRange range{
+    .memory = *frequentUpdateMemory,
+    .offset = 0,
+    .size = vk::WholeSize
+};
+device.flushMappedMemoryRanges(range);
+----
+
+持久映射消除了映射与解除映射的开销，这对小块、频繁的更新可能相当可观。
+
+=== 写合并内存
+
+在某些平台上，你可以为暂存缓冲区使用写合并（write-combined）内存。写合并内存允许 CPU 批量写入，从而提升顺序写的吞吐量：
+
+[source,cpp]
+----
+// Look for write-combined memory type
+allocInfo.memoryTypeIndex = findMemoryType(
+    memReqs.memoryTypeBits,
+    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+    vk::MemoryPropertyFlagBits::eDeviceLocal); // Prefer device-local if available
+
+// Write-combined memory is faster for sequential writes but slower for reads
+// Only use for upload (transfer source), not download (transfer destination)
+----
+
+对于大块顺序写入，写合并内存能带来 2-4 倍的加速，但读取要慢得多。只在上传用的暂存缓冲区中使用它，不要用于下载。
+
+=== 回读优化
+
+从 GPU 回读数据时（推理结果、调试信息），尽量减小传输的数据量：
+
+*降低精度* —— 如果你回读的是 float32 结果，但只需要 8 位精度，那就在 GPU 上先转成 uint8 再回读。这样传输量减少到 1/4。
+
+*压缩数据* —— 对于较大的回读，可以考虑先在 GPU 上压缩再传输。简单的压缩（RLE、差值编码）可以在计算着色器中实现，显著减小传输量。
+
+*在 GPU 上聚合* —— 如果你回读数据是为了算统计量或做决策，那就尽可能多地在 GPU 上做聚合。与其回读 1000 个值来求最大值，不如在 GPU 上算出最大值，只回读一个值。
+
+== 策略 4：批处理
+
+批处理通过把多个条目一起处理来摊薄开销。与其一次对一张图像做推理，不如把 4 张、8 张或 16 张图像一起处理。每个条目的开销（命令缓冲区提交、同步等）被分摊到所有条目上。
+
+=== 选择批大小
+
+更大的批能提升吞吐量，但会增加延迟。最佳批大小取决于你的应用：
+
+*实时应用*（游戏、AR/VR）—— 小批（1-4）以最小化延迟。你需要快速拿到结果，所以吞吐量不如响应性重要。
+
+*离线处理*（视频分析、批量渲染）—— 大批（16-64）以最大化吞吐量。延迟无所谓，你希望单位时间内处理尽可能多的数据。
+
+*交互式应用*（照片编辑、内容创作）—— 中等批（4-8），在延迟和吞吐量之间平衡。用户期待快速反馈，但也能容忍一定延迟。
+
+尝试不同的批大小，同时测量延迟和吞吐量，为你的应用找到最佳平衡点。
+
+=== 批处理的内存布局
+
+批处理时，内存布局很重要。ML 模型通常期望批优先的布局（NCHW：批、通道、高、宽）。确保你的数据排列正确：
+
+[source,cpp]
+----
+// Inefficient: Separate buffers for each image
+vk::raii::Buffer image1Buffer, image2Buffer, image3Buffer, image4Buffer;
+// Each buffer: [C, H, W]
+
+// Efficient: Single buffer with batch dimension
+vk::raii::Buffer batchBuffer;
+// Layout: [N, C, H, W] where N=4
+// All images contiguous in memory
+----
+
+连续布局能带来高效的 GPU 访问，并减少所需的描述符绑定数量。
+
+=== 动态批处理
+
+对于工作负载可变的应用，实现动态批处理：累积条目，直到凑满一批或超时，然后处理这一批。
+
+[source,cpp]
+----
+std::vector<InputData> batchQueue;
+const size_t maxBatchSize = 8;
+const auto maxWaitTime = std::chrono::milliseconds(10);
+auto batchStartTime = std::chrono::steady_clock::now();
+
+void queueInference(InputData input) {
+    batchQueue.push_back(input);
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - batchStartTime);
+
+    if (batchQueue.size() >= maxBatchSize || elapsed >= maxWaitTime) {
+        // Process batch
+        runBatchInference(batchQueue);
+        batchQueue.clear();
+        batchStartTime = now;
+    }
+}
+----
+
+这样就在延迟（超时确保条目不会等待太久）和吞吐量（满批最大化效率）之间取得了平衡。
+
+== 策略 5：格式转换优化
+
+格式转换往往无法避免——Vulkan 按一种格式渲染，ML 模型却期望另一种。优化这些转换，把它们的代价降到最低。
+
+=== 用计算着色器转换
+
+把格式转换实现为计算着色器，而不是用 CPU 代码或库函数：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D inputImage; // BGRA
+layout(binding = 1, rgba8) writeonly uniform image2D outputImage; // RGB
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    vec4 bgra = texelFetch(inputImage, pos, 0);
+
+    // Swizzle BGRA to RGB
+    vec3 rgb = bgra.bgr;
+
+    imageStore(outputImage, pos, vec4(rgb, 1.0));
+}
+----
+
+这完全在 GPU 上运行，充分利用了并行执行。对于 1920×1080 的图像，这在现代 GPU 上不到 1ms 就能完成。
+
+=== 融合操作
+
+把格式转换与其他操作合并，以减少内存流量：
+
+[source,slang]
+----
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D inputImage;
+layout(binding = 1, r32f) writeonly uniform image2D outputImage;
+
+layout(push_constant) uniform PushConstants {
+    vec3 mean;
+    vec3 std;
+} pc;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    vec4 bgra = texelFetch(inputImage, pos, 0);
+
+    // Convert BGRA to RGB
+    vec3 rgb = bgra.bgr;
+
+    // Normalize for ML model
+    vec3 normalized = (rgb - pc.mean) / pc.std;
+
+    // Convert to grayscale (if model expects single channel)
+    float gray = dot(normalized, vec3(0.299, 0.587, 0.114));
+
+    imageStore(outputImage, pos, vec4(gray, 0, 0, 0));
+}
+----
+
+这一个着色器完成了格式转换、归一化和灰度化——否则需要三次独立的过程和三个中间缓冲区。
+
+=== 纹理压缩
+
+如果你的 ML 模型能处理压缩纹理，就用它们。Vulkan 支持多种压缩格式（BC、ASTC、ETC2），可以降低内存带宽：
+
+- BC1 (DXT1)：RGB 数据 6:1 压缩
+- BC3 (DXT5)：RGBA 数据 4:1 压缩
+- BC4：单通道数据 2:1 压缩
+- ASTC：压缩比可变，质量出色
+
+代价是解压在纹理采样期间发生，会增加计算开销。对于带宽受限的工作负载，这通常是划算的；对于计算受限的工作负载，就未必了。
+
+== 策略 6：管线优化
+
+整体管线结构会影响传输效率。要把管线作为整体来优化，而不只是优化单次传输。
+
+=== 多帧流水线
+
+让多个飞行帧一起处理，以隐藏延迟：
+
+帧 0：渲染 → 传输 → 推理
+帧 1：　　　　渲染 → 传输 → 推理
+帧 2：　　　　　　　　渲染 → 传输 → 推理
+
+每一帧的每个阶段都与其他帧的其他阶段并行运行。这能最大化 GPU 利用率并隐藏传输延迟。
+
+实现时需要小心的同步，确保各帧之间不会互相干扰：
+
+[source,cpp]
+----
+const int maxFramesInFlight = 3;
+std::array<vk::raii::Semaphore, maxFramesInFlight> renderCompleteSemaphores;
+std::array<vk::raii::Semaphore, maxFramesInFlight> transferCompleteSemaphores;
+std::array<vk::raii::Semaphore, maxFramesInFlight> inferenceCompleteSemaphores;
+std::array<vk::raii::Fence, maxFramesInFlight> frameFences;
+
+int currentFrame = 0;
+
+void renderFrame() {
+    // Wait for this frame's resources to be available
+    auto result = device.waitForFences(*frameFences[currentFrame], VK_TRUE, UINT64_MAX);
+    device.resetFences(*frameFences[currentFrame]);
+
+    // Render
+    submitRenderCommands(renderCompleteSemaphores[currentFrame]);
+
+    // Transfer (waits for render)
+    submitTransferCommands(
+        renderCompleteSemaphores[currentFrame],
+        transferCompleteSemaphores[currentFrame]);
+
+    // Inference (waits for transfer)
+    submitInferenceCommands(
+        transferCompleteSemaphores[currentFrame],
+        inferenceCompleteSemaphores[currentFrame],
+        frameFences[currentFrame]);
+
+    currentFrame = (currentFrame + 1) % maxFramesInFlight;
+}
+----
+
+=== 惰性同步
+
+不要做超出必要的同步。如果你每 5 帧才跑一次推理，那就不要在不需要结果的那些帧上等待推理完成：
+
+[source,cpp]
+----
+void renderFrame(int frameNumber) {
+    // Render
+    submitRenderCommands();
+
+    if (frameNumber % 5 == 0) {
+        // Run inference this frame
+        submitTransferCommands();
+        submitInferenceCommands();
+
+        // Wait for results (only when needed)
+        auto result = device.waitForFences(*inferenceFence, VK_TRUE, UINT64_MAX);
+        processInferenceResults();
+    }
+
+    // Continue rendering without waiting for inference
+}
+----
+
+这样渲染就能全速推进，而推理在后台异步运行。
+
+=== 内存别名
+
+在管线的不同阶段，把同一块内存复用于不同用途。如果你有一个大的中间缓冲区只在传输期间需要，就让它与推理期间需要的另一个缓冲区互为别名：
+
+[source,cpp]
+----
+// Allocate one large memory block
+vk::raii::DeviceMemory sharedMemory(device, allocInfo);
+
+// Create two buffers that alias the same memory
+vk::raii::Buffer transferBuffer(device, transferBufferInfo);
+transferBuffer.bindMemory(*sharedMemory, 0);
+
+vk::raii::Buffer inferenceBuffer(device, inferenceBufferInfo);
+inferenceBuffer.bindMemory(*sharedMemory, 0);
+
+// Use transferBuffer during transfer stage
+// Use inferenceBuffer during inference stage
+// They share the same memory, reducing total allocation
+----
+
+这能减少内存占用，也可能改善缓存效率，但需要仔细同步，确保这两个缓冲区不会被同时使用。
+
+== 实践中的考虑
+
+数据传输优化是一个迭代过程。下面是一些面向真实实现的实际建议。
+
+=== 先做性能分析，再优化
+
+不要猜瓶颈在哪里。对应用做性能分析并测量：
+
+- 哪些传输耗时最多？
+- 哪些传输发生得最频繁？
+- 内存带宽利用率如何？
+- 同步停顿在哪里？
+
+优先优化最大的瓶颈。在一个 5ms 的操作上获得 50% 的加速，比在一个 0.5ms 的操作上获得 90% 的加速更有价值。
+
+=== 平台差异
+
+传输性能在不同平台之间差别很大：
+
+*桌面 GPU* —— 内存带宽高（500+ GB/s），有专用的传输引擎，异步传输支持好。
+
+*移动 GPU* —— 带宽较低（20-50 GB/s），统一内存架构（CPU 与 GPU 共享内存），优化策略不同。
+
+*集成 GPU* —— 与 CPU 共享系统内存，性能特征与独立 GPU 不同。
+
+在你的目标平台上做测试，并针对对用户最重要的平台做优化。
+
+=== 回退路径
+
+并非所有优化在所有硬件上都有效。要实现回退路径：
+
+- 如果没有专用传输队列，就使用图形队列
+- 如果不支持外部内存共享，就回退到显式拷贝
+- 如果没有异步计算，就同步运行推理
+
+优雅降级能确保你的应用在任何地方都能工作，即便不是在任何地方都最优。
+
+=== 调试传输问题
+
+当传输变慢或出错时：
+
+*验证层* —— 启用 Vulkan 验证层，以捕获同步错误、错误的屏障以及其他问题。
+
+*GPU 抓帧* —— 用 RenderDoc 或 Nsight 抓帧，查看 GPU 上究竟发生了什么。
+
+*带宽计算* —— 计算理论带宽（传输量 / 时间），并与 GPU 规格对比。如果在一块 500 GB/s 带宽的 GPU 上只跑到 10 GB/s，那就有问题。
+
+*增量测试* —— 从最简单的传输开始（单缓冲区、无格式转换），逐步增加复杂度。这有助于定位问题。
+
+== 小结
+
+对于 Vulkan 应用中的实时 ML 推理，数据传输优化至关重要。即便有 GPU 资源共享，传输仍然有代价——GPU-GPU 拷贝、格式转换、布局转换和同步开销都会累积起来。
+
+关键策略是：通过原地操作和使用共享内存来最小化传输；使用异步传输队列让传输与计算重叠；用暂存缓冲区和持久映射优化 CPU-GPU 传输；通过批处理摊薄开销；用计算着色器和融合操作优化格式转换；并让管线结构最大化并行度。
+
+有效的优化需要做性能分析来找出瓶颈、针对平台做调优以适应硬件差异，以及用回退路径实现优雅降级。最终得到的是一条高效搬运数据的管线，最大化 GPU 利用率、最小化延迟。
+
+有了优化后的数据传输，你的 ML 推理管线就能达到那些要求苛刻的应用所需的实时性能——游戏、AR/VR、交互式工具等等。本章的技术为构建高性能的 ML 集成图形应用打下了基础。
+
+xref:ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc[上一篇：GPU 资源共享] | xref:ML_Inference/Third_Party_Libraries/09_practical_examples.adoc[下一篇：实战示例]

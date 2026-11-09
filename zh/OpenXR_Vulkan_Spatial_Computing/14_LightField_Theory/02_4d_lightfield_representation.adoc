@@ -1,0 +1,69 @@
+:pp: {plus}{plus}
+= 四维光场表示
+
+要表示一个光场，就需要把一条 4D 光线映射成 GPU 能够高效处理的线性内存地址。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+标准 OpenXR 运行时聚焦于二维投影层。你用 Vulkan 的原始缓冲区管理和自定义着色器索引来实现高维 4D 光场，从而获得真正超越标准空间渲染模型的全息表示。
+
+== 7D 全光函数：起点
+
+要理解光场，我们必须先看**全光函数**（源自拉丁语 *plenus*，意为「充满」）。这是一个 7D 函数 latexmath:[P(x, y, z, \theta, \phi, \lambda, t)]，它描述宇宙中的每一个光子。
+
+存储 7 个维度是不可能的。对 GPU 来说，我们做三个假设：
+1.  **静态场景**：我们忽略时间。
+2.  **RGB 颜色**：我们把波长缩减为三个通道。
+3.  **空无一物的空间**：我们假设光在空气中不会改变颜色，因此只需要知道光线从何处进入、从何处离开一个「光盒」。
+
+这样我们就只剩下 **4 个维度**：两个用于入射点（**ST 平面**），两个用于入射方向（**UV 平面**）。
+
+== 映射到 Vulkan 内存
+
+在 Vulkan 中，我们把这种 4D 结构表示为一个巨大的 `vk::raii::Buffer`。我们用指定初始化器（designated initializers）来配置这块高带宽存储：
+
+[source,cpp]
+----
+// Initializing a 4D LightField buffer using designated initializers
+vk::BufferCreateInfo bufferInfo{
+    .size = spatialRes * directionalRes * sizeof(glm::vec4),
+    .usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+    .sharingMode = vk::SharingMode::eExclusive
+};
+vk::raii::Buffer lightFieldBuffer(device, bufferInfo);
+----
+
+运行时确保你的「光盒」在物理空间（舞台空间，Stage Space）中保持完全静止，这样即使用户的头部移动，光场也能维持其方向完整性。
+
+== 为第四个维度建立索引
+
+在我们的 Slang 着色器中，我们把 4D 坐标映射为该缓冲区中的线性索引：
+
+[source,slang]
+----
+struct LightFieldRay {
+    float4 color;
+};
+
+RWStructuredBuffer<LightFieldRay> lightFieldData;
+
+// Mapping 4D coordinates to a linear index
+uint getLinearIndex(uint2 st, uint2 uv, uint2 stRes, uint2 uvRes) {
+    return st.x + st.y * stRes.x +
+           uv.x * (stRes.x * stRes.y) +
+           uv.y * (stRes.x * stRes.y * uvRes.x);
+}
+----
+
+== 进阶：稀疏光场驻留
+
+Vulkan 让你能够管理超出标准缓冲区限制的 GB 级光场：
+
+*   **全息虚拟纹理**：使用 Vulkan 的**稀疏驻留资源**，你可以只把当前可见的光线保留在 VRAM 中。这样就能根据对用户移动的预测，在 GPU 中换入换出数据。
+*   **实时生成**：你可以用 Vulkan 的**网格着色器**为动态对象实时「烘焙」光场更新，确保移动的角色和变化的光照都被捕获进你的全光表示中。
+
+TIP: 关于光场理论与缓冲区管理的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#resources-buffers[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc[下一页]

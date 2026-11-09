@@ -1,0 +1,61 @@
+:pp: {plus}{plus}
+= 资源生命周期：无需 deviceWaitIdle() 的安全复用
+
+== 标记与回收
+
+Vulkan 中最大的挑战之一是知道何时可以安全复用或销毁资源。有了时间线信号量，我们把销毁和复用视为全局计数器的函数：当计数器超过资源上次被使用的值时，该资源就有资格被回收。
+
+我们为瞬态资源（命令缓冲区、暂存缓冲区、描述符集）维护一个小型分配器或空闲链表。每次分配都会打上一个 `retireValue` 标记。
+
+[,cpp]
+----
+struct TrackedResource {
+    ResourceHandle handle{}; // your wrapper around vk objects
+    uint64_t       retireValue = 0; // timeline value when last submitted use completes
+};
+
+void destroyWhenSafe(TrackedResource res) {
+    deferredDeletes.push_back(res);
+}
+
+void gc(vk::raii::Device const& device, vk::raii::Semaphore const& timeline) {
+    const uint64_t now = device.getSemaphoreCounterValue(*timeline);
+    auto it = std::remove_if(deferredDeletes.begin(), deferredDeletes.end(), [&](TrackedResource const& r){
+        if (now >= r.retireValue) { destroy(r.handle); return true; }
+        return false;
+    });
+    deferredDeletes.erase(it, deferredDeletes.end());
+}
+----
+
+== 与提交集成
+
+每当你提交引用了某个资源的工作时，就为它打上与这次提交在时间线上所发信号相同的值。
+
+[,cpp]
+----
+const uint64_t submissionValue = nextSubmitValue++;
+submitCommands(cmd, /*signals*/ submissionValue);
+
+TrackedResource tex = createTexture(/*...*/);
+tex.retireValue = submissionValue; // safe to reuse/destroy once reached
+----
+
+这个模式可以扩展到复杂的图。你可以把 `retireValue` 附加到为一帧创建的整组资源上，也可以附加到子系统中（比如上传管理器）的单个分配上。
+
+== Simple Engine：垃圾回收
+
+在 `Simple Engine` 中，我们目前用 `pendingASDeletions` 队列里简单的“销毁后经过的帧数”计数器来处理延迟的资源销毁（该队列位于 `renderer_rendering.cpp`）。这套系统会等待固定帧数（`MAX_FRAMES_IN_FLIGHT + 1`）之后再删除加速结构。虽然安全，但不够精确；如果 GPU 跑得快，资源可能不必要地在内存里多待一段时间。
+
+改用基于时间线的**垃圾回收（GC）**系统后，我们可以高效得多。我们会为每个 `pendingASDeletion`（以及任何其他瞬态资源，比如暂存缓冲区）打上它上次被使用时的准确 `frameTimelineValue`。然后 `Renderer::ProcessDeferredDeletions` 函数会查询当前的 `frameTimeline` 值。如果 GPU 已经达到或超过该标记值，我们就立即删除资源。这确保 GPU 一用完就回收内存，无论当前帧率或 CPU/GPU 负载如何。
+
+== 陷阱与最佳实践
+
+-   别让值泄漏：让 `nextSubmitValue` 保持单调，但让它的含义有界（例如把帧索引和通道索引编码进去），便于调试。
+-   在 `gc()` 中批量删除，避免每帧出现尖峰。
+-   避免针对同一个生命周期决策混用栅栏和时间线，以免出现互相矛盾的状态。
+-   对于外部队列或设备（例如互操作场景），尽可能把它们的完成信号转换到你的时间线域中。
+
+== 导航
+
+上一节：xref:Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc[管理并发帧：重建主循环] | 下一节：xref:Synchronization/Async_Compute_Overlap/01_introduction.adoc[异步计算与执行重叠：让 GPU 并行起来]

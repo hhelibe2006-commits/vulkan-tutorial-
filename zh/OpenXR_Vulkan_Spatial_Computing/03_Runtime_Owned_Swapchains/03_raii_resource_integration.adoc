@@ -1,0 +1,97 @@
+:pp: {plus}{plus}
+= RAII 资源集成
+
+从 OpenXR 拿到原始 `VkImage` 句柄之后，我们需要把它们整合进引擎的资源获取即初始化（**RAII**）框架。我们的引擎使用 `vk::raii` 命名空间，它提供自动管理 Vulkan 对象生命周期的高层 C++ 包装器。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+把运行时拥有的外部资源整合进现代 RAII 框架，需要谨慎处理所有权与析构契约。这是让 Vulkan 与外部系统对接时的常见模式。
+
+== 所有权契约：「借出，而非给予」
+
+当我们从 OpenXR 收到一个 `VkImage` 时，我们是在与 XR 运行时订立一份契约。运行时提供原始图像，是因为它不了解你引擎的具体需求——例如你使用**多视图**时可能需要 `e2DArray` 视图，而简单的引擎可能只想要标准的 `e2D` 视图。
+
+*   **我们可以**：把图像绑定为颜色附件、转换它的布局、创建自己的视图。
+*   **我们不能**：销毁图像、改变它的分配标志、或试图释放它的内存。
+*   **引用计数**：运行时为每张图像维护内部引用计数，等待你通过帧生命周期发出完成信号。
+*   **内存驻留**：运行时确保内存始终驻留在 GPU 上，并处理任何必要的操作系统级「锁定」。
+
+== 非拥有型图像包装器
+
+在 `vulkan-hpp` 中，最简单的处理方式是把 `VkImage` 句柄视为非拥有的 `vk::Image` 对象，并用指定初始化器为每一个创建我们自己的 `vk::raii::ImageView`。
+
+[source,cpp]
+----
+// Wrapping the raw handles into our engine's per-frame data using designated initializers
+struct XrFrameBuffer {
+    vk::Image image; // Non-owning handle
+    vk::raii::ImageView imageView = nullptr; // RAII owned by us
+};
+
+std::vector<XrFrameBuffer> framebuffers;
+for (const auto& xrImg : xrImages) {
+    XrFrameBuffer fb;
+    fb.image = vk::Image(xrImg.image);
+
+    vk::ImageViewCreateInfo viewInfo{
+        .image = fb.image,
+        .viewType = vk::ImageViewType::e2D, // or e2DArray for multiview
+        .format = chosenFormat,
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .levelCount = 1,
+            .layerCount = 1
+        }
+    };
+
+    fb.imageView = vk::raii::ImageView(device, viewInfo);
+    framebuffers.push_back(std::move(fb));
+}
+----
+
+== 与动态渲染集成
+
+由于我们使用的是**动态渲染**（Vulkan 1.3 引入），不需要把这些图像包装进旧的 `VkFramebuffer` 对象。我们可以直接在 `vk::RenderingAttachmentInfo` 中引用 `vk::raii::ImageView`。
+
+[source,cpp]
+----
+// Rendering directly to the XR image using Dynamic Rendering and designated initializers
+vk::RenderingAttachmentInfo colorAttachment{
+    .imageView = *framebuffers[imageIndex].imageView,
+    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .loadOp = vk::AttachmentLoadOp::eClear,
+    .storeOp = vk::AttachmentStoreOp::eStore,
+    .clearValue = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f)
+};
+
+vk::RenderingInfo renderingInfo{
+    .renderArea = renderRect,
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colorAttachment
+};
+
+commandBuffer.beginRendering(renderingInfo);
+----
+
+== 进阶：与外部 API 互操作
+
+虽然图像句柄由 OpenXR 管理，但 Vulkan 的**外部内存**与**外部队列**扩展让你能超越空间标准：
+
+*   **跨 API 共享**：你可以把这些交换链图像与其他 API 共享，例如用 **CUDA** 做高速视觉处理，或用硬件视频解码器做 360 度回放。
+*   **自定义合成**：这种互操作能力让引擎能直接对 XR 运行时正在使用的那块物理内存执行复杂的非空间处理。
+
+== 处理生命周期：混合析构
+
+在我们的引擎架构中，这些 `XrFrameBuffer` 对象在 `XrSwapchain` 存在期间一直存活。当用户关闭应用或切换环境时，我们通过 `xrDestroySwapchain` 销毁 `XrSwapchain`。
+
+这形成一条**混合析构**流程：
+1.  **手动销毁**：`xrDestroySwapchain` 通知运行时可以回收它的 VRAM。
+2.  **RAII 析构**：我们的 `XrFrameBuffer` 结构体离开作用域，其 `vk::raii::ImageView` 成员自动调用 `vkDestroyImageView`。
+3.  **安全**：非拥有的 `vk::Image` 句柄不做任何 Vulkan 调用就消失，履行了我们与运行时的契约。
+
+TIP: 更多细节请参阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#swapchain_images[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc[下一页]

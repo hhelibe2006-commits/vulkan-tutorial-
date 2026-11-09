@@ -1,0 +1,46 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+OpenXR 的动作系统要求我们在 `engine.cpp` 中放弃轮询原始按键（比如 `glfwGetMouseButton`），改用基于意图的抽象输入系统。这一实现的示例见 link:../../../attachments/openxr_engine/xr_context.cpp[xr_context.cpp] 与 link:../../../attachments/openxr_engine/engine.cpp[engine.cpp]。
+
+== 在引擎中映射动作
+
+在 `engine.cpp` 中，我们改写 `Update` 逻辑来处理 OpenXR 动作。我们不再检查某个特定鼠标按键来「投球」（ThrowBall），而是检查「抓取」（Grab）动作。
+
+[source,cpp]
+----
+// engine.cpp
+void Engine::Update(XrTime predictedTime) {
+    if (renderer->IsXrMode()) {
+        auto& xrContext = renderer->GetXrContext();
+
+        // 1. Poll OpenXR action states (Grab, Teleport, etc.)
+        xrContext.pollActions();
+
+        if (xrContext.isActionActive("Grab")) {
+            // 2. Retrieve the spatial pose of the controller (Action Space)
+            XrPosef handPose = xrContext.getActionPose("GrabPose");
+
+            // 3. Convert the XR pose into our engine's 4x4 matrix
+            glm::mat4 handMatrix = xrPoseToMatrix(handPose);
+
+            // Spawn the ball at the controller's exact spatial location
+            ThrowBallFromHand(handMatrix);
+        }
+    } else {
+        // Standard desktop mouse input
+        if (platform->GetMouseButton(1)) {
+            ThrowBall(mouseX, mouseY);
+        }
+    }
+
+    // Standard physics/entity update
+    Update(deltaTimeMs);
+}
+----
+
+== 为什么要做这些改动？
+
+通过把输入与物理硬件（比如某个特定控制器的扳机）解耦，我们的引擎开箱即具备跨平台能力。无论用户用的是 Oculus Touch 控制器还是 Valve Index 的「knuckle」控制器，引擎看到的都只是「抓取」动作及其对应的空间位姿，这让我们可以专注于交互的物理表现，而不必纠结于各种硬件驱动的差异。
+
+xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc[下一页]

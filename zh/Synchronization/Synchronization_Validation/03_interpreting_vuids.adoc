@@ -1,0 +1,40 @@
+:pp: {plus}{plus}
+= 解读 VUID：破解你的危险错误
+
+== VUID 的结构
+
+Vulkan **验证唯一标识符（VUID）**是验证层发现问题时发出的具体错误码。这些 ID（如 `VUID-VkImageMemoryBarrier2-image-01199`）并非随机数字，它们对应 Vulkan 规范中的具体规则。
+
+当同步验证层发现危险时，它会发出类似下面这样的错误消息：
+
+----
+VALIDATION [SYNC-HAZARD-READ-AFTER-WRITE] (0x01234567)
+VUID: VUID-vkCmdDraw-None-07892
+Message: Write-After-Read (WAR) hazard on Image (0x89abcdef) in VkCommandBuffer (0x12345678).
+    - Current Stage: VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+    - Current Access: VK_ACCESS_2_SHADER_READ_BIT
+    - Previous Stage: VK_PIPELINE_STAGE_2_COPY_BIT
+    - Previous Access: VK_ACCESS_2_TRANSFER_WRITE_BIT
+----
+
+== 解读消息
+
+对新手来说，这条消息可能令人不知所措。但如果你把它拆开，它其实精确地告诉了你哪里出了问题：
+
+1.  **危险类型**：`[SYNC-HAZARD-READ-AFTER-WRITE]` 标签告诉你问题的性质。在这个例子里，一次读取发生在之前的一次写入完成之前。
+2.  **资源**：消息指出了具体的资源（`Image (0x89abcdef)`）以及危险发生的命令缓冲区。
+3.  **元凶**：消息列出了「当前」和「先前」的阶段与访问掩码。在这个例子中，片元着色器试图读取一张刚被拷贝操作更新的图像。
+
+== 可执行的修复
+
+一旦你理解了消息在说什么，修复通常很直接：
+
+-   **添加屏障**：如果当前阶段开始读取时前一阶段仍在写入，你就需要在两个阶段之间添加 `vk::ImageMemoryBarrier2`（或 `vk::MemoryBarrier2`），以确保写入已完成且可见。
+-   **精化阶段**：如果你已经有屏障，检查 `srcStageMask` 和 `dstStageMask` 是否正确。你等的是正确的阶段吗？你用的访问掩码对吗？
+-   **检查提交**：如果危险发生在两次不同的提交之间，你是否用了信号量或栅栏来协调它们？
+
+把每个 VUID 当作一次学习机会，你就能系统地提升同步代码的质量与性能。在最后一章，我们会看到如何优化这些模式以获得最大的 GPU 吞吐量。
+
+== 导航
+
+上一页：xref:Synchronization/Synchronization_Validation/02_validation_layer.adoc[验证层：配置你的环境] | 下一页：xref:Synchronization/Profiling_Optimization/01_introduction.adoc[性能分析、批处理与优化：榨取 GPU 性能]

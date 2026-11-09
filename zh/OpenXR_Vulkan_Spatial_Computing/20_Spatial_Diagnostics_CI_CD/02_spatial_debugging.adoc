@@ -1,0 +1,53 @@
+:pp: {plus}{plus}
+= 空间调试：窥探黑盒
+
+调试空间引擎与调试标准的 2D 应用有本质区别。XR 运行时及其内部合成器往往是黑盒，因此很难判断一个渲染错误到底出在你的引擎、OpenXR 握手，还是合成器自身的重投影逻辑里。
+
+== 生态视角
+
+本章属于类别：**使用 Vulkan 与 OpenXR 运行时**。
+
+为空间引擎加上调试标签、并利用 OpenXR 的诊断扩展，是专业开发的标配。你必须用这些工具，在运行时的生态中为应用的行为建立统一视图。
+
+== 概念：对象标记
+
+**XR_EXT_debug_utils** 扩展允许你为 OpenXR 资源「打标签」，功能上等同于 Vulkan 的 `VK_EXT_debug_utils`。通过给**动作集**、**空间**和**交换链**命名，你就能在 RenderDoc 等外部工具里看到这些名字。
+
+[source,cpp]
+----
+// Tagging an OpenXR swapchain using designated initializers
+XrDebugUtilsObjectNameInfoEXT nameInfo{
+    .type = XR_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+    .objectType = XR_OBJECT_TYPE_SWAPCHAIN,
+    .objectHandle = reinterpret_cast<uint64_t>(xrSwapchain),
+    .objectName = "Main World Spatial Swapchain"
+};
+
+// Now, tools like RenderDoc will display this name for the resource
+xrSetDebugUtilsObjectNameEXT(instance, &nameInfo);
+----
+
+启用调试时，运行时往往会激活内部的验证层，确保 `predictedDisplayTime` 之类的参数落在有效范围内。
+
+== 用于空间引擎的 RenderDoc
+
+**RenderDoc** 是 Vulkan 调试的黄金标准，对空间管线提供了极佳的支持：
+
+1.  **多视图检查**：你可以逐个检查多视图交换链的每一层，找出某只眼睛渲染异常的原因。
+2.  **资源状态检查**：你可以验证 `vk::RenderingInfo` 的 `viewMask` 是否正确，以及**同步 2** 的屏障是否在等待正确的阶段。
+3.  **合成器洞察**：一些高级头显允许 RenderDoc 捕获最终经过扭曲与混合的帧，让你看清各层究竟是怎样被处理的。
+
+== 进阶：着色器内部调试与同步验证
+
+Vulkan 允许我们把诊断深度做到标准验证之外：
+
+*   **着色器内部调试**：借助 Vulkan 的 **Debug Printf**，你可以直接从着色器里输出实时数据——例如计算出的 FOV 正切值——从而看清 OpenXR 层看不到的空间管线内部情况。
+*   **追踪跨 API 竞态**：你可以用 Vulkan 的**同步验证**精确检测交换链图像何时同时被引擎和合成器访问，帮助调试闪烁或抖动。
+
+== 帧分析：找出卡顿
+
+单帧丢失就可能造成打断沉浸的「卡顿」。用性能分析工具看看你的**延迟锁存**等待是否耗时过长。大多数运行时提供追踪工具来显示**合成器节奏**，帮你判断是否出现了 GPU 时间不长、却因同步竞态而丢帧的情况。
+
+TIP: 关于调试与验证的更多信息，请查阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_EXT_debug_utils[XR_EXT_debug_utils 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/03_automated_qa.adoc[下一页]

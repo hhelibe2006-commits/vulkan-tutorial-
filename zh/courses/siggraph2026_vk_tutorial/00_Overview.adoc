@@ -1,0 +1,38 @@
+= SIGGRAPH 2026：如何在 2026 年编写 Vulkan 应用
+
+== 概览
+
+欢迎！在本系列中，我们将讲解如何使用新的 Vulkan 扩展以及截至 2026 年 Khronos 推荐的最佳实践来编写 Vulkan 渲染器。本教程使用着色器对象、动态渲染和描述符堆技术，基于我们在 SIGGRAPH 2026 的课程 "How to write a Vulkan application in 2026"。
+
+'''
+
+* **幻灯片**：link:/attachments/How_to_write_a_Vulkan_application_in_2026.pdf[How to write a Vulkan application in 2026]。
+* **源代码**：link:https://github.com/KhronosGroup/Vulkan-Tutorial/tree/main/attachments/siggraph2026_vk_tutorial[attachments/siggraph2026_vk_tutorial]。
+
+'''
+
+到结束时，你将学会如何：
+
+- 使用最新的扩展设计和实现 2026 年的 Vulkan 应用。
+- 通过识别遗留的 Vulkan 1.0 模式并用更简单的替代方案替换，使现有的 Vulkan 应用现代化。
+- 评估哪些 Vulkan 扩展适合简化应用设计并提升开发者生产力。
+- 区分传统做法与推荐的 Vulkan 做法，理解哪些技术应当避免以及为什么。
+- 使用描述符堆、动态渲染及相关扩展等较新的 Vulkan 特性。
+
+*请在 SIGGRAPH 2026 与我们见面*：
+
+SIGGRAPH 页面：
+- https://s2026.conference-schedule.org/presentation/?id=gensub_276&sess=sess202
+
+会话详情（摘自 SIGGRAPH 日程列表）：
+
+- 课程标题：How to write a Vulkan application in 2026
+- 课程日期与时间：2026 年 7 月 22 日星期三，9:00 AM–12:15 PM PDT
+- 课程地点：Petree D
+- 兴趣领域：游戏与互动
+- 关键词：教育、游戏、实时、渲染
+
+*前置条件*：
+本课程主要面向几乎没有 Vulkan 经验的开发者。目标读者是有一定计算机图形学背景的程序员，他们可能具备 OpenGL 或 DirectX 等 API 的使用经验，并希望入门 Vulkan。
+
+我们期望你熟悉 C++。对图形编程概念（例如着色器、渲染管线）有一定了解会有帮助，但并非严格要求，因为课程会在 Vulkan 的语境中讲解这些主题。

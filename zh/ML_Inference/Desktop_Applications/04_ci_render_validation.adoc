@@ -1,0 +1,587 @@
+:pp: {plus}{plus}
+
+= CI/CD 渲染验证
+:stem: latexmath
+
+你终于完成了自己的 Vulkan 渲染器。它在你的高端开发机上看起来很美：光照恰到好处，纹理清晰锐利，帧率顺滑流畅。可当你推送代码时，持续集成（Continuous Integration，CI）流水线却失败了。更糟的是，它通过了，但同事拉取你的分支后只看到一片黑屏，原因是你没有考虑到某个细微的驱动程序差异。
+
+我们究竟怎样才能*知道*渲染器在不同硬件和驱动程序上都能正常工作？传统单元测试看不到你的屏幕。逐像素比较以脆弱著称——只要有一个像素的偏移，或不同驱动程序中颜色出现微小变化，就可能触发误报。
+
+本章我们要构建一条更聪明的验证流水线。我们会超越简单的「这个像素是否完全相同？」式测试，运用已经学过的 ML 技术，构建一个能理解自己*看到什么*的系统。
+
+== 为什么标准测试无法胜任图形
+
+如果你曾尝试为渲染器编写测试，很可能遇到过「黄金图像」问题。你保存一张「完美」截图，之后每次渲染都拿它来比较。这在下列情况出现之前一直很好用：
+
+*   **分辨率漂移**：你改变了 UI 缩放比例，于是每个像素都突然略有不同。
+*   **驱动抖动**：你更新了 GPU 驱动，抗锯齿的实现改变了它的子像素采样模式。
+*   **无头环境不一致**：你在 CI 中运行于软件渲染器（如 SwiftShader），它的光栅化器可能使用与你 NVIDIA 或 AMD 硬件不同的浮点舍入方式。
+
+突然之间，你有了成千上万个「失败」的测试，而它们在肉眼看来完全一样。这被称为**判定问题（Oracle Problem）**——看出图像有问题很容易，但要为每个像素写出一条定义「正确性」的数学规则却极其困难。
+
+要解决这个问题，我们需要一套分层验证体系，为每种任务选用合适的工具。
+
+== 以人为本的测试分层
+
+想想人类测试员会怎样验证你的应用。他们不会去数每个像素，而会问：
+
+1.  **屏幕上有没有东西？**（健全性检查）
+2.  **我能看清菜单吗？**（功能验证）
+3.  **场景看起来「对」吗？**（语义验证）
+
+我们的 CI 流水线会照搬这个思路，从快速廉价的检查逐步过渡到更精细的 ML 分析。
+
+.图形验证的分层结构
+image::images/ML_Inference/Desktop_Applications/validation_hierarchy.svg[展示健全性、功能与语义三级验证的金字塔图,600]
+
+*   **第 1 级：「别慌」健全性检查。** 我们会使用高容差的像素比较和 **LPIPS**，在毫秒级时间内捕获灾难性故障（黑屏、白屏或雪花）。
+*   **第 2 级：用 OCR 读取 UI。** 我们会用光学字符识别来确保文字不只是被渲染出来，而是真正清晰可读，并且被限制在各自的框内。
+*   **第 3 级：用 ML 做语义验证。** 我们会用一个轻量级分类器——类似于为 MNIST 和 ImageNet 构建的那个——来检测特定的渲染瑕疵，例如 Z-fighting（深度冲突）、纹理丢失或光照错误。
+
+到本章结束时，你将拥有一条流水线：它不只检查代码能否编译，而是真正「看见」应用是否正常工作。
+
+== 搭好舞台：CI 中的无头 Vulkan
+
+在验证渲染结果之前，我们需要能够在不接显示器的情况下渲染。GitHub Actions 和其他 CI 运行器本质上都是「无头」服务器，既没有 GPU，也没有显示输出。
+
+为此，我们会使用**软件渲染器**。这是 Vulkan API 基于 CPU 的实现。它慢得无法用于游戏，但对 CI 来说再合适不过，因为它是确定性的——在每台机器上都应产生完全相同的结果。
+
+=== 准备工具
+在基于 Linux 的 CI 运行器上，我们通常使用 **SwiftShader**（由 Google 开发）或 **LavaPipe**（Mesa 项目的一部分）。SwiftShader 因其在受限环境中的稳定性而常常更受青睐。
+
+[source,yaml]
+----
+# Example GitHub Actions snippet
+- name: Install Vulkan and SwiftShader
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y vulkan-tools libvulkan-dev
+
+    # Download SwiftShader
+    wget https://github.com/google/swiftshader/releases/download/latest/swiftshader-linux-x64.tar.gz
+    tar xzf swiftshader-linux-x64.tar.gz
+
+    # Point Vulkan to the software renderer
+    echo "VK_ICD_FILENAMES=$PWD/swiftshader/vk_swiftshader_icd.json" >> $GITHUB_ENV
+----
+
+=== 为无头世界编写代码
+在主应用中，你通常会创建 `VkSurfaceKHR` 来连接窗口。在 CI 中，我们完全跳过表面，直接渲染到「离屏帧缓冲区」。
+
+下面是我们如何改造 `HeadlessVulkanApp` 类，让它在没有窗口的情况下工作：
+
+[source,cpp]
+----
+// Simplified HeadlessVulkanApp focusing on the offscreen setup
+class HeadlessVulkanApp {
+public:
+    HeadlessVulkanApp(uint32_t width, uint32_t height) : width_(width), height_(height) {
+        // Standard Vulkan setup (Instance, Device, etc.) omitted for brevity
+        setupVulkanHeadless();
+        createFramebuffer();
+    }
+
+    void createFramebuffer() {
+        // Create offscreen image (no swapchain needed)
+        vk::ImageCreateInfo imageInfo{
+            .imageType = vk::ImageType::e2D,
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .extent = {width_, height_, 1},
+            .tiling = vk::ImageTiling::eLinear,  // Linear for easy CPU readback
+            .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc,
+            // ...
+        };
+        framebufferImage_ = device_.createImage(imageInfo);
+
+        // Allocate and bind host-visible memory for direct CPU access
+        // (In a real app, you'd use a more efficient staging buffer approach)
+        auto memReqs = framebufferImage_.getMemoryRequirements();
+        allocateAndBindMemory(framebufferImage_, vk::MemoryPropertyFlagBits::eHostVisible);
+    }
+
+    std::vector<uint8_t> readFramebuffer() {
+        void* mapped = framebufferMemory_.mapMemory(0, imageSize_);
+        std::vector<uint8_t> pixels(imageSize_);
+        std::memcpy(pixels.data(), mapped, imageSize_);
+        framebufferMemory_.unmapMemory();
+        return pixels;
+    }
+
+    // ... rendering and boilerplate omitted ...
+};
+----
+
+这段代码创建了一个不依赖任何窗口系统的 Vulkan 上下文，渲染到离屏图像，并提供回读以便验证。完整实现（包括标准的实例和设备创建）可以在 `ci_render_validation.cpp` 附件中找到。
+
+== 第 1 级：用 LPIPS 看整体
+
+在深入细节、验证具体 UI 元素或纹理之前，我们需要一种方法来回答一个简单的问题：「这看起来还是同一个应用吗？」
+
+如果你做过图形方面的工作，就会知道简单的均方误差（Mean Squared Error，MSE）比较简直是噩梦。如果由于某个时序上的偶然因素，你的立方体旋转角度稍有不同，或者某个驱动使用了略有差异的抗锯齿核，MSE 就会飙升——尽管图像在你看来完全一样。
+
+=== 感知差异
+
+传统的像素比较把图像当作一张数字表格。只要有一个数字变了，测试就失败。
+
+**LPIPS（Learned Perceptual Image Patch Similarity，学习型感知图像块相似度）** 则像人眼一样对待图像。它使用预训练的神经网络（如 VGG 或 AlexNet）提取特征，寻找「狗的特征」「边缘的特征」和「纹理的特征」。
+
+如果高层特征吻合，两张图像在感知上就是相似的，即使像素在数学意义上并不完全相同。
+
+.LPIPS 感知相似度机制
+image::images/ML_Inference/Desktop_Applications/lpips_diagram.svg[展示参考图像与测试图像如何通过特征图进行比较的 LPIPS 示意图,800]
+
+=== 为什么特征图胜过像素
+
+当图像经过 CNN（正如我们在第 2 章学到的），每一层都会生成一张**特征图（Feature Map）**。
+
+1.  **浅层**：捕获边缘和颜色。
+2.  **中层**：捕获纹理和形状。
+3.  **深层**：捕获语义对象。
+
+LPIPS 会分别从「黄金」图像和「测试」图像中，取预训练网络多个层的特征图，然后计算这些特征图之间的距离。
+
+[latexmath]
+++++
+d(x, x_0) = \sum_l \frac{1}{H_l W_l} \sum_{h,w} || w_l \odot (\hat{y}^l_{h,w} - \hat{y}^l_{0,h,w}) ||^2_2
+++++
+
+这个距离 latexmath:[d] 就是我们的相似度分数。
+
+*   **latexmath:[d \approx 0]**：感知上完全相同。
+*   **latexmath:[d < 0.1]**：轻微变化（例如不同的抗锯齿）。
+*   **latexmath:[d > 0.3]**：出了问题（例如纹理错误、对象缺失）。
+
+=== 实现 LPIPS
+我们可以用与图像分类器相同的 ONNX Runtime 环境来运行 LPIPS。给它输入两张图像——当前渲染结果和「黄金」参考图——它会返回一个距离分数。分数接近 0 表示两者看起来一样；高于 0.3 通常意味着有严重问题。
+
+[source,cpp]
+----
+class LPIPSValidator {
+public:
+    // ... setup and ONNX session initialization ...
+
+    float computeSimilarity(const std::vector<uint8_t>& img1, const std::vector<uint8_t>& img2) {
+        // Preprocess: convert RGBA to RGB and normalize to [-1, 1]
+        auto tensor1 = preprocessImage(img1);
+        auto tensor2 = preprocessImage(img2);
+
+        // Run LPIPS ONNX model
+        auto outputs = session_.Run(Ort::RunOptions{nullptr}, inputNames, inputs.data(), 2, outputNames, 1);
+
+        // Return the perceptual distance (lower is more similar)
+        return outputs[0].GetTensorMutableData<float>()[0];
+    }
+};
+
+bool testSanityCheck() {
+    HeadlessVulkanApp app(800, 600);
+    auto pixels = app.readFramebuffer();
+    auto reference = loadReferenceImage("references/main_menu.png");
+
+    LPIPSValidator validator("models/lpips_vgg.onnx");
+    float lpips = validator.computeSimilarity(pixels, reference);
+
+    if (lpips > 0.15f) {
+        std::cerr << "Sanity check FAILED: LPIPS distance " << lpips << " > 0.15\n";
+        return false;
+    }
+    return true;
+}
+----
+
+=== 获取 LPIPS 模型
+
+下载 ONNX 格式的预训练 LPIPS 模型：
+
+[source,bash]
+----
+# Option 1: Use pre-converted LPIPS-VGG model
+wget https://github.com/richzhang/PerceptualSimilarity/releases/download/v0.1/lpips_vgg.onnx \
+     -O models/lpips_vgg.onnx
+
+# Option 2: Convert from PyTorch yourself
+python3 << 'EOF'
+import torch
+import lpips  # pip install lpips
+
+# Load pre-trained LPIPS model
+model = lpips.LPIPS(net='vgg', version='0.1')
+model.eval()
+
+# Export to ONNX
+dummy_img1 = torch.randn(1, 3, 224, 224)
+dummy_img2 = torch.randn(1, 3, 224, 224)
+
+torch.onnx.export(
+    model,
+    (dummy_img1, dummy_img2),
+    'models/lpips_vgg.onnx',
+    input_names=['input0', 'input1'],
+    output_names=['output'],
+    dynamic_axes={
+        'input0': {0: 'batch', 2: 'height', 3: 'width'},
+        'input1': {0: 'batch', 2: 'height', 3: 'width'}
+    }
+)
+print("LPIPS model exported to lpips_vgg.onnx")
+EOF
+----
+
+=== 为什么选择 LPIPS 而不是简单的像素比较
+
+**传统 MSE 会失败：**
+
+[source]
+----
+Reference: Cube rotated 0°
+Test:      Cube rotated 1° (due to timing differences)
+MSE:       High - thousands of pixels differ
+Human:     Looks identical
+Result:    False positive failure
+----
+
+**LPIPS 则成功：**
+
+[source]
+----
+Reference: Cube rotated 0°
+Test:      Cube rotated 1°
+LPIPS:     0.03 - features are nearly identical (shape, lighting, texture)
+Human:     Looks identical
+Result:    Pass
+----
+
+**两者都能抓出真正的 bug：**
+
+[source]
+----
+Reference: Cube with brick texture
+Test:      Cube with checkerboard texture (wrong texture loaded)
+MSE:       High
+LPIPS:     0.45 - features differ significantly (texture pattern changed)
+Human:     Obviously wrong
+Result:    Correctly fails
+----
+
+=== 性能考量
+
+LPIPS 比像素比较慢（20-30 ms 对 1 ms），但对 CI 来说仍然足够快：
+
+- 简单像素检查：1-2 ms（用于黑屏这类灾难性故障）
+- LPIPS 检查：20-30 ms（用于感知相似度）
+- OCR 文字检查：100-200 ms（用于文本验证）
+- 完整 ML 验证：50-100 ms（用于复杂语义检查）
+
+你可以把两者组合起来以获得最佳速度：
+
+[source,cpp]
+----
+bool testSanityCheckOptimized() {
+    HeadlessVulkanApp app(800, 600);
+    auto pixels = app.readFramebuffer();
+    auto reference = loadReferenceImage("references/main_menu.png");
+
+    // Level 1a: Quick pixel check (< 1ms)
+    // Catches black screens or catastrophic corruption instantly
+    if (countDrasticDifferences(pixels, reference) > threshold) {
+        return false;
+    }
+
+    // Level 1b: LPIPS for perceptual similarity (~30ms)
+    LPIPSValidator validator("models/lpips_vgg.onnx");
+    return validator.computeSimilarity(pixels, reference) < 0.15f;
+}
+----
+
+这样能在 1 ms 内捕获明显故障，再用 30 ms 验证感知相似度，总共 31 ms——对 CI 来说可以接受。
+
+== 第 2 级：真正读取 UI
+
+LPIPS 检查告诉我们场景看起来「大致正确」。但如果「提交」按钮是空白的呢？如果字体渲染坏了，文字变成一排「豆腐块」（缺字方框）呢？只要整体颜色和形状相似，LPIPS 可能就抓不到这些问题。
+
+为解决这个问题，我们将使用**基于 ML 的光学字符识别（Optical Character Recognition，OCR）**。
+
+=== OCR 流水线：检测 + 识别
+
+现代 OCR 并非单个「黑箱」，而是一个两阶段过程。
+
+==== 1. 文本检测（「哪里」）
+像 **EAST**（Efficient and Accurate Scene Text detector）或 **CRAFT** 这样的模型会观察完整的 1080p 画面，输出一串它「认为」有文字的边界框。此时它还不知道文字内容，只是找出这些「斑块」。
+
+==== 2. 文本识别（「是什么」）
+我们取出这些边界框，从主图像中裁剪出来，送入第二个模型，例如 **CRNN**（Convolutional Recurrent Neural Network，卷积循环神经网络）。
+
+*   **CNN 部分**：提取字母的视觉特征。
+*   **RNN 部分**：理解字符序列（例如「S」后面是「u」，再后面是「b」……）。
+
+=== 找到边界框
+在 Vulkan 应用中，根据 UI 布局代码，我们通常知道按钮*应该*在哪里。但我们的目标是验证文字确实渲染在了那个按钮*内部*。我们先让检测模型找出渲染结果中所有的文字「斑块」。
+
+[source,cpp]
+----
+struct TextMatch {
+    std::string text;
+    Rect bounds;
+};
+
+class OCRValidator {
+public:
+    std::vector<TextMatch> detectAndRead(const std::vector<uint8_t>& pixels) {
+        // 1. Detect: Find all bounding boxes containing text
+        // (Using an ONNX model like EAST)
+        std::vector<Rect> boxes = textDetector_.findBoxes(pixels);
+        std::vector<TextMatch> results;
+
+        for (const auto& box : boxes) {
+            // 2. Recognize: Convert the pixels in this box to a string
+            // (Using an ONNX model like CRNN)
+            auto cropped = cropPixels(pixels, box);
+            std::string text = textRecognizer_.read(cropped);
+            results.push_back({text, box});
+        }
+        return results;
+    }
+};
+----
+
+=== 验证布局（文本适配）
+接下来是关键检查：文字放得下吗？UI 开发中一个常见的 bug 是文字「溢出」容器，在本地化为更长的语言（如德语）或更换字体时尤其如此。
+
+我们的验证方式是：把**检测到的边界框**（像素实际出现的区域）与**预期的 UI 框**（布局中指定的区域）进行比较。
+
+[source,cpp]
+----
+bool validateTextFitting(const TextMatch& detected, const Rect& expectedUIBox) {
+    // Check if the detected text is entirely contained within the expected box
+    bool isInside = expectedUIBox.contains(detected.bounds);
+
+    // Check for "legibility margin" - text shouldn't be touching the very edge.
+    // We expect at least a 2-pixel gap on all sides.
+    bool hasMargin = expectedUIBox.width > (detected.bounds.width + 4) &&
+                     expectedUIBox.height > (detected.bounds.height + 4);
+
+    return isInside && hasMargin;
+}
+----
+
+这种方法比单纯检查按钮是否存在强大得多。它会验证：
+
+*   **语义内容**：文字是「提交」，而不是「错误」或「???」
+*   **布局完整性**：文字居中且被完整容纳（没有被按钮边缘裁掉）。
+*   **可读性**：如果 ML 模型都读不出来，你的用户多半也读不出来。
+
+通过使用我们自己的基于 ONNX 的推理，CI 流水线保持自包含，并专注于 ML 原理。
+
+== 第 3 级：语义验证（「视觉感知」）
+
+最后，我们来到流水线中最先进的层级。有时，一次渲染在像素和文字上都「正确」，但在语义上是「错误」的。
+
+例如，假设你的着色器有个 bug 导致 **Z-fighting**（深度冲突）——两个表面处于完全相同的深度时出现的闪烁效果。对像素比较器来说，那只是一些噪声；对 OCR 来说，它无关紧要；但对人来说，这是明显的 bug。
+
+再想想纹理丢失的情况。模型渲染出来了，形状也对，但它是亮洋红色。
+
+为了抓住这些问题，我们训练一个定制的轻量级 CNN。它不像 MobileNet 那样是庞大的 1000 类分类器，而是一名专科医生。你用自己应用中的几百张「好」渲染和「坏」渲染来训练它，它会学习你这个游戏或应用*应该*是什么样子。
+
+=== 打造专科模型
+因为这个模型只需要了解*你的*应用，所以它可以非常小——只有几层。这让它在 CI 中运行得极快。
+
+[source,python]
+----
+# Simpler, faster model than before - just needs to detect "broken" vs "correct"
+import torch
+import torch.nn as nn
+
+class FastRenderValidator(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Lightweight architecture - only 3 conv layers
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 5, stride=2, padding=2),  # 800x600 -> 400x300
+            nn.ReLU(),
+            nn.MaxPool2d(2),  # 400x300 -> 200x150
+
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),  # 200x150 -> 100x75
+
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((8, 8)),  # 100x75 -> 8x8
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 2)  # Binary: correct=0, broken=1
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+----
+
+这个模型小得多（500 KB 对 50 MB），运行只需 20-30 ms，并且专门训练用来检测你应用的渲染 bug。
+
+=== 构建活的训练数据集
+
+ML 工程中一个常见错误，是以为必须在开始之前就准备好「完美」的数据集。实际上，最鲁棒的验证器是迭代构建出来的。我们提倡一种叫做**bug 收集（Bug Harvesting）**的流程。
+
+与其猜测什么可能出问题，不如用你已有的数据来训练。当发现新 bug 时——无论是由开发者还是自动化测试发现——你捕获那个特定的「损坏」状态，加入训练集，再重新训练模型。随着时间推移，你的 AI 自然就积累起一个库，里面正是你想要防止的那些故障。
+
+==== 阶段 1：「冷启动」（合成诱导）
+刚开始时，你可能还没有真实 bug 的库。为了让模型起步，可以使用**合成诱导（Synthetic Induction）**：你用脚本让 Vulkan 渲染器故意生成「坏」数据：
+
+*   **Z-fighting**：在顶点着色器中强制两个重叠平面拥有完全相同的 `z` 坐标。
+*   **纹理丢失**：绑定一张 1×1 的亮洋红色纹理，而不是真实资产。
+*   **着色器损坏**：向 `.slang` 或 `.glsl` 着色器中注入一小段代码，随机翻转颜色或把光照贡献清零。
+*   **剔除问题**：在本该启用背面剔除的地方禁用它，制造「透视」几何体。
+
+这能让模型对「损坏」的样子形成「基线」认知。由于几何体在技术层面仍然正确，简单的像素测试可能漏掉这些问题，但 CNN 会很快学会 Z-fighting 的高频图案，或者洋红色错误纹理特有的色相。
+
+=== 关于过拟合的提醒
+
+CI 验证中一个常见的陷阱是**对黄金图像过拟合**。如果你只用一个特定相机角度训练模型，它就会认为其他任何角度都是「损坏」的。
+
+要构建鲁棒的验证器：
+
+1.  **变化相机**：在收集数据时对视图投影矩阵做轻微随机化。
+2.  **变化光照**：改变太阳位置或光强。
+3.  **使用数据增强**：如第 2 章所学，对训练样本施加随机裁剪和噪声。
+
+你的目标是训练一个理解「正常渲染」这一**概念**的模型（针对你的具体应用），而不是一个只会记住某张截图的模型。
+
+=== 训练与导出
+
+有了数据集，训练 `FastRenderValidator` 就是一项标准的 PyTorch 任务。由于这是二分类任务（损坏 vs. 正确）且领域很窄，通常 10 分钟内就能收敛。
+
+[source,python]
+----
+# Simple training loop snippet
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.CrossEntropyLoss()
+
+for epoch in range(10):
+    for images, labels in dataloader:
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+# Export to ONNX for CI use
+dummy_input = torch.randn(1, 3, 224, 224)
+torch.onnx.export(model, dummy_input, "models/semantic_validator.onnx",
+                  input_names=['input'], output_names=['output'])
+----
+
+=== 将专科模型集成到 C{pp}
+
+导出之后，我们用 ONNX 推理引擎执行语义检查。在 CI 流水线中，我们在快速的健全性检查和 OCR 检查通过之后才调用它。
+
+[source,cpp]
+----
+class SemanticValidator {
+public:
+    SemanticValidator(const std::string& modelPath) : session_(env_, modelPath.c_str(), options_) {}
+
+    bool isRenderCorrect(const std::vector<uint8_t>& pixels) {
+        // 1. Preprocess: resize to 224x224 and normalize
+        std::vector<float> input = preprocess(pixels);
+
+        // 2. Run inference
+        auto outputTensors = session_.Run(Ort::RunOptions{nullptr}, ...);
+
+        // 3. Interpret results: Argmax of [correct_score, broken_score]
+        float* results = outputTensors[0].GetTensorMutableData<float>();
+        return results[0] > results[1]; // Index 0 is 'Correct'
+    }
+};
+----
+
+== 完整的 CI 测试流水线
+
+把它们组合起来：
+
+[source,cpp]
+----
+int main() {
+    try {
+        std::cout << "=== Vulkan Render Validation ===\n\n";
+
+        // Level 1: Fast sanity check (1-2ms)
+        std::cout << "Running sanity check...\n";
+        if (!testSanityCheck()) {
+            std::cerr << "FAILED: Sanity check - render is completely broken\n";
+            return 1;
+        }
+        std::cout << "PASSED: Sanity check\n\n";
+
+        // Level 2: Text validation (100-200ms)
+        std::cout << "Running text validation...\n";
+        if (!testUITextValidation()) {
+            std::cerr << "FAILED: Text validation - UI text incorrect or clipped\n";
+            return 1;
+        }
+        std::cout << "PASSED: Text validation\n\n";
+
+        // Level 3: ML semantic validation (50-100ms)
+        std::cout << "Running semantic validation...\n";
+        if (!testSemanticCorrectness()) {
+            std::cerr << "FAILED: Semantic validation - rendering anomaly detected\n";
+            return 1;
+        }
+        std::cout << "PASSED: Semantic validation\n\n";
+
+        std::cout << "=== All tests PASSED ===\n";
+        return 0;
+
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: " << e.what() << "\n";
+        return 1;
+    }
+}
+----
+
+GitHub Actions 工作流：
+
+[source,yaml]
+----
+- name: Run render validation tests
+  run: |
+    cd build
+
+    # Run with SwiftShader
+    ./render_validation_tests
+
+    # If tests generated diff images, upload as artifacts
+    if [ -d test_output ]; then
+      echo "Test failures detected - check artifacts"
+    fi
+
+- name: Upload test artifacts on failure
+  if: failure()
+  uses: actions/upload-artifact@v3
+  with:
+    name: render-test-failures
+    path: build/test_output/
+----
+
+== 小结
+
+实用的 CI/CD 渲染验证使用三种互补的方法：
+
+**快速像素比较**：毫秒级捕获灾难性故障，并能容忍细微的驱动差异。
+
+**基于 OCR 的文本验证**：用专门的 ML 模型（检测 + 识别）真正读取 UI 文本，验证内容符合预期，并且完整落在框内、没有被裁切。
+
+**ML 语义验证**：当像素比较过于脆弱时，用轻量级分类器检测特定的渲染问题。
+
+**无头 Vulkan 环境**：在 GitHub Actions 中配合 SwiftShader 或 LavaPipe 软件渲染器即可工作，无需 GPU。
+
+这种组合提供了鲁棒的测试：快速检查快速失败，文本验证保证 UI 可读，ML 验证则能在不同环境中捕获语义层面的渲染问题。
+
+xref:ML_Inference/Desktop_Applications/03_practical_implementation.adoc[上一篇：CPU 基准实现] | xref:ML_Inference/Desktop_Applications/05_real_time_camera.adoc[下一篇：实时相机集成]

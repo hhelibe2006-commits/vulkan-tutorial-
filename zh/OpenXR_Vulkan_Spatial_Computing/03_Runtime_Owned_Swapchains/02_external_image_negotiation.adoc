@@ -1,0 +1,82 @@
+:pp: {plus}{plus}
+= 外部图像协商
+
+在标准 Vulkan 应用中，我们用 `vkCreateSwapchainKHR` 创建绑定到表面的交换链。在 OpenXR 中，我们用一个全新的机制 `XrSwapchain` 取代整套流程。缓冲区不再由操作系统的窗口系统管理，而是由 **XR 运行时**充当我们的交换链提供者。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+反转交换链的所有权是 OpenXR 要求的一项根本性架构变化。你必须与运行时协商，取回供引擎渲染的图像。
+
+== 控制反转：交换链提供者
+
+要理解这次协商，你必须转变思路。在桌面应用中，*你*创建交换链，操作系统*消费*它。在 OpenXR 中，**运行时充当交换链提供者**，它创建图像并「借」给你。
+
+*   **VRAM 分配**：运行时分配 VRAM 并管理内存布局，确保图像被分配在引擎与合成器进程都可见的内存区域中。
+*   **内存平铺与对齐**：运行时为其内部合成器选择最优的平铺与对齐方式，确保能以最大带宽读取你的帧。
+*   **效率**：通过直接提供图像，运行时可以实现**零拷贝**交接。你渲染完成后，运行时拿到的正是同一块内存，并用于最终的合成通道。
+
+== 枚举交换链格式
+
+第一步是用 `xrEnumerateSwapchainFormats` 查询运行时支持的 `VkFormat` 列表。
+
+[source,cpp]
+----
+uint32_t formatCount = 0;
+xrEnumerateSwapchainFormats(xrSession, 0, &formatCount, nullptr);
+std::vector<int64_t> formats(formatCount);
+xrEnumerateSwapchainFormats(xrSession, formatCount, &formatCount, formats.data());
+----
+
+值得注意的是，OpenXR 以 `int64_t` 值返回这些格式，我们必须把它转换成 `VkFormat`（在 RAII 引擎中是 `vk::Format`）。通常我们想要高动态范围（**HDR**）格式，例如 `VK_FORMAT_R16G16B16A16_SFLOAT`，或者标准的 **SRGB** 格式，例如 `VK_FORMAT_R8G8B8A8_SRGB`。
+
+**进阶：处理格式与用法限制**：
+虽然 OpenXR 把可用交换链格式限定在一个特定的枚举列表中，但 Vulkan 允许你走得更远：
+*   **自定义内部格式**：你可以渲染到自定义的内部格式（例如高度优化的压缩格式），然后在最后一刻执行一次**图像拷贝**或**位块传输**到 OpenXR 支持的交换链上。
+*   **存储图像用法**：某些运行时可能不支持对其交换链图像使用 `VK_IMAGE_USAGE_STORAGE_BIT`。这种情况下，你可以用 Vulkan 单独创建一张存储图像，完成计算工作，再把结果拷贝进 XR 交换链。
+
+== 创建 XrSwapchain
+
+选定格式后，我们用指定初始化器填充 `XrSwapchainCreateInfo` 结构体。
+
+[source,cpp]
+----
+XrSwapchainCreateInfo createInfo{
+    .type = XR_TYPE_SWAPCHAIN_CREATE_INFO,
+    .format = chosenVulkanFormat,
+    .sampleCount = 1,
+    .width = viewWidth,
+    .height = viewHeight,
+    .faceCount = 1,
+    .arraySize = 1, // 1 for standard mono/stereo, more for multiview
+    .mipCount = 1
+};
+
+XrSwapchain xrSwapchain;
+xrCreateSwapchain(xrSession, &createInfo, &xrSwapchain);
+----
+
+== 取回原始图像
+
+创建 `XrSwapchain` 之后，我们需要拿到实际的 `VkImage` 句柄，以便把它们包装进引擎的抽象中。我们用 `xrEnumerateSwapchainImages` 取回一个 `XrSwapchainImageVulkanKHR` 结构体数组。
+
+[source,cpp]
+----
+uint32_t imageCount = 0;
+xrEnumerateSwapchainImages(xrSwapchain, 0, &imageCount, nullptr);
+std::vector<XrSwapchainImageVulkanKHR> xrImages(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+xrEnumerateSwapchainImages(xrSwapchain, imageCount, &imageCount, (XrSwapchainImageBaseHeader*)xrImages.data());
+----
+
+每个 `XrSwapchainImageVulkanKHR` 都包含一个 `VkImage` 句柄。正是这些句柄会被送入引擎的 RAII 系统。
+
+== 为什么「零拷贝」重要：合成器管线
+
+以这种方式协商图像，我们保证了**零拷贝**交接。渲染完成后，我们不把帧拷贝到单独的缓冲区，而只是通知运行时我们对它的图像用完了。运行时随后拿到同一块内存，用于最终合成通道（畸变校正、色差校正等）。
+
+这种效率正是高性能 90Hz 体验与卡顿难受的体验之间的差别。下一节我们将看到，如何把这些原始 Vulkan 句柄包装进引擎的 `vk::raii` 抽象中。
+
+TIP: 更多细节请参阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#xrEnumerateSwapchainFormats[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc[下一页]

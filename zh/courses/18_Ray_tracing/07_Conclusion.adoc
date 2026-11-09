@@ -1,0 +1,31 @@
+= 结语
+
+在本课程中，你使用动态渲染和光线查询，将光线追踪效果集成到了 Vulkan 光栅化管线中。让我们总结关键要点：
+
+- *动态渲染*：简化了渲染通道的设置，如今是 Vulkan 中开始渲染的首选方式。我们通过 RenderDoc 验证了它的用法。特别是在移动端，当它与本地附件读取的扩展结合使用时，更是一大助力。
+
+- *加速结构*：我们根据加载的模型创建了 BLAS 和 TLAS。借助 Nsight Graphics，我们确认这些结构被正确构建。
+
+- *用于阴影的光线查询*：我们在片元着色器中投射阴影光线。最初只考虑不透明几何体，之后通过手动检查交点的纹理 alpha，将其细化为能处理带 alpha 测试的透明度。
+
+- *用于反射的光线查询*：作为附加内容，我们发射了反射光线，并用命中结果调制反射材质的片元颜色。这复用了同一个加速结构，也使用了类似的 `Proceed()` 循环逻辑。你可以想象把它扩展到折射、环境光遮蔽光线等。
+
+希望这个实验让你亲手体验了使用 Vulkan 最新特性的混合渲染。祝你在 Vulkan 中渲染愉快，也祝你在自己的应用中创造更高级的光线追踪效果！
+
+== 参考资料
+
+- 在 https://github.com/KhronosGroup/Vulkan-Tutorial 完成完整的 Vulkan 教程
+- 在 https://www.khronos.org/vulkan 查找更多 Vulkan 文档与资源
+- 阅读 Arm 的 Vulkan 最佳实践指南：https://developer.arm.com/mobile-graphics-and-gaming/vulkan-api-best-practices-on-arm-gpus
+- 下载 RenderDoc：https://github.com/baldurk/renderdoc
+- 下载 NVIDIA Nsight Graphics：https://developer.nvidia.com/nsight-graphics
+- 在 https://shader-slang.org 进一步了解 Slang 着色语言
+
+3D 资源由 Poly Haven 提供，并使用 Blender 组合：
+
+- https://polyhaven.com/a/nettle_plant
+- https://polyhaven.com/a/potted_plant_02
+- https://polyhaven.com/a/wooden_picnic_table
+
+== 导航
+- 上一篇：xref:./06_Reflections.adoc[光线查询反射]

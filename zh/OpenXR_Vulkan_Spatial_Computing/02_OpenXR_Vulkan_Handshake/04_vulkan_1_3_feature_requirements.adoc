@@ -1,0 +1,82 @@
+:pp: {plus}{plus}
+= Vulkan 1.3 特性要求
+
+空间握手的最后一步，是确保我们的 `VkDevice` 以正确的特性集合初始化。虽然 OpenXR 在技术上也能运行在较旧的 Vulkan 版本上，但 **Vulkan 1.3** 规范是现代空间计算的「黄金标准」。它把若干原本可选的扩展纳入核心 API，提供了一条有保证的高性能工具基线。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+启用时间线信号量、动态渲染这类现代 Vulkan 特性，对于构建符合 OpenXR 最佳实践的低延迟空间管线至关重要。
+
+== 1. 时间线信号量：异步的心跳
+
+在标准应用中，我们用二元信号量来同步 GPU。二元信号量就像一次性的「通行」信号。而在 XR 中，CPU 模拟、GPU 渲染与 XR 合成器（可能位于另一个进程）之间存在复杂的依赖关系，二元信号量过于僵化。
+
+**时间线信号量**提供一个 64 位单调递增的值。可以把它看作 GPU 工作的「全局时钟」。XR 运行时用它精确标记一帧何时可供合成，并管理 GPU 工作的「全局时钟」，确保重投影发生在尽可能晚的时刻。
+
+*   **节奏控制**：只要在单条时间线上到达数值 `500`，我们就能表示「第 500 帧已可供合成」。
+*   **延迟锁存**：我们可以让 GPU「等到 CPU 发出数值 501 的信号」再开始最后的矩阵更新。
+*   **跨进程同步**：由于可以导出为操作系统句柄，时间线信号量让我们的引擎与 XR 运行时保持完美同步，而无需昂贵的 CPU 回读。
+
+== 2. 同步 2：掌握队列所有权
+
+**同步 2**（`VK_KHR_synchronization2`）通过把管线阶段与访问掩码合并为更统一的结构，简化了同步。在 XR 中，这对处理**队列所有权转移**至关重要。
+
+由于交换链图像归 XR 运行时所有，我们渲染完成后必须在自己的队列上执行「释放」操作，而运行时在它那边执行「获取」。借助同步 2，运行时显式完成这些高性能交接，确保引擎与合成器永远不会同时访问同一块内存。
+
+== 3. 动态渲染：极致的灵活性
+
+直接在我们的 XR 交换链图像上调用 `vkCmdBeginRendering`，就避免了旧的 `VkRenderPass` 对象带来的沉重开销与僵化状态。
+
+*   **非对称视图**：大多数头显使用「倾斜显示器」，左右眼的视锥并不平行。这往往需要为每只眼设置不同的视口与剪刀矩形。
+*   **动态分辨率**：为了维持稳定的 90Hz，引擎可能需要瞬间降低周边视野的分辨率。
+*   **运行时视口管理**：运行时依赖**动态渲染**的灵活性来适配各种头显架构，而无需为每只眼重新创建昂贵的帧缓冲区状态。
+
+== 在 RAII 中启用 Vulkan 1.3 特性
+
+Vulkan 1.3 简化了特性的启用方式。无需层层嵌套的 `pNext` 链，我们可以用统一的 `VkPhysicalDeviceVulkan13Features`（及其前身）配合指定初始化器来开关核心要求。
+
+[source,cpp]
+----
+// Enabling mandatory features for our spatial pipeline using designated initializers
+vk::PhysicalDeviceVulkan12Features features12{
+    .timelineSemaphore = VK_TRUE
+};
+
+vk::PhysicalDeviceVulkan13Features features13{
+    .pNext = &features12,
+    .synchronization2 = VK_TRUE,
+    .dynamicRendering = VK_TRUE
+};
+
+vk::DeviceCreateInfo createInfo{
+    .pNext = &features13,
+    .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
+    .pQueueCreateInfos = queueCreateInfos.data(),
+    .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
+    .ppEnabledExtensionNames = deviceExtensions.data()
+};
+
+vk::raii::Device device(physicalDevice, createInfo);
+----
+
+== 进阶：超越 OpenXR 的强制集合
+
+握手保证了基线，但 Vulkan 1.3 允许你启用 OpenXR 规范尚未强制要求的「下一代」特性：
+
+*   **网格着色与光线追踪**：你可以利用 Vulkan 的特性发现机制启用这些强大的管线，实现实时空间反射或复杂几何处理等高保真空间效果，而无需等 OpenXR 标准跟上。
+*   **自定义管线缓存**：通过管理你自己的 **VkPipelineCache**，你可以确保空间着色器在不同头显配置上都能瞬间加载，绕过运行时的通用着色器管理。
+
+TIP: 关于 Vulkan 1.3 与核心特性的更多信息，请查看官方 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+== 握手总结
+
+到目前为止，我们已经成功地：
+1.  把 `VulkanContext` 扩展为能与 OpenXR 协商扩展。
+2.  让 `VkPhysicalDevice` 的选择与 OpenXR 运行时要求的设备保持一致。
+3.  启用了低延迟空间渲染所需的现代 Vulkan 1.3 特性。
+
+握手既已完成，我们准备好迎接 XR 引擎中最重大的架构变化：从引擎拥有的交换链转向**运行时拥有的交换链**。
+
+xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc[下一页]

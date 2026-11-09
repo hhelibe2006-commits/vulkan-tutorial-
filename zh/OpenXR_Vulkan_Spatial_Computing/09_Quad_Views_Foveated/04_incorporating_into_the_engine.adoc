@@ -1,0 +1,67 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+要在 `simple_game_engine` 中支持四视图（N=4），我们需要在 `renderer_rendering.cpp` 里从单层交换链迁移到多层合成。*目前这部分留作练习，由读者自行实现。*
+
+== 多层交换链合成
+
+在 `renderer_rendering.cpp` 中，我们更新 `Render`，向 OpenXR 提交多个投影层。每只眼睛都会有一个周边（宽 FOV）层和一个中央凹（窄 FOV、高分辨率）层。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ...
+    if (xrMode) {
+        // Define two layers for the XR compositor:
+        // Layer 0: Peripheral (Wide FOV)
+        // Layer 1: Foveal (Narrow FOV, High-Res)
+        std::vector<XrCompositionLayerProjection> layers;
+
+        for (uint32_t eye = 0; eye < 2; ++eye) {
+            // Retrieve views from OpenXR (N=4)
+            // xrContext provides these based on xrLocateViews
+            auto const& views = xrContext.getQuadViews();
+
+            // Populate peripheral layer
+            layers[0].views[eye].pose = views[0 + eye].pose;
+            layers[0].views[eye].fov = views[0 + eye].fov;
+            layers[0].views[eye].subImage.swapchain = *xrPeripheralSwapchain;
+
+            // Populate foveal layer (the "inset")
+            layers[1].views[eye].pose = views[2 + eye].pose;
+            layers[1].views[eye].fov = views[2 + eye].fov;
+            layers[1].views[eye].subImage.swapchain = *xrFovealSwapchain;
+        }
+
+        // Submit multi-layer composition to OpenXR
+        xrContext.submitLayers(layers);
+    }
+}
+----
+
+== 处理高保真内嵌视图
+
+在 `createGraphicsPipeline` 中，如果要在一趟渲染里渲染全部 4 个视图，我们确保 `viewMask` 相应扩展。
+
+[source,cpp]
+----
+// renderer_resources.cpp
+bool Renderer::createGraphicsPipeline() {
+    // ...
+    vk::PipelineRenderingCreateInfo renderingInfo{
+        .viewMask = xrMode ? 0xF : 0x0, // 0xF enables views 0, 1, 2, 3
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &swapChainImageFormat
+    };
+
+    pipelineInfo.pNext = &renderingInfo;
+    // ...
+}
+----
+
+== 为什么要做这些改动？
+
+通过改用多层合成，我们实现了「中央凹渲染」：引擎以远高于周边的分辨率为用户视野中心进行渲染。由于我们引擎的 `Render` 循环本身就是动态的，它可以在这些视图与层之间无缝切换，确保用户始终在真正注视的地方获得最高保真度。
+
+xref:OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc[下一页]

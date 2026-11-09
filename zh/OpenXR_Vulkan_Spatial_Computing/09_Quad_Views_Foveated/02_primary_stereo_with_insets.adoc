@@ -1,0 +1,68 @@
+:pp: {plus}{plus}
+= 带内嵌视图的主立体渲染
+
+在**四视图**架构中，每只眼睛会看到两幅相互重叠的图像。**主视图**是用于周边的宽幅、较低分辨率图像，而**内嵌视图**是居中对准用户注视点的较小、高分辨率图像。
+
+== 生态系统视角
+
+本章属于以下类别：**将 Vulkan 与 OpenXR 运行时配合使用**。
+
+为支持的硬件配置用于注视点渲染的四重视图，是 OpenXR 中的标准流程。你必须使用运行时的视图配置 API 和 Vulkan 的多视图特性，才能正确地同时面向主视图与内嵌视图。
+
+== 像素密度问题
+
+要理解四视图，先看看现代显示器的硬件极限。一副典型的单眼 4K 头显，若把像素铺满 110 度的视场，大约能提供 20–25 **PPD**（每度像素数，Pixels Per Degree）。而人眼的「视网膜」级分辨率接近 60 PPD。
+
+我们不会把整块显示器的分辨率翻倍，而是使用**注视点渲染**。我们在眼睛注视的位置渲染高密度的「内嵌视图」（60 PPD），在周边渲染较低密度的「主视图」（20 PPD）。
+
+运行时负责把红外眼动追踪传感器与帧时序进行复杂的融合，以对齐这些内嵌视图，同时自动对边缘做「羽化」，避免出现突兀的边界。
+
+== 固定与动态注视点
+
+1.  **固定注视点渲染（FFR）**：高细节内嵌视图锁定在透镜中心。
+2.  **动态注视点渲染（DFR）**：高细节内嵌视图根据眼动追踪实时移动。
+
+[source,cpp]
+----
+// Defining the View Config for Quad-Views (N=4) using designated initializers
+// Indices 0,1 are the wide base views; 2,3 are high-detail foveal insets.
+XrViewConfigurationView configViews[4] = {
+    { .type = XR_TYPE_VIEW_CONFIGURATION_VIEW, .recommendedImageRectWidth = 1920, .recommendedImageRectHeight = 1080 },
+    { .type = XR_TYPE_VIEW_CONFIGURATION_VIEW, .recommendedImageRectWidth = 1920, .recommendedImageRectHeight = 1080 },
+    { .type = XR_TYPE_VIEW_CONFIGURATION_VIEW, .recommendedImageRectWidth = 1024, .recommendedImageRectHeight = 1024 },
+    { .type = XR_TYPE_VIEW_CONFIGURATION_VIEW, .recommendedImageRectWidth = 1024, .recommendedImageRectHeight = 1024 }
+};
+----
+
+== 在 Slang 中渲染四视图
+
+我们的引擎管理四个不同的视图矩阵。在 Slang 中，我们在单趟渲染里完成向全部四个层的广播：
+
+[source,slang]
+----
+// Slang Shader Handling N=4 Views
+struct QuadViewData {
+    float4x4 viewProjection;
+};
+
+StructuredBuffer<QuadViewData> allViews; // 4 Views total
+
+VertexOutput main(uint viewID : SV_ViewID, float3 pos : POSITION) {
+    VertexOutput output;
+    // The GPU broadcasts the same geometry to 4 different viewports/layers
+    output.position = mul(allViews[viewID].viewProjection, float4(pos, 1.0));
+    output.viewID = viewID;
+    return output;
+}
+----
+
+== 进阶：动态内嵌缩放与 VRS
+
+Vulkan 让你能把注视点渲染推进到超出 OpenXR 四视图标准的水平：
+
+*   **片元密度图**：OpenXR 期望交换链尺寸固定，但你可以用 Vulkan 的**片元密度图**来「伪造」一个改变尺寸的内嵌视图。通过只渲染到较小的子区域，并在采样时用密度图进行缩放，你无需重建交换链就能调整中央凹区域的分辨率。
+*   **可变速率着色（VRS）**：你可以用 Vulkan 的 VRS 在降低着色开销的同时为周边维持高分辨率的几何，从而保证即使片元密度很低，几何边缘依然锐利。
+
+TIP: 关于注视点渲染与四视图的更多细节，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_VARJO_quad_views[XR_VARJO_quad_views 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc[下一页]

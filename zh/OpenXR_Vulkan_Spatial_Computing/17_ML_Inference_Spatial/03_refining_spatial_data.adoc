@@ -1,0 +1,75 @@
+:pp: {plus}{plus}
+= 细化空间数据
+
+从传感器摄取的环境网格往往带有噪声和空洞。我们用 ML 驱动的细化，把这些原始扫描变成干净、可交互的几何体。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+OpenXR 虽然提供环境网格，但标准并不管理扫描结果的几何质量或拓扑完整性。你可以用 Vulkan 的计算着色器与光线追踪加速结构实现实时网格修复和镜像感知的细化，提供标准 OpenXR 摄取流程并不会原生协调的物理交互水平。
+
+== 概念：拓扑推断
+
+标准的网格平滑能去除噪声，却无法填补空洞，也无法「猜出」缺失的几何体。**拓扑推断**用神经网络预测场景中缺失的部分。
+
+1.  **降噪**：识别并去除「几何灰尘」。
+2.  **补洞**：预测曲率（例如植物后面的墙），把缺口接上。
+3.  **图元近似**：建议使用低多边形图元（例如用盒子表示桌子）替换复杂、嘈杂的网格。
+
+运行时负责 LiDAR 到网格的转换以及时域平滑（SLAM），确保细化后的几何体锚定在物理空间中。
+
+== 实现：ML 辅助的表面重建
+
+在我们的引擎中，我们用计算着色器把原始空间顶点送入 ML 模型。模型输出一张**显著图**——一张引导重建的概率栅格。
+
+[source,cpp]
+----
+// Binding the spatial mesh and saliency map using designated initializers
+vk::DescriptorBufferInfo meshInfo{
+    .buffer = *rawMeshBuffer,
+    .offset = 0,
+    .range = VK_WHOLE_SIZE
+};
+
+vk::WriteDescriptorSet meshWrite{
+    .dstSet = *reconstructionSet,
+    .dstBinding = 0,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eStorageBuffer,
+    .pBufferInfo = &meshInfo
+};
+----
+
+在 Slang 中，我们用这些概率数据把顶点「吸附」到干净的平面上，或者剔除伪影：
+
+[source,slang]
+----
+// Using ML results to guide mesh reconstruction in Slang
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void reconstructSurfaces(uint3 dtid : SV_DispatchThreadID) {
+    // Query the ML saliency map for this vertex's region
+    float surfaceProbability = mlSaliencyMap.Load(dtid.xy);
+
+    if (surfaceProbability > 0.95) {
+        // High confidence: Snap to the predicted "clean" plane
+        float3 refinedPos = predictCleanSurface(dtid.xyz);
+        updateMeshVertex(dtid.x, refinedPos);
+    } else if (surfaceProbability < 0.1) {
+        // Low confidence: This is likely a sensor artifact (e.g., a mirror reflection)
+        degenerateMeshVertex(dtid.x);
+    }
+}
+----
+
+== 进阶：实时网格修复与镜像估计
+
+Vulkan 允许把几何清理做到超出标准数据流的水平：
+
+*   **实时网格修复**：借助 Vulkan 的**光线追踪加速结构**，你可以即时执行实时的网格简化与修复，填补标准 OpenXR 数据流无法处理的空洞。
+*   **反射表面估计**：基于传感器的网格在镜子或玻璃上常常失效。你可以用 Vulkan **光线追踪**，向扫描出的房间投射光线来识别潜在的反射表面，并调整 OpenXR 几何体以把窗户考虑进去。
+
+TIP: 关于场景理解与网格细化的更多信息，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_EXT_scene_understanding[XR_EXT_scene_understanding 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc[下一页]

@@ -1,0 +1,72 @@
+:pp: {plus}{plus}
+= 异步后处理：并行化帧的结束与开始
+
+== 一个真实用例
+
+使用异步计算最有效的方式之一，是在图形单元忙于*下一*帧的阴影或几何通道时，运行你的后处理通道（它通常受计算限制）。这是个强大的模式，因为后处理通常发生在帧的最末尾，此时图形单元已经完成了自己的工作。与其让下一帧等待后处理完成，我们把它移到专用的计算队列上。
+
+== 实现重叠
+
+实现涉及两个不同的队列：一个**图形队列**负责几何与阴影工作，一个**异步计算队列**负责后处理工作（例如泛光、色调映射或时间性抗锯齿）。
+
+1.  **主渲染通道（图形队列）**：主渲染完成后，在图形时间线上发出「图形完成」的值。
+2.  **后处理通道（计算队列）**：计算队列等待「图形完成」的值，然后执行后处理工作，并在自己的计算时间线上发出「后处理完成」的值。
+3.  **帧提交（CPU）**：上一帧的几何一提交完，CPU 就可以开始录制并向图形队列提交*下一*帧，无需等待后处理结束。
+
+== Synchronization 2 示例
+
+使用 `vk::DependencyInfo` 和 `vk::SubmitInfo2`，这种协调既清晰又精确。
+
+[,cpp]
+----
+// Compute Submit: wait for frame N graphics to finish, then run post-processing
+auto computeWaitInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *graphicsTimeline,
+    .value = frameN_graphics_finished,
+    .stageMask = vk::PipelineStageFlagBits2::eComputeShader
+};
+
+auto computeSignalInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *computeTimeline,
+    .value = frameN_postprocessing_finished,
+    .stageMask = vk::PipelineStageFlagBits2::eComputeShader
+};
+
+auto computeSubmit = vk::SubmitInfo2{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &computeWaitInfo,
+    .signalSemaphoreInfoCount = 1,
+    .pSignalSemaphoreInfos = &computeSignalInfo,
+    .commandBufferInfoCount = 1,
+    .pCommandBufferInfos = &postProcessCmdInfo
+};
+
+computeQueue.submit2(computeSubmit);
+----
+
+== 处理呈现
+
+最后一步是**呈现**操作。在 CPU 侧，你必须确保在该帧的图形与计算工作都完成之前不呈现最终图像。
+
+具体来说，由于呈现单元（WSI）目前还不支持时间线信号量，最后一次握手必须使用**二值信号量**。你的计算队列在后处理通道完成时发出一个二值信号量。随后 `vk::PresentInfoKHR` 等待这个二值信号量，再把图像显示到屏幕上。
+
+这个三方握手——图形通知计算、计算通知呈现——确保图形单元始终被喂以新工作（来自*下一*帧），而计算单元负责*当前*帧的最终观感。这是最大化引擎帧率、让 GPU 占用率尽可能高的关键策略。
+
+== 在 Simple Engine 中实现
+
+在 `Simple Engine` 中，我们会把这种异步后处理模式应用到 **PBR 色调映射**通道上。目前，色调映射在 `Renderer::Render` 的末尾于图形队列上完成。我们会把这段逻辑移到一个专用的 `postProcessComputePipeline`，在 `computeQueue` 上运行。
+
+要实现它：
+
+1.  **添加计算通道**：我们会更新 `Renderer`，把色调映射计算着色器（`shaders/tonemap.slang`）录制到单独的计算命令缓冲区。
+2.  **等待图形**：这个计算命令缓冲区会等待主渲染时间线到达 `GeometryFinished` 值。
+3.  **为呈现发信号**：色调映射完成后，它会发出 `PostProcessFinished` 值。
+4.  **更新提交**：我们会更新该帧最终的 `vk::SubmitInfo2`，让呈现操作等待计算时间线上的这个 `PostProcessFinished` 值。
+
+把色调映射移到计算队列后，我们就可以在当前帧还在做色调映射时，在图形队列上开始**下一帧的阴影通道**。这让光栅密集的阴影通道与计算密集的色调映射通道重叠，显著提升整体帧吞吐量。
+
+在本章最后一节，我们会看看如何识别并消除那些因同步过于保守而产生的「气泡」。
+
+== 导航
+
+上一节：xref:Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc[最大化吞吐量：识别可重叠的工作] | 下一节：xref:Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc[气泡问题：发现并修复停顿]

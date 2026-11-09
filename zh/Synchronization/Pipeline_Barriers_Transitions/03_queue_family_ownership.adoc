@@ -1,0 +1,79 @@
+:pp: {plus}{plus}
+= 队列族所有权：握手
+
+== 为什么要转移所有权
+
+在许多高性能 Vulkan 引擎中，我们不会只用一个「图形」队列做所有事情。我们可能用一个专用的**传输队列**做后台资产流式加载，或者用一个**计算队列**做异步后处理。然而，Vulkan 资源（缓冲区和图像）如果是以 `vk::SharingMode::eExclusive` 创建的，通常就「归」某个特定的队列族所有。
+
+如果你想把手里的图像从传输队列（你刚上传完它）移到图形队列（你想绘制它），就必须执行一次显式的**队列族所有权转移**。这是一个两步的「握手」：在源队列上做一次释放操作，在目标队列上做一次获取操作。
+
+== 释放与获取的握手
+
+转移通过在两个队列上分别录制管线屏障来完成。关键在于，两个屏障都必须指定源队列族索引和目标队列族索引。
+
+=== 1. 释放操作（源队列）
+
+在当前拥有该资源的队列上，你录制一个「释放」它的屏障。`srcQueueFamilyIndex` 是你当前的队列，`dstQueueFamilyIndex` 是你要把它发往的队列。
+
+[,cpp]
+----
+auto releaseBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eAllTransfer,
+    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eNone, // No stage on this queue
+    .dstAccessMask = vk::AccessFlagBits2::eNone,     // No access on this queue
+    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = transferQueueIndex,
+    .dstQueueFamilyIndex = graphicsQueueIndex,
+    .image = texture.image(),
+    .subresourceRange = subresourceRange
+};
+
+// Record on Transfer Command Buffer
+transferCommandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &releaseBarrier});
+----
+
+=== 2. 获取操作（目标队列）
+
+在目标队列上，你录制一个「获取」该资源的屏障。索引保持不变，但此时 `srcStageMask` 和 `srcAccessMask` 被设为 `eNone`，因为那些阶段发生在另一个队列上。
+
+[,cpp]
+----
+auto acquireBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eNone,
+    .srcAccessMask = vk::AccessFlagBits2::eNone,
+    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = transferQueueIndex,
+    .dstQueueFamilyIndex = graphicsQueueIndex,
+    .image = texture.image(),
+    .subresourceRange = subresourceRange
+};
+
+// Record on Graphics Command Buffer
+graphicsCommandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &acquireBarrier});
+----
+
+== 用信号量编排
+
+录制屏障只是战斗的一半。你还需要确保图形队列不会在传输队列释放资源之前就去获取它。这通常用一个**信号量**来处理：传输队列在其命令缓冲区完成时发出信号，图形队列在执行自己的获取屏障之前等待同一个信号量。
+
+这种握手是 Vulkan 同步中比较复杂的部分之一，但它是构建多线程、非阻塞引擎架构的必要条件。在现代 Vulkan 中，我们更倾向于用**时间线信号量**来做这种编排，因为它们允许我们用一个简单的单调计数器跟踪进度，下一章会详细讨论。
+
+== Simple Engine：资源交接
+
+在 `Simple Engine` 中，我们尽可能避免所有权转移的复杂性：创建主要缓冲区和图像时使用 `vk::SharingMode::eConcurrent`。如果硬件支持，这允许多个队列族（比如我们的 `transferQueue` 和 `graphicsQueue`）并发访问同一块内存，而无需显式的「释放/获取」屏障。
+
+[WARNING]
+====
+虽然 `eConcurrent` 很方便，但在某些硬件实现上，把它用于**图像**可能比用 `eExclusive` 加显式所有权转移的性能更低。对缓冲区来说，影响通常可以忽略，但对于高性能图像处理，「握手」往往更可取。
+====
+
+不过，即便用了 `eConcurrent`，你仍然需要同步这些队列的*执行*！在 `Simple Engine` 中，我们用一个专用的**传输信号量**，确保图形队列在传输队列完成工作之前不会开始采样纹理。这发生在 `Renderer::ProcessPendingMeshUploads` 调用期间，确保所有后台上传在下一帧开始前对图形硬件都正确「可见」。
+
+== 导航
+
+上一页：xref:Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc[图像屏障：实现 vk::ImageMemoryBarrier2] | 下一页：xref:Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc[全局屏障与局部屏障：精确与性能]

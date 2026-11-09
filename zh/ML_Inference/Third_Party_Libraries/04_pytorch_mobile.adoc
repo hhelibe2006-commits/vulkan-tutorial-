@@ -1,0 +1,427 @@
+:pp: {plus}{plus}
+
+= PyTorch Mobile 集成
+
+== 简介
+
+PyTorch 已成为许多研究者和工程师的首选框架。它的动态计算图、直观的 Python API 和强大的生态，使它非常适合实验与开发。但 PyTorch 是为研究与训练设计的，并非为部署到资源受限的设备而设计。
+
+PyTorch Mobile 弥合了这一差距。它是 Facebook（现 Meta）为在移动和嵌入式设备上部署 PyTorch 模型提供的方案。与需要把模型转换成另一种框架格式的 TensorFlow Lite 不同，PyTorch Mobile 让你直接部署 PyTorch 模型，从训练到部署保持同一套模型表示。
+
+本章探讨 PyTorch Mobile：它与桌面版 PyTorch 有何不同、与 TensorFlow Lite 和 ONNX Runtime 相比如何、如何把它集成进 Vulkan 应用，以及它何时才是你项目的正确选择。
+
+== PyTorch 的优势：一套框架，处处可用
+
+PyTorch Mobile 的核心价值主张是连续性。你在 PyTorch 里训练，也在 PyTorch 里部署。不必转换到其他格式，不必担心算子能不能正确转换，也不必调试训练与推理行为之间的细微差异。
+
+=== 转换问题
+
+如果你用过 TensorFlow Lite 或 ONNX，就经历过转换问题。你在一个框架里训练模型，然后把它转换成部署格式。这个转换是 bug 与挫败感的来源。
+
+算子可能无法正确转换。动态形状可能变成固定形状。自定义算子可能不受支持。训练框架与部署运行时之间可能出现数值差异。你花好几个小时排查：为什么模型在 PyTorch 里完美运行，在 TensorFlow Lite 里却给出错误结果。
+
+PyTorch Mobile 消除了这个问题。你训练的模型就是你部署的模型。训练时执行你模型的同一个 PyTorch 运行时，在推理时也执行它。没有转换步骤，没有格式翻译，也就没有让细微 bug 悄悄混进来的机会。
+
+=== 开发者体验
+
+这种连续性也延伸到开发者体验上。如果你懂 PyTorch，你就懂 PyTorch Mobile。API 相似，概念相同，调试工具的工作方式也一样。
+
+你可以在桌面上做原型、在手机上测试，并确信行为完全一致。同一个模型文件既可以用于桌面推理，也可以用于服务器部署和移动部署。这种灵活性很有力——它意味着你能快速迭代，而不必担心平台相关的问题。
+
+=== 取舍：体积与优化
+
+这种连续性是有代价的。PyTorch Mobile 比 TensorFlow Lite 更大。运行时是几 MB，而不是几百 KB。模型以 PyTorch 的格式存储，其优化程度不如 TensorFlow Lite 的 FlatBuffers 那样激进。
+
+对许多应用来说，这个取舍是值得的。开发速度和更少的调试时间，超过了体积上的代价。但对体积敏感的应用（下载体积预算紧张的 app、存储空间有限的嵌入式系统），可能仍需要 TensorFlow Lite 那种激进的优化。
+
+== 架构：桌面版 PyTorch，为移动端优化
+
+PyTorch Mobile 不是一次彻底重写——它就是桌面版 PyTorch，经过仔细裁剪并针对移动端的约束做了优化。
+
+=== 选择性构建：只包含你需要的
+
+PyTorch Mobile 控制体积的关键是选择性构建。桌面版 PyTorch 包含数百个算子、对训练的支持、自动微分以及大量调试工具。PyTorch Mobile 让你构建一个自定义运行时，只包含你的模型实际用到的算子。
+
+当你为移动部署准备模型时，会分析它用到了哪些算子。然后你构建一个只包含这些算子的 PyTorch Mobile 运行时。一个用到 50 个算子的模型，得到的运行时包含 50 个算子，而不是 500 个。
+
+这个选择性构建过程可以把运行时从 50MB+ 缩减到 2-5MB，具体取决于模型的复杂程度。它不如 TensorFlow Lite 那么小，但对大多数移动应用来说已经足够小。
+
+=== TorchScript：部署格式
+
+PyTorch 模型通常定义为带 `forward` 方法的 Python 类。这在训练时很好用，但对移动部署没用——你没法在 iOS 上运行 Python，而在 Android 上运行 Python 也有不少问题。
+
+TorchScript 解决了这个问题。它是 Python 的一个子集，可以编译成可移植的中间表示。你把 PyTorch 模型转换成 TorchScript，会生成 `.pt` 或 `.ptl` 文件，PyTorch Mobile 运行时可以加载并执行它，而无需 Python。
+
+创建 TorchScript 有两种方式：
+
+*追踪（Tracing）*：用示例输入运行模型，PyTorch 记录下实际执行了哪些算子。这样得到一个 TorchScript 模型，复刻了被追踪的执行路径。
+
+[source,python]
+----
+import torch
+
+model = MyModel()
+example_input = torch.rand(1, 3, 224, 224)
+traced_model = torch.jit.trace(model, example_input)
+traced_model.save("model.pt")
+----
+
+追踪很简单，对大多数模型都有效，但它有局限。如果你的模型含有依赖输入数据的控制流（if 语句、循环），追踪只能捕获一条执行路径。追踪得到的模型可能无法正确处理不同的输入。
+
+*脚本化（Scripting）*：你给模型加上类型标注，PyTorch 直接从 Python 源码把它编译成 TorchScript。这样能保留控制流，并正确处理动态行为。
+
+[source,python]
+----
+import torch
+
+class MyModel(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.sum() > 0:
+            return x * 2
+        else:
+            return x * 3
+
+model = MyModel()
+scripted_model = torch.jit.script(model)
+scripted_model.save("model.pt")
+----
+
+脚本化更强大，但需要类型标注，并且对可用的 Python 特性有一定限制。
+
+对大多数模型来说，追踪就够了。含有复杂控制流的模型则需要脚本化。
+
+=== 量化：追赶 TensorFlow Lite
+
+历史上，PyTorch 的量化支持落后于 TensorFlow Lite。近些年这种情况已大为改变。PyTorch 现在有全面的量化支持，足以与 TensorFlow Lite 匹敌。
+
+PyTorch 支持：
+
+*动态量化*：权重被量化为 int8，激活值保持 float32。应用简单，能减小模型体积并获得一定加速。
+
+*静态量化*：权重和激活值都是 int8。需要用代表性数据做校准，能提供最高性能。
+
+*量化感知训练（QAT）*：在训练过程中模拟量化，让模型学会对量化保持健壮。量化模型能达到的最佳精度由此而来。
+
+工作流程与 TensorFlow Lite 类似：
+
+[source,python]
+----
+import torch
+from torch.quantization import quantize_dynamic, get_default_qconfig, prepare, convert
+
+# Dynamic quantization (simplest)
+model_dynamic = quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+
+# Static quantization (requires calibration)
+model.qconfig = get_default_qconfig('fbgemm')  # or 'qnnpack' for mobile
+model_prepared = prepare(model)
+# Run calibration data through model_prepared
+model_quantized = convert(model_prepared)
+
+# Convert to TorchScript for mobile
+traced = torch.jit.trace(model_quantized, example_input)
+traced.save("model_quantized.pt")
+----
+
+PyTorch 的量化很强大，但工具链和文档不如 TensorFlow Lite 成熟。你可能需要多做一些实验才能得到好结果。
+
+=== 移动端优化：算子融合与图优化
+
+除了量化，PyTorch Mobile 还会应用多种优化来提升推理性能：
+
+*算子融合*：把多个算子合并为单个优化后的内核。例如卷积后接批归一化和 ReLU，可以融合成一个算子，减少内存流量和开销。
+
+*常量折叠*：在编译期求值输入为常量的算子，消除运行时计算。
+
+*死代码消除*：删除对最终输出没有贡献的算子。
+
+*内存规划*：分析模型图，复用中间张量的内存，降低峰值内存占用。
+
+这些优化在你为移动部署准备模型时自动发生。你不需要做什么特别的事——用移动端优化 API 就行。
+
+== 与 Vulkan 应用集成
+
+把 PyTorch Mobile 集成进 Vulkan 应用，遵循与 TensorFlow Lite 类似的模式，但有一些 PyTorch 特有的考量。
+
+=== 基本做法：独立上下文
+
+与 TensorFlow Lite 一样，最简单的集成方式是把 PyTorch Mobile 和 Vulkan 当作两个独立系统：
+
+1. 你的 Vulkan 应用渲染帧并管理 GPU 资源
+2. 需要推理时，把数据从 GPU 内存拷贝到 CPU 内存
+3. 运行 PyTorch Mobile 推理（它内部可能使用 GPU）
+4. 在 CPU 上处理结果
+5. 如有需要，把结果拷贝回 GPU
+
+这种做法直接明了，对大多数应用都有效。如果推理不是每帧都发生，这点开销是可以接受的。
+
+=== GPU 加速：Vulkan 后端
+
+PyTorch Mobile 通过多个后端支持 GPU 加速：
+
+*Metal*（iOS）：使用 Apple 的 Metal API 做 GPU 加速。这是 iOS 上的推荐做法，在 Apple GPU 上性能出色。
+
+*Vulkan*（Android）：PyTorch Mobile 在 Android 上有实验性的 Vulkan 后端支持。这对基于 Vulkan 的应用尤其有意思，因为你的渲染和 ML 推理可以都用 Vulkan。
+
+*OpenGL ES*（Android）：面向不支持 Vulkan 的设备的回退选项。
+
+Vulkan 后端仍是实验性的，也有局限。并非所有算子都受支持，性能可能也比不上 iOS 上的 Metal 后端或 Android 上 TensorFlow Lite 的 GPU delegate。但它在快速改进，而且对基于 Vulkan 的应用来说，它提供了更紧密集成的可能性。
+
+要使用 Vulkan 后端：
+
+[source,cpp]
+----
+#include <torch/script.h>
+
+// Load model
+torch::jit::script::Module module = torch::jit::load("model.pt");
+
+// Enable Vulkan backend (Android)
+module.to(torch::kVulkan);
+
+// Run inference
+std::vector<torch::jit::IValue> inputs;
+inputs.push_back(torch::rand({1, 3, 224, 224}).to(torch::kVulkan));
+auto output = module.forward(inputs).toTensor();
+----
+
+关键是 `.to(torch::kVulkan)` 调用，它把模型和张量迁移到由 Vulkan 支撑的内存中。
+
+=== 内存共享：可行但复杂
+
+与 TensorFlow Lite 不同，PyTorch Mobile 的 Vulkan 后端在设计时就考虑了内存共享的可能性。理论上，你可以在渲染上下文与 PyTorch Mobile 的推理上下文之间共享 Vulkan 内存。
+
+实践中，这很复杂，而且文档不足。Vulkan 后端是实验性的，用于内存共享的 API 也不稳定。对生产应用来说，独立上下文的做法更可靠。
+
+如果你需要紧密集成，可以考虑：
+
+*自定义算子*：把关键算子实现为直接使用你的 Vulkan 上下文的自定义 PyTorch 算子。这让你拥有完全控制，但实现工作量很大。
+
+*混合方案*：大多数算子用 PyTorch Mobile，但把性能关键或需要紧密集成的算子实现为自定义 Vulkan 计算着色器。这在便利性与性能之间取得平衡。
+
+=== 跨平台考量
+
+PyTorch Mobile 的跨平台故事很扎实：
+
+*iOS*：支持出色。用 Metal 后端做 GPU 加速。运行时与 iOS 应用集成良好，工具链也成熟。
+
+*Android*：支持良好。用 Vulkan 或 OpenGL ES 后端做 GPU 加速。运行时工作良好，尽管 Vulkan 后端仍是实验性的。
+
+*桌面*：完整的 PyTorch 可以在桌面运行，所以你能用同一个模型做桌面和移动部署。这对测试与开发很有用。
+
+同一个模型能跨所有平台使用，这是一个重大优势。你可以在桌面开发、在移动端测试、到处部署，并且确信行为一致。
+
+== 实战示例：实时风格迁移
+
+我们走一遍完整的示例：把 PyTorch Mobile 的风格迁移集成进一个基于 Vulkan 的移动应用。
+
+=== 场景
+
+你在构建一个移动应用，对摄像头画面实时应用艺术风格迁移。用户看到自己的摄像头画面被转换成名画的风格。你需要在终端设备上以 15+ FPS 处理帧。
+
+=== 模型选择与训练
+
+你从一个基于 Johnson 等人架构的快速风格迁移模型开始。在桌面 GPU 上用 PyTorch 训练：
+
+[source,python]
+----
+import torch
+import torch.nn as nn
+
+class StyleTransferNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Encoder
+        self.conv1 = nn.Conv2d(3, 32, 9, stride=1, padding=4)
+        self.conv2 = nn.Conv2d(32, 64, 3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, 3, stride=2, padding=1)
+
+        # Residual blocks
+        self.res1 = ResidualBlock(128)
+        self.res2 = ResidualBlock(128)
+        self.res3 = ResidualBlock(128)
+
+        # Decoder
+        self.deconv1 = nn.ConvTranspose2d(128, 64, 3, stride=2, padding=1, output_padding=1)
+        self.deconv2 = nn.ConvTranspose2d(64, 32, 3, stride=2, padding=1, output_padding=1)
+        self.conv4 = nn.Conv2d(32, 3, 9, stride=1, padding=4)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+        x = F.relu(self.deconv1(x))
+        x = F.relu(self.deconv2(x))
+        x = torch.tanh(self.conv4(x))
+        return x
+
+# Train the model
+model = StyleTransferNet()
+# ... training code ...
+----
+
+训练完成后，转换成 TorchScript 以便移动部署：
+
+[source,python]
+----
+# Convert to TorchScript
+model.eval()
+example_input = torch.rand(1, 3, 360, 640)
+traced_model = torch.jit.trace(model, example_input)
+
+# Optimize for mobile
+from torch.utils.mobile_optimizer import optimize_for_mobile
+optimized_model = optimize_for_mobile(traced_model)
+optimized_model._save_for_lite_interpreter("style_transfer.ptl")
+----
+
+`.ptl` 格式为移动端做了优化，文件更小、加载更快。
+
+=== Android 集成
+
+在你的 Android 应用里集成 PyTorch Mobile：
+
+[source,java]
+----
+import org.pytorch.IValue;
+import org.pytorch.Module;
+import org.pytorch.Tensor;
+
+// Load model
+Module module = Module.load(assetFilePath(this, "style_transfer.ptl"));
+
+// Prepare input tensor (360x640x3 image, normalized to [-1, 1])
+float[] inputData = preprocessImage(cameraFrame);
+Tensor inputTensor = Tensor.fromBlob(inputData, new long[]{1, 3, 360, 640});
+
+// Run inference
+Tensor outputTensor = module.forward(IValue.from(inputTensor)).toTensor();
+
+// Process output
+float[] outputData = outputTensor.getDataAsFloatArray();
+Bitmap styledImage = postprocessImage(outputData, 360, 640);
+----
+
+=== Vulkan 集成
+
+你的 Vulkan 渲染管线负责抓取摄像头帧。要集成风格迁移：
+
+1. *抓取帧*：Vulkan 把摄像头画面渲染到纹理
+2. *回读*：用 `vkCmdCopyImageToBuffer` 把纹理拷贝到暂存缓冲区
+3. *映射内存*：把暂存缓冲区映射到 CPU 内存
+4. *预处理*：缩放到 360×640，归一化到 [-1, 1]
+5. *推理*：在后台线程运行 PyTorch Mobile 推理
+6. *显示*：推理完成后，把风格化后的图像上传到 Vulkan 纹理并渲染出来
+
+关键在于异步执行。GPU 渲染当前帧的同时，CPU 处理上一帧的风格迁移。这样就能保持平滑的帧率。
+
+=== 性能优化
+
+初步测试显示推理耗时 80ms——12.5 FPS，还没达到 15 FPS 的目标。你做了这些优化：
+
+*降低分辨率*：改用 270×480 而不是 360×640，推理降到 45ms（22 FPS），画质损失可以接受。
+
+*量化*：应用动态量化后，推理降到 35ms（28 FPS），模型体积从 6.5MB 降到 1.7MB。
+
+*算子融合*：移动端优化器已经会融合算子，但你在训练时手动把批归一化融合进卷积，又带来 10% 的加速（32ms，31 FPS）。
+
+*GPU 加速*：启用 Vulkan 后端（实验性）后，在 Vulkan 支持良好的设备上推理降到 25ms（40 FPS）。
+
+最终实现在中端设备上稳定跑到 30+ FPS，以极低的延迟实现实时风格迁移。
+
+== 与其他方案对比
+
+PyTorch Mobile 与 TensorFlow Lite、ONNX Runtime 相比如何？
+
+=== PyTorch Mobile 与 TensorFlow Lite 对比
+
+*PyTorch Mobile 的优势*：
+
+- 没有转换步骤——在同一个框架里训练和部署
+- 对动态模型和控制流的支持更好
+- 调试更容易——训练和推理用同一套工具
+- 借助 Metal 后端，iOS 支持很强
+
+*TensorFlow Lite 的优势*：
+
+- 运行时体积更小（300KB 对 2-5MB）
+- 量化工具链更成熟
+- Android GPU 支持更好（GPU delegate 比 PyTorch 的 Vulkan 后端更稳定）
+- 预训练模型生态更大
+
+*何时选择 PyTorch Mobile*：你已经在用 PyTorch 训练、你更看重开发速度而非体积优化，或者你需要模型有动态行为。
+
+*何时选择 TensorFlow Lite*：体积至关重要、你需要最成熟的移动端 ML 方案，或者你已经在 TensorFlow 生态里。
+
+=== PyTorch Mobile 与 ONNX Runtime 对比
+
+*PyTorch Mobile 的优势*：
+
+- 直接部署 PyTorch——无需转换
+- 对 PyTorch 特有特性的支持更好
+- 对 PyTorch 用户来说工作流更简单
+
+*ONNX Runtime 的优势*：
+
+- 与框架无关——任何框架导出的模型都能用
+- 桌面/服务器性能更好
+- 执行提供器更多（WebGPU、DirectML、CUDA 等）
+- 移动部署时体积更小
+
+*何时选择 PyTorch Mobile*：你决定投入 PyTorch，并想要最简单的部署路径。
+
+*何时选择 ONNX Runtime*：你需要跨框架兼容性、你要部署到桌面/服务器，或者你想要最大的灵活性。
+
+=== 混合方案
+
+许多应用会同时使用多个运行时：
+
+- 在 PyTorch 中训练、需要动态行为的模型用 PyTorch Mobile
+- 体积至关重要的模型用 TensorFlow Lite
+- 桌面部署用 ONNX Runtime
+- 性能关键的算子用自定义 Vulkan 着色器
+
+这种混合方案让你兼得各家之长，代价是额外的复杂度。
+
+== PyTorch Mobile 适用的场景
+
+PyTorch Mobile 并不总是正确选择。下面是它发挥优势的场景，以及何时该考虑其他方案。
+
+=== 理想用例
+
+*以 PyTorch 为先的开发*：如果你的团队用 PyTorch 训练，并且想把部署中的摩擦降到最低，PyTorch Mobile 是自然的选择。
+
+*动态模型*：带控制流、动态形状或复杂逻辑、难以转换成其他格式的模型，受益于 PyTorch Mobile 的直接部署。
+
+*快速迭代*：当你快速迭代模型架构、不希望转换问题拖慢节奏时，PyTorch Mobile 无缝的工作流很有价值。
+
+*跨平台部署*：同一个模型在 iOS、Android 和桌面都能用，简化了多平台开发。
+
+*从研究到生产*：当你希望从研究原型快速走到生产部署，而不必用另一个框架重新实现时。
+
+=== 何时考虑其他方案
+
+*体积敏感的应用*：如果应用体积的每一 MB 都很重要，TensorFlow Lite 更小的运行时是更好的选择。
+
+*Android 上的极致性能*：TensorFlow Lite 的 GPU delegate 更成熟，在 Android 上通常也比 PyTorch Mobile 的 Vulkan 后端更快。
+
+*TensorFlow 生态*：如果你已经在用 TensorFlow，TensorFlow Lite 是自然的选择。
+
+*框架无关的部署*：如果你需要部署来自多个框架的模型，ONNX Runtime 提供更好的跨框架支持。
+
+*嵌入式系统*：对资源极其受限的嵌入式系统，可能必须用 TensorFlow Lite 那种激进的优化。
+
+== 小结
+
+PyTorch Mobile 把 PyTorch 带到移动和嵌入式设备上，从训练到部署保持同一个框架。这种连续性消除了转换问题，提供了无缝的开发者体验，代价是运行时体积比 TensorFlow Lite 更大。
+
+它的架构就是桌面版 PyTorch，通过选择性构建、TorchScript 编译、量化和算子融合为移动端做了优化。结果是 2-5MB 的运行时（比 TensorFlow Lite 大，但对大多数应用来说可以接受），性能在许多用例下都有竞争力。
+
+与 Vulkan 应用的集成遵循与 TensorFlow Lite 类似的模式，额外的好处是实验性的 Vulkan 后端支持，未来可能带来更紧密的集成。跨平台表现很扎实：iOS 通过 Metal 获得出色支持，Android 通过 Vulkan 或 OpenGL ES 获得良好支持。
+
+当你已经在用 PyTorch、需要模型有动态行为，或者更看重开发速度而非体积优化时，PyTorch Mobile 表现出色。对体积敏感的应用或追求 Android 极致性能的场景，TensorFlow Lite 可能是更好的选择。
+
+xref:ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc[上一篇：TensorFlow Lite 集成] | xref:ML_Inference/Third_Party_Libraries/05_directml.adoc[下一篇：DirectML 集成]

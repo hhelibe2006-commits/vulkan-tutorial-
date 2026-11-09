@@ -1,0 +1,551 @@
+:pp: {plus}{plus}
+
+= GPU 资源共享
+
+== 引言
+
+在把 ML 推理与 Vulkan 渲染集成时，有一个场景会反复出现：你已经把一帧渲染到纹理，现在想在这张纹理上跑 ML 推理——也许是目标检测、风格迁移，或者某种别的分析。最朴素的做法是把纹理回读到 CPU 内存，交给 ML 库，等推理结束再继续。但这么做慢得让人难受。你让 GPU 停在那里等数据传输，GPU 加速带来的性能收益被彻底浪费。
+
+还有更好的办法：*GPU 资源共享*。与其在 CPU 和 GPU 之间来回拷贝数据，不如让 Vulkan 和 ML 推理库直接共享 GPU 内存。纹理留在 GPU 上，Vulkan 渲染到它，ML 库从它读取，全程没有昂贵的 CPU 往返。这是图形应用中实现实时 ML 推理的关键。
+
+本章会探讨如何在 Vulkan 与 ML 推理库之间实现 GPU 资源共享。我们会讲到实现外部内存共享的 Vulkan 扩展、不同操作系统的平台特定机制、如何把共享内存导入各种 ML 库，以及保证正确性所需的同步原语。
+
+== 为什么 GPU 资源共享很重要
+
+在深入技术细节之前，先弄清楚为什么这件事重要，以及你能期待怎样的性能提升。
+
+=== CPU 往返的开销
+
+设想游戏或图形应用以 60 FPS 运行时的一个典型帧。你有 16.67 ms 来渲染这一帧并跑完 ML 推理。我们来走一遍没有 GPU 资源共享时发生了什么：
+
+*第 1 步：渲染到纹理*（2ms）——Vulkan 把场景渲染到一张纹理。这一步很快，GPU 在做它最擅长的事。
+
+*第 2 步：把纹理读回 CPU*（3-5ms）——你发出 vkCmdCopyImageToBuffer 命令，插入管线屏障，然后等传输完成。对于一张 1920×1080 的 RGBA 纹理，这是 8.3MB 数据。即便按 PCIe 3.0 理论上的 16 GB/s 带宽算，实际传输也会更慢，因为还有开销、同步和其他总线流量。
+
+*第 3 步：在 CPU 或独立的 GPU 上下文上做 ML 推理*（5-10ms）——ML 库处理数据。如果它用的是 GPU，就得再上传一次数据，又是一次传输。
+
+*第 4 步：读回结果*（1-2ms）——如果 ML 库产出的是 GPU 结果，你需要把它们读回 CPU，然后可能还要再传回 Vulkan。
+
+合计：11-19ms。你的 16.67ms 帧预算已经超了，而这还没算上真正的渲染工作和其他游戏逻辑。结果呢？掉帧、卡顿、糟糕的用户体验。
+
+=== 零拷贝替代方案
+
+有了 GPU 资源共享，同样的工作流是这样：
+
+*第 1 步：渲染到共享纹理*（2ms）——Vulkan 渲染到一张按外部内存支持分配出来的纹理。
+
+*第 2 步：同步*（<0.1ms）——发出信号量或栅栏，表示渲染已完成。
+
+*第 3 步：在共享内存上做 ML 推理*（5-10ms）——ML 库直接从共享 GPU 内存读取。不需要传输。
+
+*第 4 步：同步*（<0.1ms）——等推理完成后再使用结果。
+
+合计：7-12ms。你消掉了 4-7ms 的传输开销——这点差距足以决定你是踩住帧预算还是超支。对实时应用来说，这就是可行与不可行的分界线。
+
+=== 性能之外：内存效率
+
+GPU 资源共享还能降低内存占用。不做共享的话，你需要：
+
+- Vulkan 纹理内存（1080p RGBA 为 8.3MB）
+- CPU 暂存缓冲区（8.3MB）
+- ML 库的输入缓冲区（8.3MB）
+- 可能还有 ML 库的输出缓冲区（大小不定）
+
+单单一帧的数据就至少要 25MB。做共享的话，你只需要 Vulkan 纹理内存——ML 库用的是同一块内存。对于同时处理多个飞行帧或使用更高分辨率的应用，省下的内存还会成倍增长。
+
+== Vulkan 外部内存扩展
+
+Vulkan 的外部内存扩展为 GPU 资源共享提供了基础。这些扩展让 Vulkan 能分配出可以与其他 API 和进程共享的内存。
+
+=== 扩展家族
+
+有多个扩展协同工作才能启用外部内存：
+
+*VK_KHR_external_memory_capabilities*——查询设备支持哪些类型的外部内存。你在设备选择阶段用它来确认目标平台支持你需要的共享机制。
+
+*VK_KHR_external_memory*——核心扩展，定义了外部内存的结构与概念。其他扩展都在它之上构建。
+
+*VK_KHR_external_memory_fd*（Linux）——通过 POSIX 文件描述符实现共享。这是 Linux 和 Android 上的标准机制。
+
+*VK_KHR_external_memory_win32*（Windows）——通过 Windows NT 句柄实现共享。这是 Windows 上的标准机制。
+
+*VK_EXT_external_memory_dma_buf*（Linux）——通过 DMA-BUF 实现共享，这是 Linux 内核中用于在设备之间共享缓冲区的机制。在嵌入式系统以及配合硬件视频解码器时特别有用。
+
+*VK_KHR_external_semaphore* 与 *VK_KHR_external_fence*——用于共享同步原语，我们稍后会讨论。
+
+=== 检查支持情况
+
+在尝试使用外部内存之前，你需要确认设备支持它。这发生在设备选择阶段：
+
+[source,cpp]
+----
+vk::PhysicalDeviceExternalMemoryHostPropertiesEXT externalMemoryProps;
+
+vk::PhysicalDeviceProperties2 deviceProps2;
+deviceProps2.pNext = &externalMemoryProps;
+
+deviceProps2 = physicalDevice.getProperties2();
+
+// Check if external memory is supported
+vk::ExternalMemoryHandleTypeFlagsKHR supportedHandleTypes;
+
+#ifdef _WIN32
+    supportedHandleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32KHR;
+#else
+    supportedHandleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
+
+// Query if this handle type is supported for images
+vk::PhysicalDeviceExternalImageFormatInfo externalImageFormatInfo{
+    .handleType = static_cast<vk::ExternalMemoryHandleTypeFlagBits>(supportedHandleTypes)
+};
+
+vk::PhysicalDeviceImageFormatInfo2 imageFormatInfo{
+    .pNext = &externalImageFormatInfo,
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .type = vk::ImageType::e2D,
+    .tiling = vk::ImageTiling::eOptimal,
+    .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
+};
+
+vk::ExternalImageFormatProperties externalImageFormatProps;
+
+vk::ImageFormatProperties2 imageFormatProps2;
+imageFormatProps2.pNext = &externalImageFormatProps;
+
+auto result = physicalDevice.getImageFormatProperties2(&imageFormatInfo, &imageFormatProps2);
+
+if (result == vk::Result::eSuccess) {
+    // Check what operations are supported
+    bool canExport = static_cast<bool>(externalImageFormatProps.externalMemoryProperties.externalMemoryFeatures &
+                     vk::ExternalMemoryFeatureFlagBits::eExportable);
+    bool canImport = static_cast<bool>(externalImageFormatProps.externalMemoryProperties.externalMemoryFeatures &
+                     vk::ExternalMemoryFeatureFlagBits::eImportable);
+
+    if (canExport) {
+        // This device can export memory for sharing
+    }
+}
+----
+
+这次查询会告诉你设备是否支持按你需要的格式与用法导出内存。不同设备的能力不同——有些设备支持图像的外部内存但不支持缓冲区，或者支持某些格式而不支持另一些。
+
+=== 分配可导出的内存
+
+确认支持之后，你在分配内存时启用外部内存支持。关键是在分配内存时把 VkExportMemoryAllocateInfo 加入 pNext 链：
+
+[source,cpp]
+----
+// Create image with external memory support
+vk::ExternalMemoryImageCreateInfo externalMemoryImageInfo;
+#ifdef _WIN32
+    externalMemoryImageInfo.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32KHR;
+#else
+    externalMemoryImageInfo.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+#endif
+
+vk::ImageCreateInfo imageInfo{
+    .pNext = &externalMemoryImageInfo,
+    .imageType = vk::ImageType::e2D,
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .extent = {1920, 1080, 1},
+    .mipLevels = 1,
+    .arrayLayers = 1,
+    .samples = vk::SampleCountFlagBits::e1,
+    .tiling = vk::ImageTiling::eOptimal,
+    .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    .sharingMode = vk::SharingMode::eExclusive,
+    .initialLayout = vk::ImageLayout::eUndefined
+};
+
+vk::raii::Image image(device, imageInfo);
+
+// Get memory requirements
+auto memReqs = image.getMemoryRequirements();
+
+// Allocate memory with export support
+vk::ExportMemoryAllocateInfo exportInfo{
+    .handleTypes = externalMemoryImageInfo.handleTypes
+};
+
+vk::MemoryAllocateInfo allocInfo{
+    .pNext = &exportInfo,
+    .allocationSize = memReqs.size,
+    .memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits,
+                                       vk::MemoryPropertyFlagBits::eDeviceLocal)
+};
+
+vk::raii::DeviceMemory memory(device, allocInfo);
+
+// Bind memory to image
+image.bindMemory(*memory, 0);
+----
+
+关键的新增项是图像创建时的 VkExternalMemoryImageCreateInfo 和内存分配时的 VkExportMemoryAllocateInfo。它们告诉 Vulkan：这块内存需要能与外部 API 共享。
+
+=== 导出内存句柄
+
+分配好可导出的内存之后，你导出一个句柄，供其他 API 导入：
+
+[source,cpp]
+----
+#ifdef _WIN32
+    // Windows: Export as NT handle
+    vk::MemoryGetWin32HandleInfoKHR handleInfo{
+        .memory = *memory,
+        .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32KHR
+    };
+
+    HANDLE win32Handle = device.getMemoryWin32HandleKHR(handleInfo);
+
+    // This handle can now be passed to DirectML, OpenCL, or other APIs
+#else
+    // Linux: Export as file descriptor
+    vk::MemoryGetFdInfoKHR fdInfo{
+        .memory = *memory,
+        .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd
+    };
+
+    int fd = device.getMemoryFdKHR(fdInfo);
+
+    // This file descriptor can now be passed to OpenCL or other APIs
+#endif
+----
+
+这个句柄（Windows 上是 NT 句柄，Linux 上是文件描述符）是对 GPU 内存的不透明引用。你把它交给 ML 库，库再将其导入自己的内存管理系统。
+
+== 平台特定句柄类型
+
+不同操作系统在进程与 API 之间共享资源时使用不同机制。理解这些平台特定的细节，是实现健壮跨平台支持的必要前提。
+
+=== Linux：文件描述符与 DMA-BUF
+
+在 Linux 上，共享 GPU 内存的主要机制是 POSIX 文件描述符。Vulkan 把内存导出为文件描述符，其他 API 可以导入它。
+
+*POSIX 文件描述符*——标准机制。文件描述符是引用内核对象的整数。当你把 Vulkan 内存导出为文件描述符时，你拿到的是对底层内核内存对象的引用。它可与 OpenCL 以及 Linux 上大多数其他 GPU API 配合使用。
+
+*DMA-BUF*——一个专门为在设备之间共享缓冲区而设计的 Linux 内核框架。DMA-BUF 对嵌入式系统以及配合硬件视频编码器/解码器时尤其重要。Vulkan 通过 VK_EXT_external_memory_dma_buf 支持 DMA-BUF。
+
+Linux 上最需要留意的是文件描述符的所有权。文件描述符由内核做引用计数——直到所有引用它的文件描述符都被关闭，内存才会释放。当你从 Vulkan 导出一个文件描述符时，用完之后关闭它是你的责任（或者把这个责任转交给导入方 API）。
+
+=== Windows：NT 句柄
+
+在 Windows 上，机制是 NT 句柄（也叫 Win32 句柄）。它们在概念上类似文件描述符，但带有 Windows 特有的语义。
+
+*不透明句柄*——最常见的类型。这类句柄不直接暴露底层内存，而是由图形驱动管理的引用。使用 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT_KHR。
+
+*具名句柄*——带名字的句柄，可以按名字跨进程共享。适合进程间通信，但在 ML 推理场景中不那么常见。
+
+Windows 句柄的生命周期语义与 Linux 文件描述符不同。导出句柄时，你可以指定它是被复制（创建新引用）还是被转移（移交所有权）。对大多数 ML 推理场景，你要的是复制——Vulkan 和 ML 库各自持有引用，两边都释放后内存才被回收。
+
+=== macOS 与 iOS：IOSurface
+
+在 Apple 平台上，机制是 IOSurface——一个在进程与 API 之间共享表面的 macOS/iOS 框架。
+
+IOSurface 专为图像数据设计，能在 Metal（Apple 的图形 API）、Core Image、Core Video 以及其他框架之间高效共享。虽然 macOS/iOS 上的 Vulkan（通过 MoltenVK）可以与 IOSurface 协作，但集成更复杂，因为底层是在 Vulkan 与 Metal 之间做桥接。
+
+在 Apple 平台上做 ML 推理，典型做法是使用 Core ML，它与 IOSurface 天然集成。如果你用的是带 Core ML 执行提供器的 ONNX Runtime，运行时会替你处理 IOSurface 的集成。
+
+=== Android：硬件缓冲区
+
+Android 使用 AHardwareBuffer，这是一个在不同 Android 子系统之间共享缓冲区的框架。AHardwareBuffer 构建在 Linux 的 DMA-BUF 之上，但提供更高层的、Android 特有的 API。
+
+Android 上的 Vulkan 通过 VK_ANDROID_external_memory_android_hardware_buffer 支持导入与导出 AHardwareBuffer。这是与 Android 的 ML 框架（带 GPU 委托的 TensorFlow Lite、NNAPI 等）共享 GPU 内存的标准机制。
+
+AHardwareBuffer 的关键优势在于它是 Android 的原生机制——所有 Android GPU API 都认识它，平台特定的细节由 Android 框架处理。
+
+== 将内存导入 ML 库
+
+从 Vulkan 导出内存之后，你需要把它导入 ML 推理库。每个库都有自己的 API，但概念是相通的。
+
+=== 使用 OpenCL 执行提供器的 ONNX Runtime
+
+ONNX Runtime 的 OpenCL 执行提供器可以利用 OpenCL 的外部内存扩展来导入外部内存：
+
+[source,cpp]
+----
+// Get OpenCL context and device
+cl_context clContext;
+cl_device_id clDevice;
+// ... initialize OpenCL context and device ...
+
+#ifdef _WIN32
+    // Windows: Import NT handle using cl_khr_external_memory_win32
+    cl_mem_properties_khr props[] = {
+        CL_EXTERNAL_MEMORY_HANDLE_OPAQUE_WIN32_KHR,
+        (cl_mem_properties_khr)win32Handle,
+        0
+    };
+#else
+    // Linux: Import file descriptor using cl_khr_external_memory_opaque_fd
+    cl_mem_properties_khr props[] = {
+        CL_EXTERNAL_MEMORY_HANDLE_OPAQUE_FD_KHR,
+        (cl_mem_properties_khr)fd,
+        0
+    };
+#endif
+
+// Create OpenCL buffer from external memory
+cl_int err;
+cl_mem clBuffer = clCreateBufferWithProperties(
+    clContext, props, CL_MEM_READ_WRITE, memorySize, nullptr, &err);
+
+// Now clBuffer references the same GPU memory as your Vulkan image
+// You can pass this buffer to ONNX Runtime as input
+----
+
+拿到 OpenCL 缓冲区之后，你可以创建一个包装它的 ONNX Runtime 张量：
+
+[source,cpp]
+----
+// Create ONNX Runtime tensor from OpenCL memory
+std::vector<int64_t> shape = {1, 3, 1080, 1920}; // NCHW format
+Ort::MemoryInfo memoryInfo("OpenCL", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+Ort::Value inputTensor = Ort::Value::CreateTensor(
+    memoryInfo, clBuffer, memorySize, shape.data(), shape.size(),
+    ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+
+// Run inference with the shared memory tensor
+----
+
+关键点在于：ONNX Runtime 不会拷贝数据，它直接在共享的 GPU 内存上跑推理。
+
+=== 使用 GPU 委托的 TensorFlow Lite
+
+TensorFlow Lite 的 GPU 委托在 Android 上可以通过 AHardwareBuffer 使用外部内存：
+
+[source,cpp]
+----
+// Export Vulkan memory as AHardwareBuffer (Android-specific)
+vk::AndroidHardwareBufferPropertiesANDROID bufferProperties;
+
+bufferProperties = device.getAndroidHardwareBufferPropertiesANDROID(hardwareBuffer);
+
+// Create TFLite GPU delegate with external memory support
+TfLiteGpuDelegateOptionsV2 options = TfLiteGpuDelegateOptionsV2Default();
+options.experimental_flags |= TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_SERIALIZATION;
+
+TfLiteDelegate* delegate = TfLiteGpuDelegateV2Create(&options);
+
+// Import the hardware buffer into TFLite
+// (This is typically handled by TFLite's GPU delegate automatically when you
+//  provide the buffer through the appropriate API)
+----
+
+在桌面平台上，TensorFlow Lite 的 GPU 委托集成更受限。你可能需要用 OpenCL 互操作，或者退回到 CPU 与 GPU 之间的传输。
+
+=== DirectML（Windows）
+
+DirectML 本身是 DirectX 12 API，在 Windows 上通过共享 NT 句柄与 Vulkan 自然集成：
+
+[source,cpp]
+----
+// Create DirectML device
+IDMLDevice* dmlDevice;
+DMLCreateDevice(d3d12Device, DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&dmlDevice));
+
+// Import the Vulkan memory as a D3D12 resource
+D3D12_HEAP_PROPERTIES heapProps = {};
+heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+D3D12_RESOURCE_DESC resourceDesc = {};
+resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+resourceDesc.Width = 1920;
+resourceDesc.Height = 1080;
+resourceDesc.DepthOrArraySize = 1;
+resourceDesc.MipLevels = 1;
+resourceDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+resourceDesc.SampleDesc.Count = 1;
+resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+ID3D12Resource* sharedResource;
+d3d12Device->OpenSharedHandle(win32Handle, IID_PPV_ARGS(&sharedResource));
+
+// Create DirectML tensor descriptor wrapping the shared resource
+DML_BUFFER_TENSOR_DESC bufferTensorDesc = {};
+bufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
+bufferTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
+bufferTensorDesc.DimensionCount = 4;
+uint32_t sizes[] = {1, 3, 1080, 1920};
+bufferTensorDesc.Sizes = sizes;
+// ... (additional setup)
+
+// Bind the shared resource to DirectML operators
+----
+
+在 Windows 上，DirectML 的集成尤其干净，因为 Vulkan 和 DirectML 都构建在同一套底层 Windows 图形基础设施之上。
+
+== 同步：确保正确性
+
+共享内存只解决了一半问题。你还要保证操作以正确的顺序发生——ML 推理开始读取之前 Vulkan 必须完成渲染，Vulkan 使用结果之前推理必须完成。这就需要同步。
+
+=== 同步问题
+
+GPU 是异步的。你把命令缓冲区提交给 Vulkan 时，调用会立刻返回——GPU 稍后才执行这些命令。同样，你启动 OpenCL 内核或 DirectML 操作时也是立刻返回。没有同步，就会出现竞态条件：
+
+- ML 推理可能在 Vulkan 渲染完成之前就开始读取（读到不完整的数据）
+- Vulkan 可能在 ML 推理完成之前就开始渲染下一帧（覆盖仍在被读取的数据）
+- 结果可能在你期望的时候还不可见（缓存一致性问题）
+
+同步原语通过对执行顺序和内存可见性提供显式控制来解决这些问题。
+
+=== Vulkan 信号量与栅栏
+
+Vulkan 提供两种主要的同步原语：
+
+*信号量*——GPU 到 GPU 的同步。信号量在队列之间协调工作。一个队列在工作完成时发出信号量，另一个队列在开始工作前等待该信号量。
+
+*栅栏*——GPU 到 CPU 的同步。栅栏让 CPU 能等待 GPU 工作完成。你从 GPU 侧发出栅栏，然后在 CPU 侧等待它。
+
+要在外部做同步，你需要*外部信号量*和*外部栅栏*——即可以与其他 API 共享的版本。
+
+=== 外部信号量
+
+外部信号量的用法与外部内存类似：
+
+[source,cpp]
+----
+// Create exportable semaphore
+vk::ExportSemaphoreCreateInfo exportSemaphoreInfo;
+#ifdef _WIN32
+    exportSemaphoreInfo.handleTypes = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32;
+#else
+    exportSemaphoreInfo.handleTypes = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd;
+#endif
+
+vk::SemaphoreCreateInfo semaphoreInfo{
+    .pNext = &exportSemaphoreInfo
+};
+
+vk::raii::Semaphore renderCompleteSemaphore(device, semaphoreInfo);
+
+// Export the semaphore handle
+#ifdef _WIN32
+    vk::SemaphoreGetWin32HandleInfoKHR handleInfo{
+        .semaphore = *renderCompleteSemaphore,
+        .handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32
+    };
+
+    HANDLE semaphoreHandle = device.getSemaphoreWin32HandleKHR(handleInfo);
+#else
+    vk::SemaphoreGetFdInfoKHR fdInfo{
+        .semaphore = *renderCompleteSemaphore,
+        .handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd
+    };
+
+    int semaphoreFd = device.getSemaphoreFdKHR(fdInfo);
+#endif
+----
+
+然后把这个信号量导入你的 ML 库（例如 OpenCL）：
+
+[source,cpp]
+----
+// Import semaphore into OpenCL using cl_khr_semaphore extension
+cl_semaphore_properties_khr props[] = {
+#ifdef _WIN32
+    CL_SEMAPHORE_EXPORT_HANDLE_TYPES_KHR,
+    CL_SEMAPHORE_HANDLE_OPAQUE_WIN32_KHR,
+    (cl_semaphore_properties_khr)semaphoreHandle,
+#else
+    CL_SEMAPHORE_EXPORT_HANDLE_TYPES_KHR,
+    CL_SEMAPHORE_HANDLE_OPAQUE_FD_KHR,
+    (cl_semaphore_properties_khr)semaphoreFd,
+#endif
+    0
+};
+
+cl_int err;
+cl_semaphore_khr clSemaphore = clCreateSemaphoreWithPropertiesKHR(
+    clContext, props, &err);
+----
+
+现在就能在 Vulkan 与 OpenCL 之间协调了：
+
+[source,cpp]
+----
+// Vulkan: Render and signal semaphore
+vk::SubmitInfo submitInfo{
+    .commandBufferCount = 1,
+    .pCommandBuffers = &*renderCommandBuffer,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &*renderCompleteSemaphore
+};
+
+graphicsQueue.submit(submitInfo);
+
+// OpenCL: Wait on semaphore, then run inference
+clEnqueueWaitSemaphoresKHR(clQueue, 1, &clSemaphore, nullptr, 0, nullptr, nullptr);
+
+// Launch OpenCL kernels (or ONNX Runtime inference) on clQueue
+// They will wait for the semaphore before executing
+
+// OpenCL: Signal another semaphore when inference completes
+clEnqueueSignalSemaphoresKHR(clQueue, 1, &inferenceCompleteSemaphore,
+                             nullptr, 0, nullptr, nullptr);
+
+// Vulkan: Wait on inference complete semaphore before using results
+vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eAllCommands;
+
+vk::SubmitInfo submitInfo2{
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &*inferenceCompleteSemaphore,
+    .pWaitDstStageMask = &waitStage,
+    .commandBufferCount = 1,
+    .pCommandBuffers = &*postProcessCommandBuffer
+};
+
+graphicsQueue.submit(submitInfo2);
+----
+
+这样就形成了一条依赖链：Vulkan 渲染 → 发出信号量 → OpenCL 等待 → OpenCL 跑推理 → 发出信号量 → Vulkan 等待 → Vulkan 使用结果。全程在 GPU 侧，不牵涉 CPU，性能最大化。
+
+=== 时间线信号量
+
+Vulkan 1.2 引入了时间线信号量，它更加强大。与二值信号量（有信号或无信号）不同，时间线信号量带有一个 64 位计数值。你可以等待特定值、发出特定值，从而实现更复杂的同步模式。
+
+时间线信号量在流水线化时特别有用——多个飞行帧同时在跑、每帧都要做 ML 推理，而你需要追踪每个操作对应哪一帧。
+
+== 实践考量
+
+GPU 资源共享很强大，但也带来实际挑战。以下是实现健壮方案时的关键考量。
+
+=== 内存布局与格式兼容性
+
+Vulkan 和 ML 库对内存布局的预期可能不同。为了实现最优性能，Vulkan 图像使用由实现定义的平铺方式，而 ML 库通常期望线性布局（行主序、紧密打包）。
+
+要让共享生效，你通常需要使用 VK_IMAGE_TILING_LINEAR，它强制采用 ML 库能理解的线性布局。代价是性能——线性平铺在渲染时比最优平铺慢。
+
+另一种做法是：渲染时用最优平铺，在 ML 推理之前插入一次布局转换并拷贝到线性暂存图像。这会增加开销，但如果渲染性能的收益超过拷贝成本，整体可能更快。
+
+=== 格式转换
+
+Vulkan 与 ML 库可能使用不同的像素格式。Vulkan 常用 VK_FORMAT_B8G8R8A8_UNORM（BGRA），而 ML 模型往往期望 RGB 或平面 YUV 格式。你需要处理这些转换，可以在推理前用计算着色器做，也可以在预处理代码里做。
+
+=== 驱动与平台限制
+
+并非所有驱动都支持全部外部内存特性。一些较旧的驱动可能不支持外部信号量，或者只对特定内存类型支持。务必在运行时检查能力，并准备回退路径。
+
+移动平台尤其有更多限制。Android 的 AHardwareBuffer 支持因设备和 Android 版本而异。iOS 上通过 MoltenVK 的 IOSurface 集成也有不少怪癖。
+
+=== 调试
+
+GPU 资源共享出问题时，往往很难调试。症状包括：
+
+- 数据损坏（读到过期或不完整的数据）
+- 崩溃（访问已释放的内存）
+- 卡死（错误的同步导致死锁）
+
+激进地使用验证层。启用 Vulkan 验证层、OpenCL 内置的错误检查，以及 ML 库提供的任何调试工具。调试期间插入显式同步（栅栏、clFinish）来隔离时序问题。
+
+== 小结
+
+GPU 资源共享是 Vulkan 应用中高效 ML 推理的关键。通过在 Vulkan 与 ML 库之间直接共享内存，你消除了昂贵的 CPU 往返，同时降低了内存占用。
+
+基础是 Vulkan 的外部内存扩展，它允许分配可导出给其他 API 的内存。真正的共享由平台特定机制完成（Linux 上的文件描述符、Windows 上的 NT 句柄、macOS 上的 IOSurface、Android 上的 AHardwareBuffer）。
+
+每个 ML 库都有自己的外部内存导入 API——ONNX Runtime 用 OpenCL 的外部内存扩展，Android 上的 TensorFlow Lite 用 AHardwareBuffer，DirectML 用 D3D12 资源共享。各库的概念相通：从 Vulkan 导出，导入 ML 库，用外部信号量同步。
+
+最终得到的是零拷贝、GPU 到 GPU 的数据流，它让图形应用中的实时 ML 推理变得可行。实现复杂度不低，但对于苛刻的使用场景，这些性能收益不可或缺。
+
+xref:ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc[上一篇：集成模式] | xref:ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc[下一篇：数据传输优化]

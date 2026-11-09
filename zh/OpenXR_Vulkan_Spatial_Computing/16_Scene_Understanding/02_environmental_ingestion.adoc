@@ -1,0 +1,58 @@
+:pp: {plus}{plus}
+= 环境扫描：扫描数字孪生
+
+要让虚拟物体与物理世界交互，我们的引擎首先必须捕获这个世界的几何结构。这个过程被称为**环境导入**或**场景理解**。借助 `XR_MSFT_scene_understanding` 这类 OpenXR 扩展，或者跨厂商的**场景网格**功能，我们就能弥合光子与三角形之间的鸿沟。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+通过 OpenXR 扩展导入环境几何体，是实现混合现实交互的标准做法。你必须使用这些扩展，把传感器生成的网格流式传入由 Vulkan 映射的缓冲区，以确保物理世界与虚拟内容对齐。
+
+== 概念：数字孪生
+
+场景理解把杂乱无章的物理世界转化为结构化的**数字孪生**。XR 运行时利用头显的摄像头和深度传感器（例如 **LiDAR**）实时构建这个孪生体。它不是一份静态模型，而是用户环境的一个动态、持续演化的表示。
+
+1.  **空间网格化**：运行时为房间内所有可见表面生成 3D 三角网格。随着用户移动和环顾，这个网格会不断更新。
+2.  **语义标签**：运行时对网格的各个部分进行分类。引擎看到的不再只是「三角形」，而是知道：「这是一块地板」「这是一张桌子」「这是一个真人」。
+3.  **平面检测**：为了简化逻辑，运行时会识别出大块平坦表面——在放置虚拟台灯这类任务中，处理这些平面比处理完整的 3D 网格便宜得多。
+
+== 在 Vulkan 中访问网格
+
+当我们向 OpenXR 请求场景网格时，拿到的并不是一次性的一坨数据，而是订阅了一路持续更新。在我们的引擎中，我们通过创建动态的 `vk::raii::Buffer` 对象来处理，每当运行时发出环境已变化的信号时，我们就更新这些缓冲区。
+
+[source,cpp]
+----
+// Querying the scene mesh into Vulkan-mapped buffers using designated initializers
+XrSceneMeshBuffersMSFT meshBuffers{
+    .type = XR_TYPE_SCENE_MESH_BUFFERS_MSFT,
+    .vertexCapacityInput = maxVertices,
+    .vertices = reinterpret_cast<XrVector3f*>(*vertexBufferMemory),
+    .indexCapacityInput = maxIndices,
+    .indices = reinterpret_cast<uint32_t*>(*indexBufferMemory)
+};
+
+// The call that populates our Vulkan-mapped memory from the sensors
+xrGetSceneMeshBuffersMSFT(sceneHandle, meshId, &meshBuffers);
+----
+
+至关重要的是，由于这些数据是动态的，我们必须使用**时间线信号量**，确保 XR 运行时还在更新顶点时，GPU 不会试图去渲染这块空间网格。
+
+== 语义标签：有意义的交互
+
+语义标签是场景理解的「智能层」。引擎看到的不只是几何体，它还能问：「把所有标记为 **FLOOR** 的表面给我。」这让我们可以实现高层空间逻辑：
+
+*   **物理交互**：虚拟物体应当从桌面上弹开，却能穿过「空气」。
+*   **AI 导航**：角色只应走在标记为「地板」的表面上。
+*   **上下文遮挡**：如果某个网格被标记为「墙」，我们可以把它优先纳入遮挡测试，确保虚拟窗户不会渲染到物理墙壁「内部」。
+
+== 进阶：实时纹理映射与网格简化
+
+Vulkan 让我们能够把环境导入精炼到超出标准网格的程度：
+
+*   **实时纹理映射**：使用 Vulkan 的**视频采集**与**采样**扩展，你可以在计算着色器中用原始摄像头画面把物理房间的颜色投影到扫描出的几何体上，创建一个照片级真实的「数字孪生」。
+*   **物理图元简化**：运行时通常会提供高面数网格。你可以用 Vulkan 的**计算着色器**执行实时网格简化，把 OpenXR 扫描结果精简成干净的物理图元（平面/盒子），以实现更高效的碰撞检测。
+
+TIP: 关于更多细节，请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#scene_understanding[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc[下一页]

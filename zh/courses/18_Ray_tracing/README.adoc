@@ -1,0 +1,33 @@
+= SIGGRAPH 2025：基于动态渲染的 Vulkan 光线追踪实战
+
+== 资源
+
+* **主页面**：link:https://docs.vulkan.org/tutorial/latest/courses/18_Ray_tracing/00_Overview.html[这里]
+* **幻灯片可用**：link:/attachments/Vulkan%20Ray%20Tracing%20With%20Dynamic%20Rendering.pdf[这里]。
+* **源代码可用**：link:https://github.com/KhronosGroup/Vulkan-Tutorial/blob/main/attachments/38_ray_tracing.cpp[这里]。
+
+== 署名
+
+本文件夹包含 "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering" 实验的课程资料。
+
+官方活动页面：
+- https://www.khronos.org/events/siggraph-2025#vulkan-ray-tracing-lab
+
+会话详情（摘自 SIGGRAPH 日程列表）：
+
+- 标题：Hands-on Vulkan Ray Tracing With Dynamic Rendering
+- 时间：8 月 14 日星期四，11:45am–1:15pm（SIGGRAPH Lab）
+- 地点：温哥华会议中心（Vancouver Convention Centre），西翼 B 展厅（West Building, Exhibit Hall B）
+- 备注：参加需要注册 SIGGRAPH。座位有限，先到先得。
+
+作者 / 讲者：
+
+- Jose Emilio Muñoz Lopez（Arm）
+- Steve Winston（Holochip）
+
+署名说明：
+
+- 这里的教学流程与实验内容改编自上述 SIGGRAPH 2025 实验。在引用或复用本材料时，请注明上述作者。
+- 部分代码与指导内容基于开源项目 Khronos Vulkan 教程，并使用了 Vulkan-RAII 等辅助库，具体如实验说明所述。
+
+如果你发现与官方 SIGGRAPH 列表（标题、时间、地点或讲者）有任何不符，请提交 issue，以便我们尽快更正署名信息。

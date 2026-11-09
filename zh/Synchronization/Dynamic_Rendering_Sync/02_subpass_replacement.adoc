@@ -1,0 +1,63 @@
+:pp: {plus}{plus}
+= 替代子通道：无需渲染通道的同步
+
+== 子通道依赖的终结
+
+在遗留的 Vulkan“渲染通道”系统里，依赖要预先定义。如果你想先用一个 G-Buffer 通道再用一个光照通道，就得创建一个子通道依赖，指定数据如何转换和同步。这常常令人困惑，因为它把同步与实际使用这些数据的命令分开了。
+
+在**动态渲染**下，我们用直接录制在绘制调用之间的 **Synchronization 2** 屏障取代这些依赖。这种做法的直观程度要高得多。如果你的第二次绘制调用需要读取第一次的输出，就在两者之间录制一个屏障。
+
+== 一个具体例子
+
+假设你在构建一个 G-Buffer。你有一个“仅深度”通道来预填充深度缓冲区，随后是一个“主通道”，它从该深度缓冲区读取数据做 early-Z 测试。
+
+[,cpp]
+----
+// 1. Depth Pre-Pass
+commandBuffer.beginRendering(depthPrePassInfo);
+// ... record depth draw calls ...
+commandBuffer.endRendering();
+
+// 2. Synchronization Barrier
+auto depthBarrier = vk::ImageMemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests,
+    .srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests,
+    .dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead,
+    .oldLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+    .newLayout = vk::ImageLayout::eDepthAttachmentOptimal, // No layout change needed
+    .image = depthBuffer.image(),
+    .subresourceRange = subresourceRange
+};
+
+commandBuffer.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &depthBarrier});
+
+// 3. Main Pass
+commandBuffer.beginRendering(mainPassInfo);
+// ... record main draw calls ...
+commandBuffer.endRendering();
+----
+
+== 为什么这样更好
+
+-   **清晰**：你能在命令缓冲区里直接看到到底同步了什么、为什么同步。
+-   **灵活**：你可以在运行时决定同步方式，构建灵活的渲染图变得容易得多。
+-   **现代**：它与其他现代 API（如 DirectX 12）处理同步的方式一致，让你的引擎代码更易移植。
+
+使用显式屏障，你就离开了遗留渲染通道系统这个“黑盒”，走向清晰、精准的同步架构。下一节我们会看到 **Vulkan 1.4** 如何更进一步，支持高效的片内读取操作。
+
+== Simple Engine：动态渲染同步
+
+在 `Simple Engine` 中，我们在**不透明预通道**和**主通道**之间使用这种显式同步。由于没有传统渲染通道来处理这些转换，我们自己录制 `vk::ImageMemoryBarrier2`，确保深度缓冲区被正确冲刷和失效。
+
+具体来说，在 `Renderer::Render` 中你会看到这样的顺序：
+
+1.  **深度预通道**：我们为深度预通道调用 `commandBuffer.beginRendering`。
+2.  **屏障**：在 `endRendering` 之后，我们录制一个 `depthToRead2` 屏障。这个屏障把 `eLateFragmentTests`（深度写入）与下一个通道的 `eEarlyFragmentTests`（深度读取）同步起来。
+3.  **主不透明通道**：然后我们再次调用 `beginRendering` 进行主不透明颜色通道，此时它已经可以安全访问预填充的深度缓冲区。
+
+正是这种显式做法，让我们能轻松地把 **Forward+ 光照**加入 `Simple Engine`。因为深度缓冲区已经同步好了，在预通道和主通道之间插入光照剔除计算通道，只是多加一个屏障的事，无需重新设计复杂的遗留渲染通道。
+
+== 导航
+
+上一节：xref:Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc[动态渲染中的同步：无渲染通道的世界] | 下一节：xref:Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc[本地读取同步：动态渲染下的片内高效处理]

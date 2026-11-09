@@ -1,0 +1,75 @@
+:pp: {plus}{plus}
+= 最后一刻的更新
+
+要实现延迟锁存，我们需要一种机制，让 GPU 尽可能长时间地待在「就绪状态」。在 Vulkan 1.3 中，**时间线信号量**与**同步 2**的组合提供了完美的工具集。
+
+== 生态视角
+
+本章属于类别：**超越 OpenXR 标准**。
+
+OpenXR 只负责提供位姿，而「延迟锁存」这种特定的低延迟同步技术是用 Vulkan 的核心同步特性实现的。这是一项强大的优化，你用 Vulkan 亲手实现它，能得到比标准集成更好的效果。
+
+== 给管线设闸：提交前等待模式
+
+可以把时间线信号量想象成一道**数字闸门**。在「延迟锁存」循环中，我们改变了标准的操作顺序，以缩短从采样位姿到显示像素之间的时间：
+
+1.  **CPU 录制命令**：我们用占位矩阵，或帧开始时采集的「陈旧」数据，录制整个命令缓冲区。
+2.  **CPU 提交工作**：用 `vkQueueSubmit2` 把命令缓冲区提交给 GPU。
+3.  **GPU 等待**：我们让 GPU 在管线最前端（通常是顶点着色器阶段）**等待**，直到某个时间线信号量达到目标值。
+4.  **CPU 轮询**：GPU 坐在闸门前时，CPU 可以自由地持续向 OpenXR 轮询最新的头部位姿。
+5.  **发出信号**：直到最后一微秒，CPU 才更新内存中的矩阵并**发出信号**。GPU 的闸门打开，绘制调用带着尽可能最新的数据开始执行。
+
+[source,cpp]
+----
+// Configure the timeline semaphore wait info using designated initializers
+vk::TimelineSemaphoreSubmitInfo timelineSubmitInfo{
+    .waitSemaphoreValueCount = 1,
+    .pWaitSemaphoreValues = &nextValue
+};
+
+// Define the semaphore wait at the Vertex Shader stage
+vk::SemaphoreSubmitInfo waitSemaphoreInfo{
+    .pNext = &timelineSubmitInfo,
+    .semaphore = *lateLatchingSemaphore,
+    .value = nextValue,
+    .stageMask = vk::PipelineStageFlagBits2::eVertexShader
+};
+
+// Submit the command buffer
+vk::SubmitInfo2 submitInfo{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &waitSemaphoreInfo,
+    .commandBufferInfoCount = 1,
+    .pCommandBufferInfos = &commandBufferInfo
+};
+
+// The GPU will now stall at the vertex shader until the CPU signals the semaphore
+queue.submit2(submitInfo);
+----
+
+== 阶段掩码选择：在哪里等待？
+
+一个关键的性能决策是 GPU 该在*哪里*等待。在 `vk::SemaphoreSubmitInfo` 中，我们指定 `stageMask`。
+
+*   **管线顶端**：如果在这里等待，GPU 什么也不做。
+*   **顶点着色器**：如果在这里等待，GPU 仍能执行「管线顶端」的工作，比如命令解析或索引读取。只有当它真的需要顶点数据时才会停顿。
+*   **片元着色器**：对延迟锁存来说通常太晚了，因为几何体已经根据顶点位置完成了光栅化。
+
+把等待放在**顶点着色器**阶段，我们既最大化了硬件利用率，又确保投影矩阵与视图矩阵新鲜到硬件允许的程度。
+
+== 进阶：实时调度与统一缓冲区更新
+
+Vulkan 允许我们实现 OpenXR 标准本身并不原生支持的晚期绑定程度：
+
+*   **晚期绑定的统一缓冲区更新**：借助 Vulkan 的**外部主机内存**和**一致性映射**，你可以把存放变换矩阵的缓冲区直接映射到 CPU 可见内存。这样即使命令缓冲区已经提交，CPU 仍能更新头部位姿。
+*   **高优先级队列**：运行时的合成器是高优先级的，而你的应用通常不是。你可以用 Vulkan 的**优先级队列**为延迟锁存工作申请一个「高优先级」图形队列，确保你的更新不会被低优先级的后台任务抢占。
+
+== 为什么这能消除「游移」
+
+「游移」是一种让人恶心的效应：你一转头，虚拟物体就会轻微浮动或滑动。它源于**延迟间隙**——从引擎采样头部位姿到像素真正显示之间的那段时间。
+
+使用提交前等待的模式，我们把这段间隙从约 10-15ms 缩短到约 1-2ms。虚拟世界之所以感觉「锚定」在物理空间中，是因为 GPU 使用的视图矩阵在第一个顶点被处理之前仅仅几微秒才更新过。
+
+TIP: 关于同步的更多细节，请查阅官方 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#synchronization[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc[下一页]

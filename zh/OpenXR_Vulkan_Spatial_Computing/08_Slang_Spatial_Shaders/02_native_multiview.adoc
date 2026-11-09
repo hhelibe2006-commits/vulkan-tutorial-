@@ -1,0 +1,76 @@
+:pp: {plus}{plus}
+= 原生多视图
+
+**单通道立体渲染**背后的技术是**原生多视图**（`VK_KHR_multiview`）。这项特性让单次绘制调用被广播到图像数组的多个层。对于几乎总是至少有两个视图的空间计算来说，这是巨大的性能收益。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+利用 Vulkan 的原生多视图支持，是在 OpenXR 中实现高性能立体渲染的行业标准做法。它让你能以最低的 CPU 开销满足运行时的多视图要求。
+
+== CPU 开销上的胜利：为什么我们讨厌循环
+
+要理解多视图的价值，不妨看看另一种做法：**多趟循环**。
+
+1.  **循环**：对每只眼睛（0 到 1）：
+2.  **绑定**：为该眼更新视图/投影 UBO。
+3.  **绘制**：把场景的所有绘制调用重新发一遍。
+
+在复杂场景中，CPU 要做双倍的工作，往往因此变成**CPU 瓶颈**。**多视图把循环干掉了。** 你只发出*一次*绘制调用，由 GPU 的固定功能硬件负责广播。CPU 开销减半，GPU 也能保持满载。
+
+[source,cpp]
+----
+// Enabling Multiview in Vulkan 1.3 using designated initializers
+vk::RenderingInfo renderingInfo{
+    .renderArea = {{0, 0}, {xrWidth, xrHeight}},
+    .layerCount = 1, // Must be 1 when using multiview masks
+    .viewMask = 0b11, // Broadcast to Layer 0 (Left) and Layer 1 (Right)
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colorAttachment
+};
+
+commandBuffer.beginRendering(renderingInfo);
+----
+
+== 视图掩码与广播机制
+
+在标准 Vulkan 管线中，一次绘制调用针对某个特定的附件。启用多视图后，你在 `vk::RenderingInfo` 中指定一个**视图掩码**。视图掩码是一个位掩码，每个置位的位代表输出数组中的一层。
+
+*   **掩码 0b11（3）**：渲染到第 0 层（左眼）和第 1 层（右眼）。
+*   **掩码 0b1111（15）**：渲染到四层（用于四视图，Quad-Views）。
+
+使用多视图，意味着让你的引擎与运行时期望接收数据的方式保持一致。大多数运行时偏爱**基于数组的交换链**，因为它们能带来更好的硬件级并行化，以及两眼之间一致的缓存。
+
+== 硬件实现：SV_ViewID
+
+多视图启用后，GPU 会为掩码中每一个置位的位执行一次顶点着色器。在着色器里，你用 `SV_ViewID` 语义访问当前的视图索引。
+
+[source,slang]
+----
+// Using the View ID in a Slang Shader
+struct VertexOutput {
+    float4 position : SV_Position;
+    uint viewID : SV_ViewID;
+};
+
+VertexOutput main(VertexInput input, uint viewID : SV_ViewID) {
+    VertexOutput output;
+    // Load the correct eye matrix using the viewID
+    float4x4 mvp = eyeMatrices[viewID];
+    output.position = mul(mvp, float4(input.position, 1.0));
+    output.viewID = viewID;
+    return output;
+}
+----
+
+== 进阶：逐视图缩放与遮挡剔除
+
+Vulkan 允许你做比标准 OpenXR 多视图集成更细粒度的控制：
+
+*   **逐视图属性**：Vulkan 的**多视图逐视图属性**（Multiview Per-View Attributes）让你能在单次绘制调用中为每个视图索引使用不同的分辨率或着色器属性。这可以实现诸如给周边视图使用低分辨率几何体之类的优化。
+*   **跨视图依赖**：你可以用 Vulkan 的**子组操作**在不同视图的着色器调用之间共享数据。这可以实现**视图间遮挡剔除**：把一只眼睛的可见性测试结果共享给另一只，显著减少冗余工作。
+
+TIP: 关于多视图的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#VK_KHR_multiview[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc[下一页]

@@ -1,0 +1,62 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+引入**倾斜显示**与**不对称视锥**之后，我们需要摆脱 `simple_game_engine` 相机系统中「平行双眼」的假设。此实现的一个示例见 link:../../../attachments/openxr_engine/camera_component.cpp[camera_component.cpp]。
+
+== 演进相机系统
+
+在 `camera.cpp` 中，我们必须更新投影矩阵的计算方式，以处理 OpenXR 提供的不对称 FOV。
+
+[source,cpp]
+----
+// camera.cpp
+glm::mat4 Camera::getAsymmetricProjection(const XrFovf& fov, float nearZ, float farZ) {
+    float tanLeft = std::tan(fov.angleLeft);
+    float tanRight = std::tan(fov.angleRight);
+    float tanUp = std::tan(fov.angleUp);
+    float tanDown = std::tan(fov.angleDown);
+
+    float tanWidth = tanRight - tanLeft;
+    float tanHeight = tanUp - tanDown;
+
+    // Build the asymmetric projection matrix
+    glm::mat4 projection(0.0f);
+    projection[0][0] = 2.0f / tanWidth;
+    projection[1][1] = 2.0f / tanHeight;
+    projection[2][0] = (tanRight + tanLeft) / tanWidth;
+    projection[2][1] = (tanUp + tanDown) / tanHeight;
+    projection[2][2] = -farZ / (farZ - nearZ);
+    projection[2][3] = -1.0f;
+    projection[3][2] = -(farZ * nearZ) / (farZ - nearZ);
+
+    return projection;
+}
+----
+
+== 处理倾斜的视图矩阵
+
+在 `engine.cpp` 中更新相机时，我们必须确保为每只眼睛使用完整的 6-DOF 位姿，而不只是一个简单的 X 偏移。
+
+[source,cpp]
+----
+// engine.cpp
+void Engine::Update(XrTime predictedTime) {
+    // ...
+    auto [leftView, rightView] = xrContext.locateViews(predictedTime);
+
+    // Instead of a single offset, we pass the full view matrices
+    // which may include rotation (canting)
+    activeCamera->setEyeViewMatrix(0, xrPoseToMatrix(leftView.pose));
+    activeCamera->setEyeViewMatrix(1, xrPoseToMatrix(rightView.pose));
+
+    // Set the asymmetric projections we calculated above
+    activeCamera->setEyeProjectionMatrix(0, getAsymmetricProjection(leftView.fov, ...));
+    activeCamera->setEyeProjectionMatrix(1, getAsymmetricProjection(rightView.fov, ...));
+}
+----
+
+== 为什么要做这些改动？
+
+通过支持倾斜视图与不对称视锥，我们的引擎可以兼容高端的「发烧级」头显。正确的投影矩阵计算，决定了世界看起来是「对的」，还是在你转头时会觉得略有扭曲或「变形」。由于我们已经集成了 OpenXR 握手，`xrContext` 能提供这些计算所需的精确 FOV 正切值与位姿。
+
+xref:OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc[下一页]

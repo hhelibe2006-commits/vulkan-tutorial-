@@ -1,0 +1,301 @@
+= 实时相机集成
+:pp: {plus}{plus}
+:stem: latexmath
+
+到目前为止，我们一直把 ML 当作一个缓慢而从容的过程：从磁盘加载一张图像，等 GPU 慢慢处理，最后显示出结果。这对「大头贴」应用来说没问题，但如果你在构建增强现实游戏或实时机器人控制器，「最后」就远远不够了。
+
+本章我们要弥合静态推理与实时视频之间的差距。我们希望以每秒 30 帧以上（FPS）的速度处理摄像头视频流，同时不让 UI 感觉像在糖浆里跋涉。
+
+这不仅仅是让推理更快，而是关于**编排**。我们需要协调三个不同的世界：
+1.  **相机**：它按自己的节奏产出帧（例如 30 FPS 时每隔 33.3 ms 一帧）。
+2.  **推理引擎**：处理单帧需要相当长的时间（例如 40 ms 到 80 ms）。
+3.  **渲染器**：它需要以 60 FPS（每 16.6 ms）持续绘制，以保持 UI 顺滑、响应及时。
+
+== 「走走停停」的问题
+
+如果采用朴素的做法，你的代码可能长这样：
+*   捕获一帧。
+*   等待推理完成。
+*   渲染结果。
+*   重复。
+
+问题在哪？GPU 做推理时，CPU 闲着；相机等待下一次请求时，GPU 闲着。如果推理花 30 ms、渲染花 5 ms，你就只有 28 FPS——而这还是假设*别的什么*都没发生。更糟的是，UI 会感觉「抖动」，因为主线程被阻塞在等待 GPU 上。
+
+要解决这个问题，我们需要从**流水线**和**并发**的角度思考。我们希望在渲染第 N 帧的同时，对第 N-1 帧执行推理，并从相机捕获第 N+2 帧——所有这些同时进行。
+
+.异步相机推理流水线
+image::images/ML_Inference/Desktop_Applications/camera_pipeline_diagram.svg[展示相机捕获、推理与渲染之间生产者—消费者流水线的示意图,800]
+
+=== 理解延迟与吞吐量
+
+实时图形中，我们关心两个指标：
+1.  **吞吐量（FPS）**：每秒处理多少帧。越高越「顺滑」。
+2.  **延迟（Lag）**：从相机前发生物理动作，到该动作带着标签出现在屏幕上所需的时间。越低越「跟手」。
+
+使用流水线可以最大化**吞吐量**（达到 30-60 FPS），但会略微增加**延迟**（屏幕上的标签可能比现实「落后」2 到 3 帧）。对分类任务来说，这是完美的权衡。
+
+== 第 1 步：用 OpenCV 抓取帧
+
+在处理视频之前，我们需要先把它引入应用。虽然可以使用平台专有的 API（如 Windows 上的 MediaFoundation 或 Linux 上的 V4L2），但我们还是用 **OpenCV**。它成为业界标准是有原因的：跨平台，并且替我们处理相机驱动那些繁琐的细节。
+
+[source,cpp]
+----
+#include <opencv2/opencv.hpp>
+
+class Camera {
+public:
+    Camera(int id = 0) {
+        cap.open(id);
+        if(!cap.isOpened()) throw std::runtime_error("Camera not found!");
+
+        // Let's request a standard HD stream
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+    }
+
+    bool nextFrame(cv::Mat& frame) {
+        return cap.read(frame);
+    }
+
+private:
+    cv::VideoCapture cap;
+};
+----
+
+== 设计响应式流水线
+
+为保持 UI 顺滑，我们采用**生产者—消费者（Producer-Consumer）**模式。
+*   **生产者**：一个专职线程，只负责与相机打交道。一旦帧就绪，就把它推入队列。
+*   **消费者**：另一个线程，从队列中取出帧并运行 ML 模型。
+
+这样，如果某一帧的处理时间比平常长一点，既不会阻塞相机捕获下一帧，更不会阻止 Vulkan 渲染器绘制 UI。
+
+[source,cpp]
+----
+class MLPipeline {
+public:
+    void start() {
+        // Separate threads for capture and inference to keep the UI at 60 FPS
+        captureThread_ = std::thread(&MLPipeline::captureLoop, this);
+        inferenceThread_ = std::thread(&MLPipeline::inferenceLoop, this);
+    }
+
+private:
+    void captureLoop() {
+        while (running_) {
+            auto frame = camera_.grabFrame();
+
+            // Push to queue, dropping old frames if we're falling behind
+            // This ensures we always process the freshest data
+            std::lock_guard<std::mutex> lock(queueMutex_);
+            if (inferenceQueue_.size() < MAX_QUEUE_SIZE) {
+                inferenceQueue_.push(frame);
+                queueCV_.notify_one();
+            }
+        }
+    }
+
+    void inferenceLoop() {
+        while (running_) {
+            // Wait for a new frame from the capture thread
+            auto frame = waitForFrame();
+
+            // Perform the heavy lifting (Vulkan/ONNX inference)
+            auto results = classifier_.classifyMat(frame);
+
+            // Update the UI with the latest results
+            updateLatestResult(results);
+        }
+    }
+};
+----
+
+这个架构包括：
+
+- **捕获线程**：尽可能快地从相机抓帧，推入队列
+- **推理线程**：弹出帧，执行预处理 + 推理，发布结果
+- **渲染线程**（主线程）：非阻塞地读取最新结果，渲染 UI
+
+如果推理跟不上，帧会被丢弃——这比让延迟不断累积要好。
+
+== GPU 加速预处理
+
+预处理（缩放、归一化、转置）在 CPU 上开销很大。正如我们在 CPU 实现中看到的，这些步骤可能耗时 30 ms 甚至更多。把它交给 Vulkan 计算着色器，可以降到**不到 2 ms**。
+
+=== 在着色器中做双线性缩放
+
+我们不必编写复杂的插值循环，而是利用 GPU 内置的**纹理采样**硬件。当你用归一化坐标 `(u, v)` 从纹理采样时，GPU 硬件会免费替你完成双线性插值！
+
+[source,glsl]
+----
+// Inside the Preprocessing Shader
+// Sample from input texture (hardware bilinear filtering handles resize)
+vec2 uv = (vec2(outPos) + 0.5) / vec2(params.outputWidth, params.outputHeight);
+vec3 rgb = texture(inputImage, uv).rgb;
+----
+
+=== 数学归一化
+
+我们沿用之前的 ImageNet 归一化公式，只不过现在对每个像素同时并行计算。
+
+[latexmath]
+++++
+\text{vec3 normalized} = (\text{rgb} - \text{vec3}(0.485, 0.456, 0.406)) / \text{vec3}(0.229, 0.224, 0.225);
+++++
+
+=== 并行完成 NCHW 转置
+
+着色器里最棘手的部分是以**平面（NCHW）**顺序写入数据。我们把缓冲区看作三张独立的「页」（平面），据此计算输出索引。
+
+[source,glsl]
+----
+// Write in NCHW order (separate channels)
+uint pixelIdx = outPos.y * params.outputWidth + outPos.x;
+uint planeSize = params.outputWidth * params.outputHeight;
+
+// Plane 0: All Red values
+output.data[0 * planeSize + pixelIdx] = normalized.r;
+// Plane 1: All Green values
+output.data[1 * planeSize + pixelIdx] = normalized.g;
+// Plane 2: All Blue values
+output.data[2 * planeSize + pixelIdx] = normalized.b;
+----
+
+借助 `gl_GlobalInvocationID.xy`，我们为 224×224 输出中的每个像素启动一个「线程」。每个线程各自完成采样、归一化和三次写入。这就是 GPU 在这类任务上远快于 CPU 的原因。
+
+=== 预处理着色器代码
+
+[source,glsl]
+----
+#version 450
+
+// Preprocessing shader: resize + normalize + HWC→NCHW transpose
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) uniform sampler2D inputImage;  // Camera frame
+layout(set = 0, binding = 1) writeonly buffer OutputBuffer {
+    float data[];
+} output;
+
+layout(push_constant) uniform Params {
+    vec3 mean;     // ImageNet mean: [0.485, 0.456, 0.406]
+    vec3 stddev;   // ImageNet std:  [0.229, 0.224, 0.225]
+    uint outputWidth;   // 224
+    uint outputHeight;  // 224
+} params;
+
+void main() {
+    ivec2 outPos = ivec2(gl_GlobalInvocationID.xy);
+
+    if (outPos.x >= params.outputWidth || outPos.y >= params.outputHeight) {
+        return;
+    }
+
+    // Hardware-accelerated sample
+    vec2 uv = (vec2(outPos) + 0.5) / vec2(params.outputWidth, params.outputHeight);
+    vec3 rgb = texture(inputImage, uv).rgb;
+
+    // Normalization
+    vec3 normalized = (rgb - params.mean) / params.stddev;
+
+    // Planar Transpose
+    uint pixelIdx = outPos.y * params.outputWidth + outPos.x;
+    uint planeSize = params.outputWidth * params.outputHeight;
+
+    output.data[0 * planeSize + pixelIdx] = normalized.r;
+    output.data[1 * planeSize + pixelIdx] = normalized.g;
+    output.data[2 * planeSize + pixelIdx] = normalized.b;
+}
+----
+
+把相机帧作为 Vulkan 图像上传，派发计算着色器，读取结果缓冲区供推理使用。
+
+== 异步计算：高性能的秘诀
+
+在真实的 Vulkan 应用中，我们不想在每次预处理之后都调用 `device.waitIdle()`。那就像每次换挡都把车停下来。我们改用**异步计算**和**时间线信号量**，在预处理器与推理引擎之间建立非阻塞的「握手」。
+
+=== 时间线信号量握手
+
+时间线信号量是活在 GPU 上的一个计数器。我们可以告诉 GPU：「预处理任务完成后，把这个计数器加到 5。」然后，后台的 C{pp} 线程就可以专门等待计数器到达 5，再去读取数据。
+
+[source,cpp]
+----
+// 1. Submit GPU preprocessing
+uint64_t waitValue = lastProcessedFrameValue;
+uint64_t signalValue = waitValue + 1;
+
+vk::TimelineSemaphoreSubmitInfo timelineInfo;
+timelineInfo.setWaitSemaphoreValues(waitValue);
+timelineInfo.setSignalSemaphoreValues(signalValue);
+
+// Preprocessing is submitted to the COMPUTE queue
+computeQueue.submit(submitInfo);
+
+// 2. Inference thread waits for the GPU counter to reach signalValue
+vk::SemaphoreWaitInfo waitInfo;
+waitInfo.setSemaphores(*timelineSemaphore);
+waitInfo.setValues(signalValue);
+
+// This blocks the BACKGROUND thread, not the UI!
+device.waitSemaphores(waitInfo, UINT64_MAX);
+
+// 3. GPU data is ready! Now run ONNX inference.
+runInference(preprocessedBuffer);
+----
+
+这个架构让 GPU 在**图形队列**上忙于渲染主 UI 的同时，在**计算队列**上执行预处理。只有绝对必要时，两者才同步。
+
+== 渲染结果：保持 UI 响应
+
+主线程（UI）绝不应该等待推理线程。即使推理要 100 ms，UI 也应继续以 60 FPS 渲染，只显示「最近一次已知良好」的结果。
+
+=== 非阻塞地获取结果
+
+我们用 `std::atomic` 或 `std::mutex` 保护最新结果。UI 线程每帧都去「瞄一眼」这个结果。
+
+[source,cpp]
+----
+void renderFrame() {
+    // 1. Peek at the latest result (Thread-safe)
+    ClassificationResult latest;
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        latest = sharedLatestResult;
+    }
+
+    // 2. Always render the live camera feed
+    renderCameraTexture();
+
+    // 3. Overlay results if they are fresh
+    if (latest.confidence > 0.5f) {
+        drawBoundingBox(latest.rect);
+        drawTextOverlay(latest.label, latest.confidence);
+    }
+}
+----
+
+把「思考」（推理）与「看」（捕获）和「显示」（渲染）解耦之后，我们得到的是一个即使运行重型机器学习模型也依然专业、跟手的应用。
+
+== 测量真实性能
+
+调优实时 ML 应用时，你需要跟踪三个不同的数字：
+
+1.  **捕获 FPS**：受摄像头限制（通常是 30 或 60）。
+2.  **推理 FPS**：AI 每秒产生多少次「思考」。
+3.  **渲染 FPS**：屏幕重绘的次数（目标 60+）。
+
+**「滞后」指标**：你还应测量从 `camera.read()` 到 `UI.render()` 的时间。这就是你的**端到端延迟**。在一条用 MobileNetV2 优化良好的 Vulkan 流水线中，这个值应在 **60 ms 到 120 ms** 之间。
+
+== 小结
+
+实时相机分类需要多阶段的编排策略：
+
+*   **多线程流水线**：捕获、推理和渲染必须运行在不同线程中，以免其中一个拖住其他。
+*   **生产者—消费者**：基于队列的系统确保相机总有地方存放帧，AI 也总有活可干。
+*   **GPU 预处理**：用 Vulkan 计算着色器和纹理采样硬件并行完成缩放与归一化。
+*   **时间线信号量**：一种高性能的握手机制，让 GPU 计算与 CPU 推理同步而不阻塞 UI。
+*   **非阻塞 UI**：把渲染循环解耦，使应用在 AI 全力工作时仍保持可交互。
+
+现在你已经拥有一个响应灵敏的实时 ML 应用——一座连接图形世界与人工智能世界的桥梁。
+
+xref:ML_Inference/Desktop_Applications/04_ci_render_validation.adoc[上一篇：CI/CD 渲染验证] | xref:ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc[下一篇：用于自动化探索的强化学习]

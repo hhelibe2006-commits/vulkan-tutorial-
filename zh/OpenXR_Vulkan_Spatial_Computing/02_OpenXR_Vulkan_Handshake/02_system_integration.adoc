@@ -1,0 +1,99 @@
+:pp: {plus}{plus}
+= 系统集成
+
+在标准桌面应用中，我们的引擎通常负责创建 `VkInstance`，并依据自身的内部逻辑选择 `VkPhysicalDevice`。当我们转向 OpenXR 时，我们不再是唯一的决策者。我们必须先与 XR 运行时协商，确保我们的图形上下文与头显的合成器兼容。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+把 Vulkan 引擎连接到 XR 运行时，是 OpenXR 规范规定的必经流程。你必须完成这次协同握手，才能让应用与运行时高效、安全地共享资源。
+
+OpenXR 与 Vulkan 之间的桥梁是扩展 **XR_KHR_vulkan_enable2**。该扩展提供了相应机制，让 OpenXR 能够精确指定需要哪些实例扩展与设备扩展，以及为了让空间管线正常工作而必须启用的特定特性标志。
+
+== 架构边界：为什么需要握手？
+
+要理解为什么这次协商必不可少，我们得看看 **OpenXR 运行时**（例如 SteamVR、Meta Link 或 Monado）在幕后做了些什么。与标准的窗口系统不同，XR 运行时通常作为一个独立的高优先级系统服务或进程运行。
+
+*   **进程隔离**：运行时管理物理硬件（摄像头、IMU 与显示器），并执行**异步重投影**这类关键任务——当我们的引擎错过帧截止时间时，对最终图像做扭曲。
+*   **VRAM 共享**：由于运行时与我们的引擎是独立进程，它们必须共享对 GPU 内存的访问。这是一次「零拷贝」交接，双方看到的是相同的物理内存地址。
+*   **校验**：当你调用 `xrCreateSession` 时，运行时会校验你提供的 `VkInstance` 与 `VkDevice` 是否是用它要求的扩展创建的。
+
+这次握手是我们告诉操作系统和 XR 运行时的方式：「我们说的是同一种 Vulkan 方言，用的是同一批扩展，看的是同一块物理芯片。」
+
+== 查询 XR 图形要求
+
+在创建 Vulkan 实例之前，我们必须先初始化 OpenXR 实例，并用 `xrGetVulkanGraphicsRequirements2KHR` 查询我们目标系统（即头显）的图形要求。
+
+该调用会填充 `XrGraphicsRequirementsVulkanKHR` 结构体，其中包含两项关键信息：
+
+1.  **minApiVersionSupported**：运行时支持的最低 Vulkan 版本。
+2.  **maxApiVersionSupported**：运行时经过测试的最高 Vulkan 版本。
+
+由于我们的目标是 Vulkan 1.3，必须确认所选版本落在这个区间内。大多数现代运行时都在快速更新以支持最新规范，从而确保我们能用到所需的先进同步工具。
+
+== 协同式引擎初始化
+
+我们需要修改引擎的初始化逻辑，以便接受这些外部要求。与其硬编码一份静态的实例扩展列表，不如执行一次协同握手：
+
+1.  **查询 OpenXR**：用 `xrGetVulkanInstanceExtensionsKHR` 向运行时索取它强制要求的实例扩展。
+2.  **合并并初始化**：把这些 OpenXR 要求与引擎自身必需的扩展（例如 `VK_EXT_debug_utils`）合并，然后创建实例。
+
+[source,cpp]
+----
+// Example of merging requirements in our Engine's initialization using designated initializers
+std::vector<const char*> instanceExtensions = engineDefaults.getInstanceExtensions();
+
+// 1. Query the length of the extension string
+uint32_t xrExtensionCount = 0;
+xrGetVulkanInstanceExtensionsKHR(xrInstance, systemId, 0, &xrExtensionCount, nullptr);
+
+// 2. Retrieve the space-separated string
+std::string xrExtensionString(xrExtensionCount, '\0');
+xrGetVulkanInstanceExtensionsKHR(xrInstance, systemId, xrExtensionCount, &xrExtensionCount, xrExtensionString.data());
+
+// 3. Parse the string into individual extension names
+std::stringstream ss(xrExtensionString);
+std::string extension;
+while (ss >> extension) {
+    if (std::find(instanceExtensions.begin(), instanceExtensions.end(), extension) == instanceExtensions.end()) {
+        instanceExtensions.push_back(strdup(extension.c_str()));
+    }
+}
+
+vk::ApplicationInfo applicationInfo{
+    .pApplicationName = "SpatialEngine",
+    .applicationVersion = 1,
+    .pEngineName = "VulkanSpatial",
+    .engineVersion = 1,
+    .apiVersion = VK_API_VERSION_1_3
+};
+
+vk::InstanceCreateInfo createInfo{
+    .pApplicationInfo = &applicationInfo,
+    .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+    .ppEnabledLayerNames = layers.data(),
+    .enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size()),
+    .ppEnabledExtensionNames = instanceExtensions.data()
+};
+
+vk::raii::Instance instance(context, createInfo);
+----
+
+[IMPORTANT]
+====
+**字符串解析陷阱**：`xrGetVulkanInstanceExtensionsKHR` 以一个以空格分隔的字符串返回所需扩展（例如 `"VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2"`）。你必须手动解析这个字符串，把它拆成一个个 `const char*` 条目，再传给 `vk::InstanceCreateInfo`。
+====
+
+== 零拷贝效率：Vulkan 的高级优势
+
+这次握手的终极目标是**零拷贝效率**。如果我们选了一块 XR 运行时无法通信的 GPU，操作系统就不得不把最终渲染帧经由系统内存拷贝到连接头显的显示器。这会彻底毁掉我们的帧预算，并引入「抖动」——那种在 XR 中引发晕动症的视觉卡顿。
+
+运行时为图形握手提供了强制要求的扩展，而 Vulkan 允许我们走得更远：
+
+*   **启用自定义性能分析扩展**：握手不会自动启用 `VK_EXT_calibrated_timestamps` 这类引擎专属工具。Vulkan 允许你把这些自定义要求合并进由 XR 驱动的初始化过程中，从而获得 OpenXR 标准本身并不直接提供的深度性能洞察。
+*   **拦截 API 调用以进行调试**：借助 Vulkan 的层系统，你可以拦截运行时发往 GPU 的内部命令，从而调试 OpenXR-Vulkan 桥接层内出现的同步问题或资源泄漏。
+
+TIP: 更多细节请参阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#XR_KHR_vulkan_enable2[XR_KHR_vulkan_enable2 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc[下一页]

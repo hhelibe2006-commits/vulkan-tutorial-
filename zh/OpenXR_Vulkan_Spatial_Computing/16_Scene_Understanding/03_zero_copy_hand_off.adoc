@@ -1,0 +1,58 @@
+:pp: {plus}{plus}
+= 传感器数据的零拷贝交接
+
+实时场景理解需要把传感器数据（例如深度图或摄像头画面）直接送到 GPU，不经 CPU 干预，以尽量降低延迟。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+使用 Vulkan 的外部内存扩展导入运行时分配的传感器缓冲区，是实现高性能混合现实的标准做法。你必须使用这些扩展，才能在头显的传感器与你的计算着色器之间启用直接内存访问（DMA）。
+
+== 概念：直接内存访问（DMA）
+
+在零拷贝交接中，OpenXR 运行时把传感器数据直接采集进一块我们的 Vulkan 引擎可见的 GPU 缓冲区，完全绕过主机处理器，靠的就是 **DMA**（直接内存访问）。
+
+1.  **VRAM 分配**：运行时或操作系统驱动为传感器数据分配 VRAM。
+2.  **外部内存句柄**：OpenXR 提供指向这块内存的句柄（例如通过 `VK_KHR_external_memory`）。
+3.  **引擎导入**：我们的引擎导入这个句柄，把它包装成 `vk::raii::DeviceMemory` 对象。
+4.  **计算访问**：我们的计算着色器就地处理这些原始数据。
+
+== 实现：把数据送入计算
+
+绕过 CPU 之后，传感器数据以 GPU 内部总线的速度流动，使 **Motion-to-Photon 延迟**保持在人类感知阈值以下。我们用指定初始化器来配置内存分配与导入：
+
+[source,cpp]
+----
+// Importing external sensor memory using designated initializers
+vk::ImportMemoryBufferInfoKHR importInfo{
+    .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd, // OpaqueFd for Linux/Android
+    .handle = sensorMemoryHandle
+};
+
+vk::MemoryAllocateInfo allocInfo{
+    .pNext = &importInfo,
+    .allocationSize = sensorDataSize,
+    .memoryTypeIndex = findSensorCompatibleMemoryType()
+};
+
+// RAII handle automatically manages the lifetime of the imported memory
+vk::raii::DeviceMemory importedMemory(device, allocInfo);
+----
+
+运行时负责协调 DMA 传输，并且可能「别名」物理内存，让追踪服务和你的引擎同时看到同一帧，而不必复制。
+
+== 为什么零拷贝对 MR 至关重要
+
+在混合现实（MR）中，用户通过**透视（Passthrough）**观看真实世界。哪怕只有 20ms 的延迟，也会造成令人不适的割裂感。零拷贝交接确保传感器数据以最低延迟到达，维持住虚拟世界与物理世界占据同一空间的错觉。
+
+== 进阶：传感器降噪与高频注入
+
+Vulkan 让我们能把传感器数据精炼到超出标准数据流的水平：
+
+*   **即时处理**：借助 Vulkan 的**硬件加速器**，你可以对原始传感器数据运行专门的降噪或深度补全着色器，得到比原始 OpenXR 数据流更干净的数字孪生。
+*   **高频注入**：你可以用 Vulkan 的**异步传输队列**，把传感器数据的插值与你 90Hz 的渲染循环并行执行，即使传感器上报频率较低（例如 30Hz），也能保证虚拟遮挡物始终完美对齐。
+
+TIP: 关于外部内存与零拷贝传输的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#external-memory[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc[下一页]

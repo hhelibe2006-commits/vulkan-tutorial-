@@ -1,0 +1,136 @@
+:pp: {plus}{plus}
+
+= 集成第三方 ML 库：简介
+
+== 简介
+
+直说吧：对大多数应用来说，你不该从零构建自己的 ML 推理引擎。上一章给了你基础理解——神经网络如何工作、推理意味着什么，以及它如何映射到 GPU 执行。这些知识很有价值——它能帮你做出有依据的决策、调试问题、优化性能。但当真正要在生产环境部署 ML 模型时，明智的选择通常是利用现成的、久经考验的库。
+
+在一套讲用 Vulkan 做 ML 推理的教程里，这似乎自相矛盾。既然这一系列其余部分教你构建自己的推理引擎，为什么还要花时间了解第三方库？因为同时理解两种路线——并知道何时分别使用它们——才能让你成为一名高效的工程师。
+
+本章探讨如何把第三方 ML 推理库集成进你的 Vulkan 应用。你会学到如何在 ML 框架与 Vulkan 渲染管线之间搭桥、高效共享 GPU 资源、在推理与渲染之间同步，以及针对具体需求选择合适的库。
+
+== 三路线理念
+
+本教程采用一种独特的教学方式：在整个系列中，只要可能，我们就提供*三种方式*来达成你的 ML 推理目标。
+
+*路线 1：第三方库*——大多数生产应用推荐的做法。你会学到如何把成熟、久经考验的 ML 框架集成进 Vulkan 应用。
+
+*路线 2：自定义 Vulkan 实现*——用 Vulkan 计算着色器构建你自己的推理引擎。这条路线教你在 GPU 层面理解 ML 推理真正如何运作。在本教程中，这基本上是学术练习，但理解它对于高级优化和调试至关重要。AI 是计算机科学中一门非常精深的专业方向，本教程只能讲基础。如果你发现自己的需求需要在着色器开发中完成完整的推理，我已尽量把它做成一个不错的起点；但绝不要以为这是一份关于 AI 的全面指南。
+
+*路线 3：ML 编译器*——用 ML 编译器把你的模型下沉为优化后的内核和一个极简运行时（通常通过 SPIR‑V 面向 Vulkan）。这能带来超越通用运行时的性能和可移植性，而不需要你手写 Vulkan 着色器。
+
+为什么三条都教？因为熟悉内部核心概念的人，更能理解在生产中该如何使用这些库和编译器。当你理解了卷积如何映射到 GPU 操作、内存如何管理、同步在哪里重要，你在调试、优化、决策和架构设计上都会更出色。
+
+目标不是让你只选一条路——而是让你对三条路都有核心的理解，这样你就能为每种情况选对工具，并有效地运用这份理解。
+
+== 为什么要用第三方库？
+
+生产级 ML 库（TensorFlow Lite、ONNX Runtime、PyTorch Mobile、DirectML）有明显优势：
+
+*久经考验的实现*：投入了数千人年的工程努力，部署在数百万个应用中。它们处理边界情况、数值稳定性、平台怪癖和安全问题。
+
+*广泛的算子支持*：已有数百个算子实现（卷积、池化、归一化、注意力机制、嵌入等）。每个算子都针对不同的输入尺寸、数据类型和硬件做过优化。
+
+*硬件加速*：自动使用专用的 AI 硬件——Apple Neural Engine、Qualcomm Hexagon DSP、NVIDIA Tensor Core、AMD Matrix Core、Intel AMX，以及各种 NPU。生产级库能利用那些仅靠 Vulkan 计算着色器无法触及的硬件。
+
+*持续维护*：为新算子、性能改进、缺陷修复、硬件支持和安全补丁不断更新。Vulkan 应用只要升级库版本，就能享受到持续改进。
+
+*缩短开发时间*：ML 推理在几天甚至几小时内跑通，而不是花上几个月去实现、调试和优化。
+
+== 什么时候自定义 Vulkan 实现才合理
+
+尽管有这些优势，在特定场景下自定义实现才是正确的选择：
+
+*与图形紧密集成*：当 ML 特性（超分辨率、降噪、程序化生成）需要每一帧都跑在你现有的 Vulkan 渲染管线里时。自定义实现消除了独立 GPU 上下文之间的数据传输和上下文切换，每帧能省下几毫秒。这些特性通常是相当小且简单的网络，规模上正好适合用计算着色器实现。
+
+*渲染类 AI 技术*：高斯泼溅、神经渲染以及面向图形的 AI 方法通常使用算子集有限的轻量架构。自定义实现能为帧率关键的技术提供激进的优化。
+
+*嵌入式与资源受限平台*：支持 Vulkan 但不支持标准 ML 框架的专用硬件。自定义实现能精确控制内存占用、二进制体积和执行——这对工业设备、汽车系统、航空航天应用或 IoT 设备必不可少。不过必须说，其他方案在这些领域可能同样适用甚至更合适，例如 OpenCL 或 SyCL。有时你需要图形能力，而你的嵌入式系统里已经有一个 Vulkan 上下文了。
+
+*新颖的模型架构*：前沿研究模型会用到标准框架尚不支持的算子。自定义实现为最新论文或领域特定算子提供了灵活性。此外，神经渲染和程序化生成方面的图形研究，由于算子本身很独特，往往也需要自定义实现。
+
+*学习与理解*：即使最终使用生产级库，在 Vulkan 层面理解 ML 推理也会让你在调试、优化和架构决策上更胜一筹。
+
+== 混合方案
+
+实践中，很多应用采用混合方案：大部分推理负载用生产级库，特定的性能关键或需要紧密集成的组件用自定义 Vulkan 实现。
+
+例如，一个游戏可以用 ONNX Runtime 处理复杂的 AI 行为（NPC 决策、策略规划、对话生成），用自定义 Vulkan 着色器做实时超分辨率和降噪，再用 TensorFlow Lite 在移动端部署较简单的模型。
+
+这样你两边的优点都能拿到：在合适的地方享受生产级库的可靠性和广泛支持，在最重要的地方获得自定义实现的性能和集成优势。
+
+== 本章内容
+
+本章全面覆盖如何把第三方 ML 库集成进 Vulkan 应用：
+
+=== 各库专属章节
+
+*xref:ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc[ONNX Runtime 集成]*——微软的、与框架无关的跨平台推理引擎。支持来自 PyTorch、TensorFlow 及其他框架的模型。通用跨平台加速推荐使用 **WebGPU** 执行提供器（原生利用 **Vulkan** 或 **DirectML**），同时也支持 **CUDA** 这类专用提供器来做硬件专属优化。
+
+*xref:ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc[TensorFlow Lite 集成]*——Google 面向移动端的库，针对体积、效率和续航做了优化。对模型压缩有出色的量化支持。面向移动平台（Android、iOS）时的最佳选择。
+
+*xref:ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc[PyTorch Mobile 集成]*——Facebook 的移动推理方案，与 PyTorch 训练工作流紧密集成。当你已经在用 PyTorch 训练，并希望通过 TorchScript 实现从训练到部署的无缝衔接时，它最理想。
+
+*xref:ML_Inference/Third_Party_Libraries/05_directml.adoc[DirectML 集成]*——微软基于 DirectX 12 的 ML 库，在 Windows 上提供与厂商无关的 GPU 加速。支持 NVIDIA、AMD 和 Intel 的 GPU。最好通过 ONNX Runtime 的 DirectML 执行提供器来使用。
+
+=== 集成与优化章节
+
+*xref:ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc[集成模式]*——连接 Vulkan 与 ML 库的三种基本做法：独立上下文（简单、经 CPU 中转）、共享资源（GPU 内存共享）和交错执行（统一命令流）。
+
+*xref:ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc[GPU 资源共享]*——使用 Vulkan 外部内存扩展、平台特定句柄类型和跨上下文同步原语实现零拷贝数据传输的技术细节。
+
+*xref:ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc[数据传输优化]*——最小化传输开销的技巧、异步传输队列、内存映射策略，以及为提升吞吐量而做的批处理。
+
+*xref:ML_Inference/Third_Party_Libraries/09_practical_examples.adoc[实战示例]*——面向桌面、移动和实时应用的完整可运行示例，含源码、构建说明和性能分析。
+
+*xref:ML_Inference/Third_Party_Libraries/10_choosing_library.adoc[选择合适的库]*——一个系统化的决策框架，考虑平台支持、性能需求和集成复杂度，并针对不同用例给出推荐矩阵。
+
+=== ML 编译器章节
+
+*xref:ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc[ML 编译器：概览与使用时机]*——ML 编译器是什么，以及何时使用它们。
+*xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE（OpenXLA）：面向 ML 的提前编译与 JIT 编译]*——以 Vulkan 为中心的编译器/运行时，提供 AOT/JIT 选项，面向移动端与桌面。
+*xref:ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc[Apache TVM：端到端编译器栈]*——带自动调优和 Vulkan/OpenCL 后端的端到端编译器栈。
+*xref:ML_Inference/Third_Party_Libraries/14_mojo_max.adoc[Mojo / MAX：来自 Modular 的编译器驱动推理]*——Modular 出品、由编译器驱动的推理，工作流对开发者友好。
+*xref:ML_Inference/Third_Party_Libraries/15_openxla.adoc[OpenXLA：XLA、StableHLO 以及 Vulkan 的定位]*——XLA/StableHLO 生态，支持多种后端，包括经由 IREE 的 Vulkan。
+*xref:ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc[选择合适的 ML 编译器]*——在不同编译器和模型格式之间做选择的指引（包括对 NNEF 的考量）。
+
+== 如何阅读本章
+
+本章既可作为教程，也可作为参考手册。下面是如何高效地使用它：
+
+*如果你刚接触 ML 库集成*：按顺序读各库专属章节（02-05）来了解你的选择，然后进入集成模式（06-08）学习实现技巧。
+
+*如果你已经知道自己需要哪个库*：直接跳到那个库的章节（例如面向移动端，就直接去 TensorFlow Lite）。然后读集成章节（06-08）获取实现指引。
+
+*如果你在优化已有的集成*：重点看第 07-08 章（GPU 资源共享与数据传输优化）中的高级技巧。
+
+*如果你在几个库之间犹豫*：先从第 10 章（选择合适的库）入手，那里有系统化的决策框架，然后再读相关的库章节。
+
+*如果你只关心一个平台*：可以跳过不支持该平台的库。例如，如果只面向 Windows 桌面，可以跳过 PyTorch Mobile，专注于 ONNX Runtime 加 DirectML。
+
+== 前置知识
+
+本章假定你已熟悉以下内容：
+
+*Vulkan 基础*：你应当理解 Vulkan 内存管理、命令缓冲区、同步原语（屏障、信号量、栅栏）以及计算管线。如果需要复习，请回看主 Vulkan 教程。
+
+*ML 推理基础*：你应当理解什么是神经网络推理、数据如何在网络中流动，以及张量、层、算子这些基本概念。上一章（ML 推理管线）提供了这一基础。
+
+*C/C++ 编程*：示例使用带现代特性（C++17/20）的 C++。你应当熟悉 RAII、智能指针和基本的模板用法。
+
+*构建系统*：示例使用 CMake。你应当知道如何配置和构建 CMake 项目。
+
+你不需要事先用过我们要讲的这些 ML 库——它们每一个都会从零介绍。
+
+== 关于实用性的一点说明
+
+本章是整个教程系列中最具即时实用性的一章。系列其余部分教你在底层理解 ML 推理如何工作，而本章告诉你在今天的生产应用里如何真正部署 ML 模型。
+
+对大多数读者来说，本章可以直接用在自己的项目上。你会学到能立刻上手的模式和技巧。后面讲构建自定义推理引擎的章节对理解原理和特殊用例很有价值，但对大多数应用而言，本章才是理论照进实践的地方。
+
+话虽如此，即使你打算使用生产级库，也不要跳过后面的章节。理解推理在底层如何运作——哪些算子开销大、内存如何管理、哪里需要同步——会让你在使用和优化基于库的方案时高效得多。
+
+我们从考察主要的 ML 推理库开始，弄清每一个都能提供什么。
+
+xref:ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc[上一篇：心智模型：GPU 执行] | xref:ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc[下一篇：ONNX Runtime 集成]

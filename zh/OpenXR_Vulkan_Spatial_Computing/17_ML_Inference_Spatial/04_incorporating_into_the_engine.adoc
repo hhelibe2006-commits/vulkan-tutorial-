@@ -1,0 +1,76 @@
+:pp: {plus}{plus}
+= 将 ML 推理集成到引擎中
+
+集成 **ML 推理**让我们的 `simple_game_engine` 能够执行高层的空间细化。为此，我们给 `Renderer` 增加一个专门的计算通道，利用**协作矩阵**来获取最大吞吐量。*目前这部分留给读者作为练习实现。*
+
+== 集成推理通道
+
+在 `renderer_rendering.cpp` 中，我们在 `Renderer::render()` 循环里引入了一个专门步骤。这个通道必须在我们摄取最新传感器数据之后、把该数据用于遮挡或物理之前执行。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::executeSpatialInference(vk::raii::CommandBuffer& cmd, uint32_t frameIndex) {
+    if (!xrMode || !mlEnabled) return;
+
+    // 1. Bind the specialized ML compute pipeline
+    // This pipeline is configured with VK_KHR_cooperative_matrix enabled
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *mlInferencePipeline);
+
+    // 2. Bind descriptors for weights, raw sensor data, and refined output
+    cmd.bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute,
+        *mlPipelineLayout,
+        0,
+        *mlDescriptorSets[frameIndex],
+        nullptr
+    );
+
+    // 3. Dispatch the ML kernel
+    // We dispatch in subgroup-sized tiles (e.g., 16x16 fragments)
+    uint32_t groupsX = (inferenceWidth + 15) / 16;
+    uint32_t groupsY = (inferenceHeight + 15) / 16;
+    cmd.dispatch(groupsX, groupsY, 1);
+
+    // 4. Memory Barrier: Ensure ML results are visible to subsequent vertex/fragment stages
+    vk::MemoryBarrier2 refinementBarrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eVertexAttributeInput |
+                         vk::PipelineStageFlagBits2::eFragmentShader,
+        .dstAccessMask = vk::AccessFlagBits2::eAttributeRead |
+                         vk::AccessFlagBits2::eShaderRead
+    };
+
+    vk::DependencyInfo dependencyInfo{ .memoryBarrierCount = 1, .pMemoryBarriers = &refinementBarrier };
+    cmd.pipelineBarrier2(dependencyInfo);
+}
+----
+
+== 在引擎中管理 ML 权重
+
+神经网络的权重本质上就是巨大的静态数组。在 `resource_manager.cpp` 中，我们把它们当作一种专门的资产类型，从磁盘加载进使用 `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` 的高性能 `vk::raii::Buffer`。
+
+[source,cpp]
+----
+// resource_manager.cpp
+std::shared_ptr<Buffer> ResourceManager::loadMLWeights(const std::string& path) {
+    auto rawWeights = loadBinaryFile(path);
+
+    // Create a staging buffer and then transfer to GPU-local memory
+    // for optimal cooperative matrix loading speed
+    return createGpuLocalBuffer(
+        rawWeights.size(),
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+        rawWeights.data()
+    );
+}
+----
+
+== 为什么要做这些改动？
+
+把 ML 推理通道直接放进 `Renderer`，并使用 **Vulkan 1.3** 的同步机制（同步 2），我们就能确保空间细化发生在数据被真正需要之前的最后一微秒。这缩短了 **Motion-to-Photon** 的间隔。此外，把权重当作标准的引擎资源来处理，我们就能热重载不同的 ML 模型（例如从高性能的「移动」模型切换到高保真的「桌面」模型），而无需重启引擎。
+
+这次集成把我们的引擎从一个简单的光栅化器，变成一个能理解并响应用户物理环境的、具备上下文感知的空间平台。
+
+xref:OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc[下一页]

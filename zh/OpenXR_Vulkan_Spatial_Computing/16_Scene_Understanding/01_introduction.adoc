@@ -1,0 +1,10 @@
+:pp: {plus}{plus}
+= 场景理解：数据导入与语义标签
+
+在前面的章节中，我们专注于把虚拟物体渲染到真实世界里。但真正的空间计算是双向的。要创造出令人信服的交互——比如虚拟球从你真实的咖啡桌上弹开，或者虚拟角色躲在你真实的沙发后面——我们的引擎需要「看见」并「理解」物理环境。
+
+这就是**场景理解**的领域。在本章中，我们将探索 OpenXR 运行时如何利用 **LiDAR**（激光雷达，Light Detection and Ranging）和深度相机等传感器，构建用户房间的动态 3D 模型。我们将学习如何把这些数据作为**空间网格**导入，如何用**语义标签**区分「地板」与「人」，以及如何通过**零拷贝交接**把数据直接送入我们的 Vulkan 计算管线，从而实现超低延迟。
+
+到本章结束时，你将理解如何把杂乱无章的物理世界转化为结构化的几何体，让我们的引擎可以像对待任何其他 3D 资产一样对待它。
+
+xref:OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc[下一页]

@@ -1,0 +1,375 @@
+:pp: {plus}{plus}
+
+= ONNX Runtime 集成
+
+== 简介
+
+当你准备把 ML 模型部署到生产环境时，ONNX Runtime 是现有方案中最通用、最强大的选择之一。它由微软开发，背后有一个广泛的行业联盟支持，要解决的是一个根本问题：如何把在不同框架中训练出来的模型，高效地跑在各种各样的硬件上？
+
+想想典型的 ML 工作流。你的研究团队可能因为 PyTorch 灵活、便于实验而偏爱它；你的生产基础设施可能围绕别的工具搭建；部署目标则可能从搭载 NVIDIA GPU 的高端服务器，到使用 AMD 或 Intel 显卡的 Windows 桌面，再到资源受限的嵌入式设备。ONNX Runtime 把这些鸿沟全部填平。
+
+本章深入探讨 ONNX Runtime——它是什么、为什么我们把它作为 Vulkan 应用的首选推荐、如何安装配置，以及如何把它高效地集成进你的渲染管线。
+
+== 什么是 ONNX Runtime？
+
+ONNX Runtime 是面向机器学习模型的高性能推理引擎。但这个简单的描述并没有体现它的特别之处。我们逐条拆解它的关键特征。
+
+=== 与框架无关的设计
+
+ONNX Runtime 里的“ONNX”代表 Open Neural Network Exchange——一种表示神经网络的标准化格式。这种格式充当 ML 框架之间的通用翻译器。
+
+你可以在 PyTorch 中训练模型，导出为 ONNX 格式，再用 ONNX Runtime 运行；也可以在 TensorFlow 中训练、导出为 ONNX，再用 ONNX Runtime 运行；或者使用 Keras、scikit-learn，以及任何其它支持 ONNX 导出的框架。训练框架于是变成你根据“什么最利于开发”所做的选择，而不再是把你锁死在某条部署路径上的约束。
+
+这种框架独立性让人解放。研究团队可以随心所欲地挑工具，生产系统则使用 ONNX Runtime。两者解耦，只通过 ONNX 格式相连。
+
+=== 跨平台支持
+
+ONNX Runtime 可以运行在 Windows、Linux、macOS、Android、iOS 以及各种嵌入式平台上。同一个模型文件、同一套 API，在所有这些平台上都能用。集成代码写一次，就能到处部署。
+
+这种跨平台一致性在 ML 世界里并不多见。很多框架都有平台特有的怪癖：不同平台上 API 不同，或者对某些操作系统支持有限。ONNX Runtime 提供的是一致、统一的体验。
+
+=== 多种执行提供程序
+
+ONNX Runtime 真正出彩的地方在这里：它支持多个“执行提供程序”（execution provider）——真正执行推理的后端。我们的首要建议是用 **WebGPU** 获得“写一次、到处运行”的体验；只有在针对特定硬件做加速时，才去选特定的提供程序：
+
+*   **WebGPU 执行提供程序**：通用跨平台 GPU 计算的现代标准。它在 Windows、Linux、Android 和 macOS 上都能工作，并自动选择最合适的底层 API。在 Windows 上它利用 **DirectML**（DirectX 12），在 Linux 和 Android 上则使用 **Vulkan**。如果你希望应用能通用地跑在几乎所有现代硬件上，这是最好的选择。
+
+*   **DirectML 执行提供程序**：使用微软的 DirectML API，在 Windows 上实现硬件加速的机器学习。虽然 WebGPU 在 Windows 上底层用的就是它，但如果你的应用只面向 Windows，并且想更直接地利用它的原生性能，可以显式选用 DirectML 提供程序。
+
+*   **CPU 执行提供程序**：利用 Intel MKL-DNN 或 ARM Compute Library 等库做优化的 CPU 推理。没有可用的 GPU 时，它能作为可靠的兜底方案，在任何地方都能工作。
+
+*   **CUDA / TensorRT 执行提供程序**：利用 NVIDIA 特有的硬件特性，例如 Tensor Core。它们会把你锁在 NVIDIA 硬件上，但能带来可观的加速，适合服务端部署，或 Jetson 这类 NVIDIA 专用嵌入式设备。
+
+*   **OpenVINO 执行提供程序**：专门针对 Intel 硬件（CPU、集成 GPU、VPU）优化。
+
+*   **CoreML 执行提供程序**：利用苹果的 CoreML 框架，在 iOS 和 macOS 上访问 Apple Silicon 的神经引擎，以获得最高效率。
+
+关键结论：想通用地到处运行，就用 **WebGPU**；只有当你需要某一厂商硬件带来的额外性能时，才切换到 **DirectML** 或 **CUDA** 这样的特定提供程序。
+
+== 为什么 Vulkan 应用要选 ONNX Runtime？
+
+既然本教程聚焦于基于 Vulkan 的图形应用，为什么我们推荐 ONNX Runtime 作为 ML 推理的首选方案？
+
+=== 优势互补
+
+Vulkan 给你对 GPU 渲染的底层控制，ONNX Runtime 给你高层、经过优化的 ML 推理。二者互补得恰到好处。
+
+对大多数 ML 工作负载来说，你并不需要 Vulkan 在渲染中提供的那种控制粒度。你不需要管理每一个缓冲区分配、每一个同步点、每一次着色器派发。你只需要推理跑得快、结果正确。这些复杂性交给 ONNX Runtime 处理。
+
+这让你能把工程精力集中在最重要的地方：应用的独特之处——渲染管线、用户体验、游戏机制、创意功能。ML 推理就交给 ONNX Runtime。
+
+=== 通过 WebGPU 实现跨厂商 GPU 支持
+
+以 CUDA 为中心的工作流会把你锁在 NVIDIA 硬件上；与之不同，把 ONNX Runtime 与 WebGPU 执行提供程序搭配使用，可以借助平台的本地 API，让你的应用跑在任何现代 GPU 上。
+
+*   **覆盖广泛**：你的 AMD、Intel 和 NVIDIA 用户都能获得 GPU 加速的 AI，无需编写平台专属代码。
+*   **后端**：在 Windows 上，WebGPU 使用 **DirectML**（DirectX 12）；在 Linux 和 Android 上，它利用 **Vulkan**。你既能拿到本地 API 的性能，又能保持单一的集成路径。
+*   **对开发者简单**：你只需请求 `webgpu` 提供程序。至于为当前环境选择正确后端这类苦活，ONNX Runtime 全包了。
+*   **零拷贝潜力**：既然渲染（Vulkan）和推理（通过 WebGPU，在 Linux 上走 Vulkan 后端）可以共享同一套底层驱动资源，你就能把昂贵的 PCIe 数据传输降到最低。
+
+=== 广泛的模型支持
+
+ONNX Runtime 开箱即支持数百种运算。从模型库下载的预训练模型，几乎肯定无需修改就能在 ONNX Runtime 上运行。这种广泛的兼容性意味着你可以试验不同的模型、尝试前沿架构、利用最新研究，而不用操心实现细节。
+
+=== 生产级可靠性
+
+ONNX Runtime 被微软（用于 Bing、Office、Azure 等产品）、Facebook 以及许多其它公司用于生产环境。它经过大规模验证，每天处理数十亿次推理请求。bug 已经被发现并修复，边角情况已经被处理，性能也已经被优化。
+
+使用 ONNX Runtime，你站在一个已被真实世界证明可用的基础之上。
+
+== 获取 ONNX Runtime
+
+来点实际的。到底怎么获取并配置 ONNX Runtime？
+
+=== 官方发行版
+
+主要来源是官方的 GitHub releases 页面：https://github.com/microsoft/onnxruntime/releases
+
+每个发行版都提供面向多个平台的预编译二进制文件，包括：
+
+- Windows（x64、ARM64）
+- Linux（x64、ARM64）
+- macOS（x64、ARM64）
+
+每个平台的包包含：
+
+- 头文件（`include/` 目录）
+- 库文件（`lib/` 目录）
+- 文档与许可信息
+
+下载目标平台对应的包即可。做跨平台开发时，你可能需要下载多个包。
+
+=== 包管理器
+
+如果是 Python 开发或做原型，用包管理器安装最省事：
+
+*仅 CPU 版本*：
+[source,bash]
+----
+pip install onnxruntime
+----
+
+*GPU 版本（Windows 上的 DirectML）*：
+[source,bash]
+----
+pip install onnxruntime-directml
+----
+
+*GPU 版本（WebGPU）*：
+[source,bash]
+----
+# WebGPU providers are typically included in standard or GPU builds.
+pip install onnxruntime-gpu
+----
+
+在 Windows 上做 C++ 开发时，可以用 NuGet 包：
+[source,powershell]
+----
+# Cross-vendor GPU acceleration (DirectML)
+Install-Package Microsoft.ML.OnnxRuntime.DirectML
+----
+
+=== 从源码构建
+
+针对特殊平台或自定义配置，你可以从源码构建：
+
+[source,bash]
+----
+git clone --recursive https://github.com/microsoft/onnxruntime.git
+cd onnxruntime
+./build.sh --config Release --build_shared_lib --parallel
+----
+
+从源码构建让你完全掌控要包含哪些执行提供程序、优化选项以及平台专属调优。它更复杂，但灵活性最大。
+
+== 配置 ONNX Runtime
+
+拿到二进制文件之后，把 ONNX Runtime 集成进 C++ 项目很直接。
+
+=== 项目配置
+
+对于基于 CMake 的项目（推荐）：
+
+[source,cmake]
+----
+# Find ONNX Runtime
+find_package(onnxruntime REQUIRED)
+
+# Link your target
+target_link_libraries(your_target PRIVATE onnxruntime::onnxruntime)
+----
+
+如果 ONNX Runtime 没有安装到系统路径，就显式指定路径：
+
+[source,cmake]
+----
+set(ONNXRUNTIME_ROOT_DIR "/path/to/onnxruntime")
+include_directories(${ONNXRUNTIME_ROOT_DIR}/include)
+link_directories(${ONNXRUNTIME_ROOT_DIR}/lib)
+target_link_libraries(your_target PRIVATE onnxruntime)
+----
+
+=== 平台相关注意事项
+
+*Linux*：ONNX Runtime 需要 glibc 2.27 或更高版本（Ubuntu 18.04+、CentOS 8+）。要支持 GPU，请确保 WebGPU 驱动是最新的。
+
+*Windows*：需要 Visual Studio 2019 或更高版本的运行时。要支持 GPU，请确保系统提供 DirectX 12（用于 DirectML）或 WebGPU 驱动。
+
+*macOS*：默认只支持 CPU。你可以使用 CoreML 提供程序访问苹果的神经引擎，也可以通过 Metal 使用 WebGPU 提供程序。
+
+=== 运行时依赖
+
+分发应用时，请一并附带 ONNX Runtime 共享库：
+
+- Windows：`onnxruntime.dll`
+- Linux：`libonnxruntime.so`
+- macOS：`libonnxruntime.dylib`
+
+使用 GPU 执行提供程序时，用户系统上需要安装相应的驱动和运行时（Vulkan、DirectX 12 等）。
+
+== 使用 ONNX Runtime：基础
+
+我们来走一遍用 ONNX Runtime 执行推理的基本流程。
+
+=== 步骤 1：创建环境
+
+`Ort::Env` 对象代表 ONNX Runtime 环境。在应用启动时创建一次：
+
+[source,cpp]
+----
+#include <onnxruntime_cxx_api.h>
+
+// Create environment with logging level
+Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "MyApp");
+----
+
+环境负责管理全局状态和日志。通常整个应用只创建一个环境。
+
+=== 步骤 2：配置会话选项
+
+会话选项控制推理如何运行：
+
+[source,cpp]
+----
+Ort::SessionOptions session_options;
+
+// Set number of threads for CPU execution
+session_options.SetIntraOpNumThreads(4);
+
+// Enable optimizations
+session_options.SetGraphOptimizationLevel(
+    GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+// For WebGPU execution (this will give DirectML in Windows, and Vulkan in Linux and Android)
+session_options.AppendExecutionProvider("WebGPU");
+----
+
+执行提供程序就是在这里选定的。你可以添加多个提供程序——ONNX Runtime 会按顺序尝试，并使用第一个可用的。
+
+=== 步骤 3：加载模型
+
+加载 ONNX 模型文件，以创建会话：
+
+[source,cpp]
+----
+const wchar_t* model_path = L"model.onnx";
+Ort::Session session(env, model_path, session_options);
+----
+
+会话会解析模型、分配资源，并做好推理准备。这是相对昂贵的操作——只做一次，然后复用该会话执行多次推理。
+
+=== 步骤 4：查询输入/输出信息
+
+运行推理之前，你需要知道模型期望什么输入、会产生什么输出：
+
+[source,cpp]
+----
+// Get input information
+size_t num_input_nodes = session.GetInputCount();
+const char* input_name = session.GetInputName(0, allocator);
+Ort::TypeInfo input_type_info = session.GetInputTypeInfo(0);
+auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
+std::vector<int64_t> input_shape = input_tensor_info.GetShape();
+
+// Get output information
+size_t num_output_nodes = session.GetOutputCount();
+const char* output_name = session.GetOutputName(0, allocator);
+----
+
+这些信息会告诉你期望的输入维度、数据类型以及输出结构。
+
+=== 步骤 5：准备输入数据
+
+用你的数据创建输入张量：
+
+[source,cpp]
+----
+// Allocate memory for input
+std::vector<float> input_data(input_size);
+// ... fill input_data with your preprocessed input ...
+
+// Create input tensor
+auto memory_info = Ort::MemoryInfo::CreateCpu(
+    OrtArenaAllocator, OrtMemTypeDefault);
+Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+    memory_info, input_data.data(), input_data.size(),
+    input_shape.data(), input_shape.size());
+----
+
+张量只包装你的数据而不复制它，所以要确保在推理完成之前数据一直有效。
+
+=== 步骤 6：运行推理
+
+执行模型：
+
+[source,cpp]
+----
+std::vector<const char*> input_names = {input_name};
+std::vector<const char*> output_names = {output_name};
+
+auto output_tensors = session.Run(
+    Ort::RunOptions{nullptr},
+    input_names.data(), &input_tensor, 1,
+    output_names.data(), 1);
+----
+
+真正的推理就发生在这里。该调用会阻塞，直到推理完成。
+
+=== 步骤 7：提取结果
+
+处理输出张量：
+
+[source,cpp]
+----
+float* output_data = output_tensors[0].GetTensorMutableData<float>();
+auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+
+// Process output_data according to your application's needs
+----
+
+输出张量里是模型的预测结果，可以直接拿去做后处理。
+
+== 与 Vulkan 应用集成
+
+现在来讨论如何把 ONNX Runtime 高效地集成进基于 Vulkan 的应用。
+
+=== 分离上下文方案
+
+最简单也最可靠的方案，是让 ONNX Runtime 和 Vulkan 各自运行在独立上下文中，通过 CPU 内存传递数据：
+
+1. 用 Vulkan 渲染你的帧
+2. 如果需要 ML 推理，就把相关数据从 GPU 读回 CPU
+3. 在 CPU 或 GPU 上运行 ONNX Runtime 推理（走它自己的执行提供程序）
+4. 如果需要渲染，再把结果传回 GPU
+
+这个方案直截了当，并且在所有平台上都能用。数据传输会增加延迟，但对很多应用来说（推理并不是每帧都发生），这点开销可以接受。
+
+=== Windows 上的 DirectML 集成
+
+在 Windows 上，你可以用 ONNX Runtime 的 DirectML 执行提供程序实现更紧密的 GPU 集成：
+
+[source,cpp]
+----
+session_options.AppendExecutionProvider_DML(0); // Device ID 0
+----
+
+DirectML 和 Vulkan 跑在同一块 GPU 上，由操作系统管理。虽然它们不直接共享内存，但共享 GPU 计算资源。对于大模型，这往往比 CPU 与 GPU 之间的传输更高效。
+
+代价是平台专属性——这套做法只在支持 DirectX 12 的 Windows 上有效。
+
+=== 内存共享（进阶）
+
+在某些平台上，你可以借助外部内存扩展，在 Vulkan 与 ONNX Runtime 之间共享内存。这很复杂且与平台相关，但它能彻底消除数据传输：
+
+1. 用 Vulkan 的外部内存扩展分配内存
+2. 导出内存句柄
+3. 把该句柄导入 ONNX Runtime（前提是该执行提供程序支持）
+4. Vulkan 与 ONNX Runtime 访问同一块物理内存
+
+这种方案需要谨慎的同步，只有当数据传输被证明是瓶颈的极高吞吐场景，才值得付出这份复杂度。
+
+== 何时使用 ONNX Runtime
+
+ONNX Runtime 最适合以下情况：
+
+*跨框架兼容*：你需要处理来自不同训练框架（PyTorch、TensorFlow 等）的模型。
+
+*桌面/服务器部署*：你的目标平台计算资源充足，ONNX Runtime 的优化能充分发挥。
+
+*执行提供程序的灵活性*：你希望能在 CPU、WebGPU、DirectML 或其它后端之间切换，而不用改代码。
+
+*广泛的算子支持*：你的模型使用各种各样的运算，需要开箱即用的完整支持。
+
+*生产可靠性*：你需要一个久经考验、已在大规模场景中证明可用的方案。
+
+对 Vulkan 应用而言，在大多数用例中，ONNX Runtime 在性能、可靠性与集成难易度之间提供了最佳平衡。
+
+== 小结
+
+ONNX Runtime 是一个高性能、跨平台的 ML 推理引擎，支持来自任何框架的模型。它与框架无关的设计、多种执行提供程序，以及经过生产验证的可靠性，使它成为 Vulkan 应用的极佳选择。
+
+基本流程——创建环境、加载模型、准备输入、运行推理、提取输出——直截了当，且在各平台上保持一致。与 Vulkan 的集成可以简单到用分离上下文加 CPU 数据传输，也可以精细到在 Windows 上通过 DirectML 共享 GPU 资源。
+
+对于大多数需要 ML 推理的 Vulkan 应用，ONNX Runtime 都应该是你的第一选择。它提供了你需要的可靠性和性能，又不必从零开始实现推理。
+
+xref:ML_Inference/Third_Party_Libraries/01_introduction.adoc[上一篇：集成第三方 ML 库：简介] | xref:ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc[下一篇：TensorFlow Lite 集成]

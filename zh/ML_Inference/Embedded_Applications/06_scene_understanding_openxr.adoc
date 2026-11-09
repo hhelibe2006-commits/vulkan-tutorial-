@@ -1,0 +1,329 @@
+= 场景理解：在 XR 管线中发挥 Vulkan 的作用
+:pp: {plus}{plus}
+:stem: latexmath
+
+在前面的章节里，我们关注的是「平面」图像或嵌入式传感器。但 Vulkan ML 最令人兴奋的一些应用存在于**扩展现实（XR）**之中。虽然现代 OpenXR 运行时（例如来自 Meta、Apple 或 Magic Leap 的那些）提供了出色的「内置」场景理解——自动找出地板、墙壁和手——但它们往往仍让开发者觉得不够用。
+
+这是一次**额外探索**。我们不打算教你如何初始化 OpenXR；我们假设你已经熟悉 `XrSession` 的用法。相反，我们要看看 Vulkan 能以哪些独特的方式，帮助 OpenXR 开发者处理自定义的 ML 推理——即运行时并不提供的任务，比如识别特定物体、保护用户隐私，或以超低延迟处理原始立体画面。
+
+== XR 高压锅：90 Hz 的 ML
+
+在普通的嵌入式应用里，50 ms 的推理延迟只是「稍微卡一下」。而在以 90 FPS 运行的 XR 头显里，50 ms 的延迟意味着**4.5 帧的历史**。如果你用这份「旧」数据去绘制叠加层，当用户转动头部时，它就会漂在真实世界后面，立刻引发眩晕。
+
+要在 XR 中有效利用 Vulkan，我们必须摆脱「停下等待」的模式，转而采用一种协调 **OpenXR 合成器**、**Vulkan 计算队列**与**图形渲染器**的管线。
+
+== 高频握手
+
+OpenXR 负责「硬件访问」，但把「绘制」交给 Vulkan。进行自定义 ML 时，我们必须在 OpenXR 透视画面、我们的 ML 引擎与主渲染器之间完成一次「三方握手」。
+
+=== 图形握手
+要在 OpenXR 与 Vulkan 之间共享纹理，必须启用 link:https://registry.khronos.org/OpenXR/specs/1.0/html/xrspec.html#XR_KHR_vulkan_enable2[`XR_KHR_vulkan_enable2`] 扩展。该扩展要求你使用 OpenXR 运行时指定的标志来创建 Vulkan 实例与设备。
+
+[source,cpp]
+----
+// 1. Ask OpenXR what it needs from Vulkan
+XrGraphicsRequirementsVulkanKHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
+xrGetVulkanGraphicsRequirementsKHR(xrInstance, systemId, &graphicsRequirements);
+
+// 2. Create the Vulkan Device with OpenXR-specific graphics binding
+// This structure tells the OpenXR runtime which Vulkan device we are using
+// so it can synchronize texture access between the OS and our app.
+XrGraphicsBindingVulkanKHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
+graphicsBinding.instance = vkInstance;
+graphicsBinding.physicalDevice = vkPhysicalDevice;
+graphicsBinding.device = vkDevice;
+graphicsBinding.queueFamilyIndex = queueFamily;
+graphicsBinding.queueIndex = 0;
+
+// 3. Link to XrSessionCreateInfo
+XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+sessionCreateInfo.next = &graphicsBinding;
+sessionCreateInfo.systemId = systemId;
+xrCreateSession(xrInstance, &sessionCreateInfo, &session);
+----
+
+=== 用时间线信号量同步
+
+XR ML 中最大的挑战是同步。我们希望 GPU 忙于 ML 任务时，CPU 已经在准备下一帧的几何体。我们用 **Vulkan 时间线信号量**弥合 OpenXR 帧周期与推理引擎之间的空隙。
+
+由于 OpenXR 使用自己的内部队列进行合成，我们必须确保 ML 结果在合成器尝试使用我们最终渲染的帧之前就已经完成。
+
+[source,cpp]
+----
+// Managing Multiple Frames in Flight (XR Context)
+struct FrameResources {
+    vk::raii::Fence fence;
+    vk::raii::Semaphore mlFinishedSemaphore; // Timeline Semaphore
+    uint64_t mlValue;
+};
+
+void frameLoop() {
+    xrWaitFrame(session, &waitInfo, &frameState);
+    xrBeginFrame(session, &beginInfo);
+
+    // 1. Acquire the Passthrough Texture
+    XrSwapchainImageVulkanKHR xrImage;
+    xrAcquireSwapchainImage(passthroughSwapchain, &acquireInfo, (XrSwapchainImageBaseHeader*)&xrImage);
+
+    // 2. Submit ML Job to the COMPUTE Queue
+    // We signal a Timeline Semaphore when the ML result is ready.
+    uint64_t nextMlValue = ++globalMlCounter;
+
+    vk::TimelineSemaphoreSubmitInfo timelineInfo;
+    timelineInfo.setSignalSemaphoreValues(nextMlValue);
+
+    vk::SubmitInfo submitInfo;
+    submitInfo.setPNext(&timelineInfo);
+    submitInfo.setSignalSemaphores(*mlTimelineSemaphore);
+
+    computeQueue.submit(submitInfo);
+
+    // 3. Render Virtual Content (GRAPHICS Queue)
+    // We don't wait for the ML! We draw the virtual world immediately.
+    // However, we use the ML result from 2-3 frames ago.
+    uint64_t usableMlValue = std::max(0UL, nextMlValue - 2);
+    renderVirtualWorld(frameState.predictedDisplayTime, usableMlValue);
+
+    // 4. Compositor Submission
+    xrEndFrame(session, &frameEndInfo);
+}
+----
+
+通过这种异步提交，ML 的「思考时间」被隐藏了起来。ML 的结果会用在**下一**帧（或再下一帧），而我们用 Vulkan 数学运算来补偿运动。
+
+=== 异步资源所有权
+XR 与 Vulkan 集成中一个关键的细节是：交换链图像并不「属于」你。它们归 OpenXR 运行时所有，只是「借」给你用。
+
+*   **获取**：`xrAcquireSwapchainImage` 返回一个 `VkImage` 句柄。在 `xrWaitSwapchainImage` 成功返回之前，你不能使用这个图像。
+*   **ML 集成**：如果你想把该图像作为 ML 计算着色器的输入，就必须确保着色器在你调用 `xrReleaseSwapchainImage` 之前完成。否则，XR 合成器可能显示一张只处理了一半的纹理，在用户的周边视野中造成「画面撕裂」。
+
+== 立体感知的预处理
+
+OpenXR 以**立体对**（左眼与右眼）的形式提供透视画面。如果你把它们当作两次独立的 ML 推理来处理，功耗和延迟都会翻倍。
+
+=== 纹理数组与批处理
+专业的 Vulkan XR 实现会使用 **VkImage 数组**（分层纹理）。我们把 ML 预处理着色器配置成在一次派发中处理两个层，为 ONNX Runtime 生成一个「批处理」张量。
+
+[source,glsl]
+----
+#version 450
+// Preprocessing both eyes in one go
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 2) in;
+
+layout(set = 0, binding = 0) uniform sampler2DArray passthroughIn;
+layout(set = 0, binding = 1) writeonly buffer Output { float data[]; } outTensor;
+
+layout(push_constant) uniform Params {
+    uint targetWidth;
+    uint targetHeight;
+} pc;
+
+void main() {
+    uint eyeIdx = gl_GlobalInvocationID.z; // 0 = Left, 1 = Right
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+
+    if (pos.x >= pc.targetWidth || pos.y >= pc.targetHeight) return;
+
+    // 1. Hardware-Accelerated Sample
+    // uv coordinates are 0.0 to 1.0
+    vec2 uv = (vec2(pos) + 0.5) / vec2(pc.targetWidth, pc.targetHeight);
+
+    // Sample from the correct layer of the XR texture array
+    vec3 rgb = texture(passthroughIn, vec3(uv, eyeIdx)).rgb;
+
+    // 2. Normalization and Planar Transpose
+    // Place into the NCHW tensor at the correct batch offset
+    uint planeSize = pc.targetWidth * pc.targetHeight;
+    uint batchStride = eyeIdx * (3 * planeSize);
+    uint pixelIdx = pos.y * pc.targetWidth + pos.x;
+
+    // Batching logic: ImageNet Normalization
+    outTensor.data[batchStride + 0 * planeSize + pixelIdx] = (rgb.r - 0.485) / 0.229;
+    outTensor.data[batchStride + 1 * planeSize + pixelIdx] = (rgb.g - 0.456) / 0.224;
+    outTensor.data[batchStride + 2 * planeSize + pixelIdx] = (rgb.b - 0.406) / 0.225;
+}
+----
+
+这种批处理让 ONNX Runtime 能更有效地利用**子组波前**，与两次串行的单目推理相比通常能带来 30% 的加速。
+
+=== 多视图扩展
+在某些硬件上（例如 Meta Quest），你可以使用 `VK_KHR_multiview`。它让片元着色器借助 `gl_ViewIndex` 同时渲染双眼。这对渲染很棒，但在 ML 预处理中，上面展示的 `sampler2DArray` 方式通常更可移植，也更适合创建张量。
+
+=== 缓冲区拓扑：分层与并排
+视 XR 运行时（SteamVR 还是 Meta Quest）而定，透视画面可能以两种格式提供：
+
+1.  **分层（推荐）**：一个 `arrayLayers = 2` 的 `VkImage`。这对 Vulkan 最高效，因为你可以使用 `sampler2DArray` 或多视图扩展。
+2.  **并排（SBS）**：一张很宽的纹理（例如 3840x1080），左半边是左眼。
+
+如果你的目标平台使用 SBS，预处理着色器就必须通过调整 UV 坐标来「拆分」图像：
+
+[source,glsl]
+----
+// SBS UV Logic
+float splitX = (eyeIdx == 0) ? uv.x * 0.5 : 0.5 + uv.x * 0.5;
+vec3 rgb = texture(passthroughSBS, vec2(splitX, uv.y)).rgb;
+----
+
+== 任务：填补运行时留下的空白（隐私遮蔽）
+
+OpenXR 运行时给你「平面」，却不给你「上下文」。企业级 XR 的一个常见需求是**隐私遮蔽**——识别真实世界中的电脑屏幕或白板，并在用户视野中将其模糊掉，以防数据泄露。
+
+=== 异步交接：获取透视画面
+在 XR 中，透视图像归系统合成器所有。我们把它「借」来用几毫秒。为了防止 ML 阻塞 UI，我们必须使用**栅栏握手**。
+
+[source,cpp]
+----
+// Borrowing the texture for ML
+void processML() {
+    // 1. Wait for Compositor to release the image
+    xrWaitSwapchainImage(passthroughSwapchain, &waitInfo);
+
+    // 2. Transition layout for Compute
+    vk::ImageMemoryBarrier barrier{
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .image = passthroughImage,
+        // ...
+    };
+
+    // 3. Run ML Dispatch
+    // ...
+
+    // 4. Release back to Compositor
+    xrReleaseSwapchainImage(passthroughSwapchain, &releaseInfo);
+}
+----
+
+=== 用 Vulkan 做语义遮蔽
+我们使用一个轻量级的语义分割模型（例如 MobileNetV2-UNet）。输出是一张「隐私掩码」（1.0 = 敏感，0.0 = 安全）。
+
+1.  **ML 推理**：在透视画面上异步运行，识别「屏幕」像素。
+2.  **Vulkan 后处理**：我们用掩码驱动一个可变速率模糊内核。
+
+[source,glsl]
+----
+// Optimized Variable-Rate Blur Kernel
+void main() {
+    float mask = texture(mlMaskSampler, uv).r;
+    vec3 color = texture(passthroughSampler, uv).rgb;
+
+    // Adaptive Blur: Only compute the expensive blur if needed
+    if (mask > 0.5) {
+        vec3 blurred = vec3(0.0);
+        float totalWeight = 0.0;
+        float sigma = 10.0 * mask; // Blur intensity scales with mask confidence
+
+        for(float x = -2.0; x <= 2.0; x += 1.0) {
+            for(float y = -2.0; y <= 2.0; y += 1.0) {
+                float weight = exp(-(x*x + y*y) / (2.0 * sigma * sigma));
+                blurred += texture(passthroughSampler, uv + vec2(x, y) * texelSize).rgb * weight;
+                totalWeight += weight;
+            }
+        }
+        color = blurred / totalWeight;
+    }
+    outColor = vec4(color, 1.0);
+}
+----
+
+== 补偿「思考时间」：位姿重投影
+
+因为 ML 需要时间（例如 30 ms），我们刚生成的「隐私掩码」严格来说对应的是用户头部**30 ms 之前**所在的位置。如果直接套用，用户转头时模糊就会「漂移」或「重影」。
+
+=== 单应变换
+我们用 Vulkan 对 ML 结果执行一次 link:https://en.wikipedia.org/wiki/Homography_(computer_vision)[**Homography Warp**]（单应变换）。通过把捕获时刻的 `XrPosef` latexmath:[P_{old}] 与预测的显示位姿 latexmath:[P_{new}] 进行比较，我们可以计算出一个变换矩阵 latexmath:[M]，把旧掩码与新视图对齐。
+
+==== 变形的数学
+相对于法线为 latexmath:[\vec{n}]、距离为 latexmath:[d] 的平面，旋转 latexmath:[R] 与平移 latexmath:[\vec{t}] 对应的单应矩阵 latexmath:[H] 为：
+
+[latexmath]
+++++
+H = K \cdot (R + \frac{\vec{t} \cdot \vec{n}^T}{d}) \cdot K^{-1}
+++++
+
+对于纯旋转运动（最常见的眩晕来源），我们可以将其简化为：
+[latexmath]
+++++
+H = K \cdot R_{rel} \cdot K^{-1}
+++++
+
+在我们的 Vulkan 片元着色器里，我们用这个矩阵「回看」ML 掩码：
+
+[source,glsl]
+----
+layout(push_constant) uniform WarpData { mat3 homography; } warp;
+
+void main() {
+    // 1. Transform the current UV coordinate back to the 'ML space'
+    // using the homography matrix calculated from the pose difference.
+    vec3 mlSpacePos = warp.homography * vec3(uv, 1.0);
+    vec2 mlUV = mlSpacePos.xy / mlSpacePos.z;
+
+    // 2. Sample the mask using the corrected UV
+    float correctedMask = texture(mlMaskSampler, mlUV).r;
+
+    // 3. Reject samples outside the valid mask range (clamping)
+    if (mlUV.x < 0.0 || mlUV.x > 1.0 || mlUV.y < 0.0 || mlUV.y > 1.0) {
+        correctedMask = 0.0;
+    }
+
+    // ... use correctedMask for blurring ...
+}
+----
+
+这种「Vulkan 时间变形」正是让高延迟 ML 拥有零延迟场景理解感的关键。它确保即使在快速转头时，模糊也牢牢「贴」在真实世界的电脑屏幕上。
+
+== 自定义 SLAM：GPU 加速的特征提取
+
+有时运行时的追踪还不够——例如，你需要追踪某个特定的工业标记，或一个独立于房间运动的二维码。
+
+Vulkan 可以帮助 OpenXR 开发者以 90 Hz 的频率执行 link:https://en.wikipedia.org/wiki/Oriented_FAST_and_rotated_BRIEF[**ORB Feature Extraction**] 或 link:https://en.wikipedia.org/wiki/Optical_flow[**Optical Flow**]。当你需要用自己针对特定物体的数据来「增强」运行时位姿时，这尤其有用。
+
+1.  **快速角点检测**：我们用计算着色器实现 link:https://en.wikipedia.org/wiki/Features_from_accelerated_segment_test[**FAST（Features from Accelerated Segment Test）**] 算法。每个线程检查候选点周围由 16 个像素组成的圆。
+2.  **描述符匹配**：找到特征后，我们用**子组矩阵运算**（在高级主题部分讨论过）把描述符与已知物体库进行比较。
+3.  **结果**：你得到一个针对特定物体的自定义 `XrSpace`，它与 OpenXR 世界坐标系完全同步。
+
+[source,glsl]
+----
+// Simple FAST Corner Detector (GPU Optimized)
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    float center = texelFetch(passthrough, pos, 0).r;
+
+    // Check pixels in a circle (Bresenham circle)
+    // If N contiguous pixels are significantly brighter/darker, it's a corner.
+    uint mask = 0;
+    if (abs(texelFetch(passthrough, pos + ivec2(0, 3), 0).r - center) > threshold) mask |= (1 << 0);
+    if (abs(texelFetch(passthrough, pos + ivec2(3, 0), 0).r - center) > threshold) mask |= (1 << 1);
+    // ... continue for all 16 points ...
+
+    if (countSetBits(mask) >= 9) {
+        storeFeature(pos);
+    }
+}
+----
+
+== 管理头显中的散热
+
+XR 头显在散热上很脆弱。以 90 FPS 运行一个沉重的 U-Net，设备几分钟内就会降频。
+
+=== 占空比策略
+与其每帧都运行 ML，不如用 Vulkan 来管理**推理占空比**。
+
+*   **逻辑**：在第 1 帧运行 ML，跳过第 2–5 帧，在第 6 帧再运行。
+*   **平滑**：用单应变换（位姿重投影）为被跳过的帧「外推」ML 掩码。
+*   **收益**：你得到 90 Hz 的视觉更新，而 ML 只消耗相当于 15 Hz 的功耗。
+
+== 小结：Vulkan 在 XR 中的优势
+
+通过在你的 OpenXR 项目中直接利用 Vulkan，你获得三项关键能力：
+
+*   **异步 ML**：在计算队列上运行推理，而不阻塞 90 Hz 的合成器。
+*   **延迟补偿**：用单应变换把「旧」ML 结果与「新」头部位姿对齐。
+*   **立体效率**：用纹理数组与批处理，在一次 GPU 处理中处理双眼。
+
+这套组合让你能构建不仅能「展示」世界，还能实时深度「理解」并「修改」世界的 XR 应用，远远超出标准运行时提供的基础特性。
+
+xref:ML_Inference/Embedded_Applications/05_complete_example.adoc[上一篇：完整嵌入式应用：智能野生动物相机] | xref:ML_Inference/Embedded_Applications/07_ml_compiler.adoc[下一篇：嵌入式设备上的 ML 编译器]

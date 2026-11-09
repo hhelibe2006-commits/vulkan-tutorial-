@@ -1,0 +1,50 @@
+:pp: {plus}{plus}
+= 单调计数器：跟踪全局进度
+
+== 理解计数器
+
+每个时间线信号量的核心都是一个 `uint64_t` 值。这个值是单调的，也就是说它只会增大。这个简单的性质让我们可以把 GPU/CPU 引擎的整个执行过程视为一条单一、统一的时间线。
+
+当你向队列提交一个命令缓冲区时，你把它与时间线信号量上的某个信号操作关联起来。你为那个信号指定一个具体的值——比如 `frame_index * 10 + pass_index`。随着 GPU 完成每一个通道，信号量的值也随之递增。
+
+== 跟踪进度
+
+由于我们可以随时通过 `device.getSemaphoreCounterValue` 从 CPU 查询这个值，我们就能构建聪明得多的引擎逻辑。例如，与其等待某个「渲染完成」栅栏，我们可以查询时间线，看清 GPU 当前正处在哪个阶段。
+
+[,cpp]
+----
+uint64_t currentValue = device.getSemaphoreCounterValue(*timelineSemaphore);
+if (currentValue >= PassValues::eShadowPassComplete) {
+    // We can start preparing the next pass that depends on shadows
+}
+----
+
+这对异步资源管理尤其有用。你可以给每个资源打上它最后一次被使用时所处的时间线值。当你需要复用或销毁某个资源时，只需检查当前信号量的值是否已经超过那个标记即可。这样就无需保守地调用 `deviceWaitIdle()`，而这类调用往往是 GPU 气泡和 CPU 停顿的主要来源。
+
+== 有策略地选择值
+
+如何递增时间线的值是一项架构决策。一种常见模式是每帧使用较大的增量（例如 1000），然后在该帧内为每个主要通道使用较小的子增量。
+
+*   第 1 帧：
+    *   起始：1000
+    *   阴影通道：1010
+    *   G-Buffer 通道：1020
+    *   光照通道：1030
+*   第 2 帧：
+    *   起始：2000
+    *   阴影通道：2010
+    *   ...
+
+这种编号方案留出了充足的「余量」，让你无需重新计算引擎中每一个同步值，就能添加新的通道或子步骤。它也让日志更容易阅读，因为帧号清晰地编码在时间线值里。
+
+把时间线当作「主时钟」之后，你就从微观管理单个依赖关系，转向管理渲染器的整体状态与进度。下一节我们将看到，这如何支撑起 Vulkan 中最强大的提交模式之一：信号前等待。
+
+== 简易引擎：跟踪帧进度
+
+在 `Simple Engine` 中，我们将用单调计数器跟踪各个系统的进度。我们会定义一组 `TimelineValues`，表示一帧中的各个主要里程碑。例如，我们的 `Renderer` 可以发出类似 `currentFrameIndex * 10 + passOffset` 的值，表示某个特定的渲染阶段已经完成。
+
+当它与我们的 `MemoryPool` 配合时，这就变得极其强大。我们不再使用简单的「销毁后经过多少帧」计数器（就像目前在 `pendingASDeletions` 中做的那样），而是给每个资源打上它最后一次被 GPU 使用时的确切 `TimelineValue`。当 `MemoryPool` 需要回收内存时，它只需查询当前的信号量值。如果 `currentValue >= resourceTagValue`，该资源就保证可以安全销毁或复用，无需额外的停顿或保守等待。
+
+== 导航
+
+上一篇：xref:Synchronization/Timeline_Semaphores/02_unifying_sync.adoc[统一同步：取代栅栏与二值信号量] | 下一篇：xref:Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc[信号前等待提交：解耦执行]

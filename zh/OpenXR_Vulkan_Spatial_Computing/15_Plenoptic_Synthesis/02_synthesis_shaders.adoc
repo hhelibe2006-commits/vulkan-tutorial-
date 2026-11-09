@@ -1,0 +1,80 @@
+:pp: {plus}{plus}
+= 全光合成着色器
+
+要把 4D 光场还原成 2D 图像，我们使用**基于图像的渲染（IBR）**，有选择地采样穿过虚拟相机镜头的光线。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+虽然 OpenXR 会为每一帧提供精确的眼部位姿，但通过 4D 四线性插值从全光数据重建平滑波前的复杂过程，是一项由 Vulkan 驱动的合成技术。你用 Vulkan 的高速内存访问和子组操作来实现这些高级空间效果，它们超越了标准运行时的投影模型。
+
+== 概念：重建波前
+
+要把 4D 光场还原成 2D 图像，我们使用**基于图像的渲染（IBR）**。我们不去绘制三角形，而是把 4D 缓冲区看作一大团密集的「光线云」，有选择地取出那些会穿过虚拟相机镜头的光线。
+
+1.  **光线追踪**：对每个像素，我们计算一条从眼睛出发、穿过该像素的光线。
+2.  **求交**：我们找出这条光线击中光场 **ST 平面**（位置）与 **UV 平面**（方向）的位置。
+3.  **合成**：我们在 4D 缓冲区中查表取得这些坐标处光线的颜色。
+
+运行时为每一帧提供精确的 `XrView` 位姿，我们的合成着色器用它来确定光线的起点和方向，确保透视与头显完美对齐。
+
+== 四线性插值：16 次采样查表
+
+因为光场以离散网格的形式存储，所以我们必须插值。在 4D 中，这需要**四线性插值**，为每个像素采样 16 条不同的光线（4 个空间 $\times$ 4 个方向）。
+
+[source,slang]
+----
+// Quadrilinear interpolation logic in Slang
+float4 sampleLightField(float2 st, float2 uv) {
+    // 1. Calculate floor and fractional parts for both planes
+    uint2 st0 = uint2(floor(st));
+    uint2 uv0 = uint2(floor(uv));
+    float2 stF = frac(st);
+    float2 uvF = frac(uv);
+
+    // 2. Perform ST-plane interpolation at the surrounding UV coordinates
+    float4 c00 = lerp(lerp(fetch(st0, uv0), fetch(st0 + uint2(1, 0), uv0), stF.x),
+                      lerp(fetch(st0, uint2(0, 1), uv0), fetch(st0 + uint2(1, 1), uv0), stF.x),
+                      stF.y);
+    // ... repeat for the other 3 UV neighbors ...
+
+    // 3. Perform the final UV-plane interpolation
+    return finalColor;
+}
+----
+
+在 C++ 一侧，我们用指定初始化器为合成通道绑定光场资源：
+
+[source,cpp]
+----
+// Binding the lightfield for synthesis using designated initializers
+vk::DescriptorBufferInfo lfBufferInfo{
+    .buffer = *lightFieldBuffer,
+    .offset = 0,
+    .range = VK_WHOLE_SIZE
+};
+
+vk::WriteDescriptorSet lfWrite{
+    .dstSet = *synthesisSet,
+    .dstBinding = 0,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eStorageBuffer,
+    .pBufferInfo = &lfBufferInfo
+};
+----
+
+== 进阶：协作光线投射与动态遮挡
+
+Vulkan 让我们能够把合成优化到超出标准的视图相关取数：
+
+*   **协作光线投射**：使用 Vulkan 的**子组操作**，你可以在相邻像素之间协调光线投射，分摊昂贵的 4D 查表与平面求交开销。
+*   **动态遮挡**：你可以使用 Vulkan 的**深度-模板测试**，在光场合成与传统光栅化 3D 几何体之间实现动态遮挡，确保虚拟物体能够逼真地「沉入」全息场景。
+
+== 性能：让光线合并访问
+
+因为每个像素要做 16 次查表，我们必须留意 **SIMT 合并访问**。借助我们在第 14 章实现的 **4D 分块**，可以确保这 16 个样本在物理 VRAM 中彼此靠近。这样 GPU 只需一两次缓存行读取就能满足全部请求，让我们的全光合成保持高帧率。
+
+TIP: 关于基于图像的渲染与四线性过滤的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#textures-interpolation[Vulkan 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc[下一页]

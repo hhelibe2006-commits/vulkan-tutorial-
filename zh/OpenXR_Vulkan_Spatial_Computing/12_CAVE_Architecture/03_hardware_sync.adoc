@@ -1,0 +1,51 @@
+:pp: {plus}{plus}
+= 硬件同步：交换组与屏障
+
+在驱动 **CAVE** 的网络集群中，同步「差不多就行」是不够的。如果节点 A（左墙）交换缓冲区的时间哪怕比节点 B（前墙）早一毫秒，用户就会在两墙相交的转角处看到一条令人分心的水平线，或一个「错位」的物体。这被称为**集群撕裂**。
+
+== 交换组：机器内同步
+
+一个**交换组**同步连接到*同一台*工作站的多块 GPU 或多台显示器。
+
+当组中一块 GPU 准备好呈现时，硬件会保持「交换」信号，直到同一台机器中的所有其他 GPU 也准备就绪。这确保单台双 GPU 工作站的两路输出总是在完全相同的刷新周期更新像素。
+
+== 交换屏障：机器间同步
+
+**交换屏障**是交换组在网络上的延伸。它可以跨*多台*工作站工作。
+
+1.  **硬件连接**：一根物理线缆（通常是 BNC 或 RJ45 同步线）把集群中的 GPU 连接起来。
+2.  **握手**：当节点 A 完成它的帧时，会通过线缆发出「就绪」信号。
+3.  **等待**：节点 A 阻塞自己的执行。
+4.  **释放**：只有当集群中*每一个*节点都发出「就绪」信号后，硬件才释放屏障，让每块 GPU 同时交换缓冲区。
+
+== 在 Vulkan 中实现屏障
+
+我们用 **VK_NV_present_barrier** 扩展加入这些硬件组。
+
+[source,cpp]
+----
+// Checking for Present Barrier support and joining a group
+auto features2 = physicalDevice.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDevicePresentBarrierFeaturesNV>();
+const auto& barrierFeatures = features2.get<vk::PhysicalDevicePresentBarrierFeaturesNV>();
+
+if (barrierFeatures.presentBarrier) {
+    // When creating the swapchain, we join Barrier 1
+    // This barrier is managed by the physical sync cable between machines
+    vk::SwapchainPresentBarrierCreateInfoNV barrierInfo{};
+    barrierInfo.presentBarrierEnable = VK_TRUE;
+    barrierInfo.barrierID = 1;
+
+    vk::SwapchainCreateInfoKHR createInfo{};
+    createInfo.pNext = &barrierInfo;
+    // ...
+}
+----
+
+== Genlock 与 Swaplock 对比
+
+*   **Genlock（Generator Lock）**：同步视频信号的*起点*（扫描行的开始）。这可避免「滚动」伪影。
+*   **Swaplock（交换屏障）**：同步前台与后台缓冲区被交换的*时刻*。这可避免「陈旧帧」伪影。
+
+把 Genlock（信号时序）与交换屏障（帧时序）结合起来，我们就达到了空间同步的「黄金标准」：**帧级精确的集群渲染**。整个房间的更新就像一张完整的数字纸。
+
+xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc[下一页]

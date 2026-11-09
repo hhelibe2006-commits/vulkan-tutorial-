@@ -1,0 +1,65 @@
+:pp: {plus}{plus}
+= 全局屏障与局部屏障：精确与性能
+
+== 选择的困境
+
+Vulkan 给了我们两种同步内存的方式：**全局内存屏障**和**特定的资源屏障**（图像屏障与缓冲区屏障）。我们常常会想干脆所有地方都用一个全局屏障——写起来更简单、需要记录的簿记更少、还能覆盖所有情况。然而，这种便利是有代价的。
+
+全局屏障会影响整个 GPU 上指定类型的*所有*内存访问。如果你只需要转换一张纹理，却用了全局内存屏障，GPU 可能最终要刷新它整个 L1 和 L2 缓存，从而拖住其他本来运行得好好的无关工作。
+
+== 何时使用全局屏障
+
+全局屏障并不「邪恶」；它们只是一把宽泛的工具。当你即将进行会影响许多资源的大规模状态变化时，它们非常出色。
+
+例如，如果你要从 G-Buffer 通道转入一个会读取多张纹理和缓冲区的复杂光照通道，那么单个全局屏障可能比录制十个独立的图像与缓冲区屏障更高效。合并成单个全局屏障能减少驱动处理 `vk::DependencyInfo` 的开销，而且当许多资源在相似阶段之间转换时，有时还能带来更好的硬件利用率。
+
+[,cpp]
+----
+auto globalBarrier = vk::MemoryBarrier2{
+    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead
+};
+
+commandBuffer.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &globalBarrier});
+----
+
+== 何时使用资源屏障
+
+特定于资源的屏障（`vk::ImageMemoryBarrier2` 和 `vk::BufferMemoryBarrier2`）是你的「手术刀」。只要依赖仅限于某个特定资源，你就应该用它们——尤其是当该资源需要在布局之间转换时。
+
+图像屏障的首要优势在于，它允许驱动执行与布局相关的优化。全局内存屏障*不能*转换图像布局。如果你需要把图像从 `eColorAttachmentOptimal` 改成 `eShaderReadOnlyOptimal`，就*必须*使用图像内存屏障。
+
+== 黄金法则：批处理
+
+无论你选全局屏障还是局部屏障，Vulkan 同步性能最重要的规则都是**批处理**。
+
+避免连续多次调用 `pipelineBarrier2`。每次调用 `pipelineBarrier2` 都有不小的开销。相反，应把所有屏障（全局、图像和缓冲区）收集进单个 `vk::DependencyInfo`，一次性提交。
+
+[,cpp]
+----
+std::vector<vk::ImageMemoryBarrier2> imageBarriers = { /* ... */ };
+vk::MemoryBarrier2 globalBarrier = { /* ... */ };
+
+auto dependencyInfo = vk::DependencyInfo{
+    .memoryBarrierCount = 1,
+    .pMemoryBarriers = &globalBarrier,
+    .imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size()),
+    .pImageMemoryBarriers = imageBarriers.data()
+};
+
+commandBuffer.pipelineBarrier2(dependencyInfo);
+----
+
+通过批处理屏障，你让驱动有机会合并缓存刷新与阶段停顿，确保 GPU 花尽可能少的时间等待、尽可能多的时间渲染。
+
+== Simple Engine：优化
+
+在 `Simple Engine` 中，我们主要使用**图像内存屏障**，因为我们的同步大多涉及布局转换（例如从 `eColorAttachmentOptimal` 到 `eShaderReadOnlyOptimal`）。不过，在需要确保此前对任意及所有存储缓冲区的计算写入对后续着色器阶段可见时，我们也会在 `ComputeSystem` 中（例如 `physics_system.cpp`）使用**全局内存屏障**。
+
+`Simple Engine` 还有一处可以进一步优化：这些屏障的合并。目前，我们的一些系统会各自独立地发出屏障。在未来的更新中，我们计划转向**渲染图**架构。这将让引擎能够为一整帧收集所有系统中的全部必要屏障，并把它们批处理进单次高度优化的 `vkCmdPipelineBarrier2` 调用，进一步降低驱动开销并提升 GPU 占用率。
+
+== 导航
+
+上一页：xref:Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc[队列族所有权：握手] | 下一页：xref:Synchronization/Timeline_Semaphores/01_introduction.adoc[时间线信号量：主时钟]

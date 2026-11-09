@@ -1,0 +1,78 @@
+:pp: {plus}{plus}
+= 硬件对齐
+
+在许多现代计算环境中，尤其是高端游戏台式机，拥有多块 GPU 很常见——例如处理器上的集成 GPU 和一块独立的高性能显卡。对于空间计算而言，我们的应用与 OpenXR 运行时使用完全相同的物理硬件是绝对关键的。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+把你的 Vulkan 物理设备与 XR 运行时首选的硬件对齐，是确保高性能资源共享的必需步骤。关键之处在于，这并非协商：OpenXR 运行时*强制*规定你必须使用哪块 GPU，并直接把该设备交到你手上。你无需做任何匹配或搜索。
+
+== 「PCIe 税」：为什么必须对齐
+
+要理解我们为什么在意硬件对齐，必须考虑数据搬运的成本。PCIe 总线是 CPU、系统内存与各块 GPU 之间的高速公路。它虽然很快，但仍比现代 GPU 的内部显存总线（VRAM）慢上几个数量级。
+
+*   **显示器发现**：运行时已经和操作系统协商过（例如在 Windows 上通过 DXGI），确定哪块物理 GPU 与头显的显示器在电气上相连。
+*   **避免跨 GPU 拷贝**：如果我们的引擎在 GPU A 上渲染一帧，而头显连接在 GPU B 上，操作系统就不得不把该图像经 **PCIe** 总线拷贝过去。这会增加数毫秒的延迟——对 90Hz 头显来说，可能就是你帧预算的一半。
+*   **内部 VRAM 效率**：在同一块 GPU 内移动图像几乎是瞬时完成的。通过把应用绑定到同一块 GPU，运行时确保你的帧始终留在高速 VRAM 中。
+
+由于弄错这一点会悄无声息地损失性能（甚至直接破坏资源共享），OpenXR 根本不把设备选择权留给应用——它会明确告诉你该用哪个 `VkPhysicalDevice`。
+
+== 查询 XR 设备
+
+初始化 `xr::Instance` 之后，我们就可以查询运行时要求我们使用的那个 `VkPhysicalDevice`。做法是调用 `xrGetVulkanGraphicsDevice2KHR`（或更早的 `xrGetVulkanGraphicsDeviceKHR`）。
+
+[source,cpp]
+----
+VkPhysicalDevice xrRequiredDevice;
+
+XrVulkanGraphicsDeviceGetInfoKHR getInfo{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
+getInfo.systemId = systemId;
+getInfo.vulkanInstance = instance;
+
+xrGetVulkanGraphicsDevice2KHR(xrInstance, &getInfo, &xrRequiredDevice);
+----
+
+这个句柄就是答案。运行时已经替你把显示拓扑、驱动适配器枚举以及跨进程共享要求都处理好了——这次调用存在的意义正是如此。你要做的只是把 `xrRequiredDevice` 当作 `VkPhysicalDevice` 使用，而不是用别的手段重新推导它。
+
+
+== 直接使用句柄
+
+在 `vulkan-hpp` 的 RAII 世界里，XR 模式下你完全不需要枚举物理设备——运行时要求的那个句柄已经在手上了。直接包装它即可：
+
+[source,cpp]
+----
+// The runtime enforces this choice; we don't search for it, we're told it.
+vk::PhysicalDevice requiredDevice(xrRequiredDevice);
+----
+
+如果你仍然想要一个 `vk::raii::PhysicalDevice`（例如为了复用那些需要它的适用性检查代码），就通过比较原始句柄来找到匹配项——而不是比较任何派生出来的标识符：
+
+[source,cpp]
+----
+for (auto& physicalDevice : instance.enumeratePhysicalDevices()) {
+    if (*physicalDevice == requiredDevice) {
+        return physicalDevice;
+    }
+}
+----
+
+这是一次简单的句柄比较，而不是硬件「指纹」匹配——运行时已经告诉我们这是哪块设备了。
+
+== 跨进程内存可见性
+
+使用运行时提供的设备，是**跨进程内存可见性**的基础。由于 XR 运行时通常与我们的引擎位于不同进程，我们渲染的图像必须在进程边界之间共享。
+
+通过使用运行时要求的那个确切的 `VkPhysicalDevice`，我们保证「等待-获取-释放」循环完全在设备上完成，无需昂贵的 CPU 侧同步或系统内存拷贝。
+
+== 进阶：多 GPU 负载均衡与设备组
+
+虽然一个 OpenXR 会话通常绑定到连接显示器的那块 GPU，但 Vulkan 允许我们走得更远：
+
+*   **Vulkan 设备组**：你可以用 `VK_KHR_device_group` 把多块 GPU 当作单个逻辑设备。这样就能用副 GPU 承担繁重的计算任务（例如物理或场景分解），在主 GPU 上汇总结果，然后把最终帧交给 XR 合成器。
+*   **应对硬件变化**：如果硬件配置发生变化（例如外接 GPU 被断开），你可以利用 Vulkan 的硬件抽象检测这些变化，并提示用户干净地重启引擎。重启后只需重新查询 `xrGetVulkanGraphicsDevice2KHR`——运行时会交给你当前正确的设备。
+
+TIP: 关于硬件对齐的更多信息，请查看官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#xrGetVulkanGraphicsDevice2KHR[关于 xrGetVulkanGraphicsDevice2KHR 的 OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc[下一页]

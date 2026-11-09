@@ -1,0 +1,246 @@
+= 功耗与散热优化：管理物理极限
+:pp: {plus}{plus}
+:stem: latexmath
+
+高端工作站配有 1000W 电源和液冷。电池供电的无人机只有 50Wh 移动电源和一块被动铝制散热片。在桌面 AI 的世界里，我们优化的是**延迟**；在嵌入式 AI 的世界里，我们优化的是**每次推理的能耗**。
+
+[latexmath]
+++++
+\text{Mission Life (Hours)} = \frac{\text{Battery Capacity (Wh)}}{\text{Avg Power (W)} + \text{Idle Leakage (W)}}
+++++
+
+如果你的 Vulkan ML 引擎功耗是 15W，你的无人机几分钟内就会从天上掉下来。如果你能把它优化到 3W，你就有了 3 小时的续航。功耗优化不只是「省钱」——它让**不可能的任务**成为可能。
+
+本章我们会学习如何测量并最小化管线的能耗，探讨 **DVFS**、**占空比管理**，以及**散热 PID 控制**背后的数学。
+
+== 功耗的物理：每次推理的焦耳数
+
+在电源工程师眼里，一次 ML「推理」不过是一阵电流脉冲。总能耗既取决于 GPU 的功耗有多大，也取决于它为了做完这件事「醒着」多久。
+
+[latexmath]
+++++
+\text{Energy (Joules)} = \text{Power (Watts)} \times \text{Inference Time (Seconds)}
+++++
+
+=== 「立方」功耗定律
+CMOS 电路（比如 GPU）中的动态功耗由逻辑门的翻转决定。
+
+[latexmath]
+++++
+P_{dynamic} = \alpha \cdot C \cdot V^2 \cdot f
+++++
+
+其中：
+*   latexmath:[\alpha]：**活动因子**（每个周期翻转的晶体管百分比）。
+*   latexmath:[C]：**电容**（由芯片设计决定，固定不变）。
+*   latexmath:[V]：**电压**（供电电压）。
+*   latexmath:[f]：**频率**（时钟速度）。
+
+**陷阱**：提高频率（latexmath:[f]）时，你也不得不提高电压（latexmath:[V]），以确保晶体管翻转得够快、跟得上节奏。由于功耗正比于 latexmath:[V^2]，而 latexmath:[V] 大致与 latexmath:[f] 成正比，总功耗会随频率**立方级**增长。频率翻倍，功耗可能涨到 latexmath:[8\times]。
+
+=== 静态功耗与动态功耗
+*   **动态功耗**：GPU 正在全力运算时消耗的功耗。
+*   **静态（漏电）功耗**：仅仅为了让硅片保持通电而消耗的功耗，来源是穿过晶体管栅极的亚阈值漏电流。
+
+随着芯片工艺缩小（例如从 28nm 到 5nm），静态漏电在总功耗预算中的占比大幅上升。这就是为什么「干脆降速」并不总是最优策略。把 GPU 速度降到一半，你也许省下了动态功耗，但芯片「醒着」的时间翻倍，因静态漏电损失的总能量也随之翻倍。
+
+=== 「冲向睡眠」策略
+现代 SoC 设计有极低功耗的「睡眠」状态（`C-states`），通过关闭整个电源域把漏电降到最低。
+
+*   **策略 A（稳扎稳打）**：GPU 以 200MHz 运行 100ms，SoC 全程处于活跃状态。
+*   **策略 B（冲向睡眠）**：GPU 以 800MHz 运行 20ms。芯片把工作完成得快了 latexmath:[5\times]，并在剩下的 80ms 里进入「深度睡眠」状态。
+
+**算笔账**：如果 800MHz 爆发期间消耗的能量，少于让 SoC 睡那 80ms 所省下的能量，那么「冲向睡眠」就赢了。在 Vulkan 中，我们通过一次性提交所有命令缓冲区，并用带非零超时的 `vkWaitForFences` 把 CPU 线程让给操作系统调度器，来实现这一点。
+
+== 策略 1：调校 GPU 调频器（DVFS）
+
+嵌入式 Linux 通过 link:https://docs.kernel.org/admin-guide/pm/cpufreq.html[**动态电压与频率调节（DVFS）**] 来平衡性能。「调频器」（Governor）是一个内核线程，它根据当前负载决定 GPU 该跑多快。
+
+=== 调频器的延迟
+对 ML 来说，默认的 `schedutil` 调频器往往太慢。它看到一阵 ML 工作「爆发」，会先等几毫秒确认这只是瞬时尖峰，然后才提频。等 GPU 跑到全速，你的推理早已结束——而且是慢吞吞地在低电压下跑完的。
+
+=== 手动锁定频率
+在生产环境中，我们常在推理活跃期把频率「钉」住，以避开这种「升频延迟」。
+
+[source,bash]
+----
+# Find the GPU device tree node
+cd /sys/class/devfreq/*.gpu/
+
+# List supported frequencies (in Hz)
+cat available_frequencies
+
+# Pin to the 'Sweet Spot' (e.g., 600MHz)
+echo 600000000 > min_freq
+echo 600000000 > max_freq
+----
+
+**专家提示**：每颗 GPU 都有一个「能效甜点」——在这个频率上每瓦性能最高。你可以在不同频率下测量电流，画出 GFLOPS/W 曲线来找到它。通常这个点大约在最高频率的 60% 处。
+
+== 策略 2：占空比管理
+
+在 30 FPS 的相机应用中，你的预算是 33.3ms。如果推理耗时 10ms，GPU 就有 23.3ms 的空闲。
+
+*   **错误做法**：在 Vulkan 栅栏上忙等（`while(!done);`）。这会让 CPU 核心保持 100% 占用，并阻止内存控制器进入低功耗状态。
+*   **专业做法**：用 `vkWaitForFences`。它会触发一次内核中断，操作系统随后可以让 CPU 进入深度睡眠，并降低 DRAM 刷新率，最多能省下 1W 的系统总功耗。
+
+== 策略 3：散热感知推理（PID 回路）
+
+嵌入式设备受**散热约束**。如果 SoC 达到极限（例如 85°C），硬件会「硬降频」——毫无预警地把性能砍掉 50% 甚至更多。这会造成掉帧和「抖动」。
+
+=== 牛顿冷却定律
+散热速率与温差成正比。
+
+[latexmath]
+++++
+\frac{dT}{dt} = -k(T - T_{ambient}) + P_{in}
+++++
+
+其中 latexmath:[P_{in}] 是你的 Vulkan 着色器消耗的功率。如果 latexmath:[P_{in}] 超过散热能力 latexmath:[k(T - T_{amb})]，设备就会过热。
+
+=== 散热 PID 控制器
+为防止这种情况，我们实现一个**闭环软件控制器**。link:https://en.wikipedia.org/wiki/PID_controller[PID（比例-积分-微分）控制器]会调节我们的「推理速率」，把温度维持在安全目标（例如 75°C）。
+
+.散热感知推理 PID 回路
+image::images/ML_Inference/Embedded_Applications/thermal_pid_loop.svg[示意图：SoC 温度与推理占空比之间的反馈回路, 800]
+
+[source,cpp]
+----
+// Advanced Software PID for Thermal Management
+struct PIDController {
+    float Kp = 0.5f; // Proportional: Reacts to current error
+    float Ki = 0.1f; // Integral: Corrects long-term drift
+    float Kd = 0.05f; // Derivative: Dampens oscillations
+
+    float integral = 0;
+    float prevError = 0;
+
+    float update(float target, float current, float dt) {
+        float error = target - current;
+        integral += error * dt;
+
+        // Anti-Windup: Limit the integral to prevent runaway
+        integral = std::clamp(integral, -10.0f, 10.0f);
+
+        float derivative = (error - prevError) / dt;
+        float output = (error * Kp) + (integral * Ki) + (derivative * Kd);
+        prevError = error;
+        return output;
+    }
+};
+
+void thermalLoop() {
+    PIDController thermo;
+    float targetTemp = 75.0f; // Target stable operating temp
+
+    while(running) {
+        float currentTemp = readSoCThermalZone(0);
+        float adjustment = thermo.update(targetTemp, currentTemp, 1.0f);
+
+        // Output: Adjusted Sleep Interval (ms)
+        // If it's too hot, we increase the sleep time between frames
+        inferenceSleepMs = std::clamp(inferenceSleepMs - adjustment, 0.0f, 100.0f);
+
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+----
+
+=== 调参：Ziegler-Nichols 法
+系数该怎么选？
+1.  **把 Ki 和 Kd 设为零。**
+2.  **增大 Kp**，直到温度开始以稳定周期（T）振荡。这时的 Kp 就是你的「极限增益」（Ku）。
+3.  **套用公式**：
+    *   比例项：latexmath:[K_p = 0.6 \cdot K_u]
+    *   积分项：latexmath:[K_i = 2 \cdot K_p / T]
+    *   微分项：latexmath:[K_d = K_p \cdot T / 8]
+
+== 策略 4：降低内存带宽（无声的杀手）
+
+在多数嵌入式 SoC 上，把一个字节的数据从 RAM 搬到 GPU 所消耗的能量，**超过**对这个字节执行一次浮点运算。如果你的着色器受限于内存，你就是在把焦耳浪费在内存总线上。
+
+=== 子组操作
+正常情况下，一个工作组里每个 Vulkan 调用（线程）都独立工作。如果四个线程需要同一份数据，它们可能会各自从内存里取一遍。
+
+借助 link:https://docs.vulkan.org/guide/latest/subgroups.html[**子组**]（比如 `VK_KHR_shader_subgroup_basic` 等扩展），线程可以通过「shuffle」或「swizzle」直接在 GPU 的执行单元内共享数据，完全绕过缓存和内存总线。
+
+[source,glsl]
+----
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+
+void main() {
+    float val = myData[gl_GlobalInvocationID.x];
+
+    // Instead of every thread writing to RAM to sum values,
+    // we use a subgroup operation to sum in registers.
+    float groupSum = subgroupAdd(val);
+
+    if (subgroupElect()) {
+        // Only one thread writes the result to memory
+        outputData[gl_WorkGroupID.x] = groupSum;
+    }
+}
+----
+
+=== 带宽压缩（AFBC）
+许多 ARM 与 Mali GPU 支持 link:https://www.arm.com/technologies/graphics-technologies/arm-frame-buffer-compression[**Arm 帧缓冲区压缩（AFBC）**]。这是一种无损压缩格式，由硬件自动处理。对典型的相机帧，它最多能把带宽降低 50%。
+
+要在 Vulkan 中启用它，你必须使用 `VK_EXT_image_compression_control` 扩展，或者确保图像布局设为 `OPTIMAL`，并且驱动支持该格式的 AFBC。
+
+== 策略 5：CPU 亲和性与中断
+
+在「Big.LITTLE」ARM 处理器上（比如 Pi 5 或 Snapdragon 里的那些），并非所有 CPU 核心都是平等的。
+
+*   **大核**：高性能，高功耗。
+*   **小核**：低性能，能效极高。
+
+对于 Vulkan ML 引擎的「管理」线程，你应该把它绑定到**小核**上。管理线程大部分时间都在等 GPU；没必要为了处理一次 Vulkan 中断就让一颗耗电的大核保持清醒。
+
+[source,cpp]
+----
+// Pinning the ML Manager thread to Core 0 (usually a LITTLE core)
+cpu_set_t cpuset;
+CPU_ZERO(&cpuset);
+CPU_SET(0, &cpuset);
+pthread_setaffinity_np(mlThread.native_handle(), sizeof(cpu_set_t), &cpuset);
+----
+
+== 案例研究：1 瓦推理挑战
+
+假设你要做一台靠一小块太阳能板供电的野生动物相机。AI 的总功耗预算恰好是 **1 瓦**。
+
+|===
+| 组件 | 预算（瓦） | 策略
+
+| 空闲系统 | 0.4W | 精简系统（Alpine/Buildroot）
+| 相机传感器 | 0.2W | 低帧率（5 FPS）
+| **ML 推理** | **0.4W** | **目标**
+|===
+
+要把 ML 做到 0.4W：
+1.  **极致量化**：如果 GPU 支持，就用 4 位权重（INT4）。
+2.  **跳帧**：如果相机没检测到移动（用便宜的 PIR 传感器），GPU 就留在深度睡眠。
+3.  **降压降频**：把 GPU 频率压到满足 5 FPS 所需的绝对最小值。
+
+== 能耗感知着色器：测量 latexmath:[\alpha]
+
+活动因子（latexmath:[\alpha]）表示 GPU 中每个周期发生翻转的晶体管百分比。在着色器中，它由你执行的**乘加（MAC）**运算数量与加载的数据量之比决定。
+
+1.  **高 latexmath:[\alpha]**：高密度矩阵乘法（FP32）。它们每秒耗电最多，但每次推理的能效很高。
+2.  **低 latexmath:[\alpha]**：稀疏、受内存限制的任务（ReLU、最大池化）。它们耗电更少，但会让内存总线一直忙碌。
+
+要优化功耗，就把工作负载推向更低的位宽。从 **FP32** 换到 **INT8**，每次 ALU 运算翻转的位数减少**75%**。这就是为什么量化是嵌入式 ML 中最有效的单项节能技术。
+
+== 小结：功耗优化检查清单
+
+1.  **测量供电轨**：用内部传感器（比如 link:https://github.com/rbonghi/jetson_stats[`jtop`] 或 link:https://www.raspberrypi.com/documentation/computers/os.html#vcgencmd[`vcgencmd`]）实时计算 latexmath:[P = V \cdot I]。
+2.  **量化到 INT8**：降低精度就减少位翻转，也就省下每次运算的焦耳。
+3.  **使用时间线信号量**：它们让 GPU 自行管理内部依赖，无需唤醒 CPU。
+4.  **让出线程**：绝不要在 `vkGetFenceStatus` 上循环。让操作系统把线程挂起。
+5.  **软降频**：用 PID 回路让温度始终低于硅片的散热跳变点。
+
+掌握了硬件的物理极限，你就把代码从「电池杀手」变成了一把精密的手术刀，充一次电就能运行数天。
+
+接下来，我们会把这一切整合成一个**完整的嵌入式应用**。
+
+xref:ML_Inference/Embedded_Applications/03_camera_integration.adoc[上一篇：相机集成：零拷贝管线] | xref:ML_Inference/Embedded_Applications/05_complete_example.adoc[下一篇：完整嵌入式应用：智能野生动物相机]

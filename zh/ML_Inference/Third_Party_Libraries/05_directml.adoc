@@ -1,0 +1,349 @@
+:pp: {plus}{plus}
+
+= DirectML 集成
+
+== 简介
+
+Windows 一直是 PC 游戏与图形开发的主导平台。然而多年来，Windows 上的机器学习落后于 Linux。CUDA 在 Linux 上表现最佳，TensorFlow 针对 Linux 优化，Windows 开发者常常觉得自己在 ML 世界里是二等公民。
+
+DirectML 改变了这一切。它是微软为 Windows 上的硬件加速机器学习提供的方案，设计上与任何 GPU 配合工作——NVIDIA、AMD、Intel 或 Qualcomm。它构建在 DirectX 12 之上，因此天然适合 Windows 图形应用，并与 Windows 生态无缝集成。
+
+本章探讨 DirectML：它的独特之处、它与 CUDA 及其他 ML 加速 API 相比如何、如何在 Windows 上把它集成进 Vulkan 应用，以及它何时才是你项目的正确选择。
+
+== Windows 优先的理念
+
+DirectML 毫不掩饰地以 Windows 为中心。其他 ML 框架追求跨平台兼容，DirectML 则专注于成为 Windows 上的最佳方案。这种专注为 Windows 开发者带来了显著优势。
+
+=== 与厂商无关的 GPU 加速
+
+PC 游戏市场是多样的。NVIDIA 主导高端，但 AMD 占有相当大的市场份额，Intel 的 Arc GPU 也在逐渐起势，Qualcomm 正进入 Windows ARM 市场。如果你在构建 Windows 应用，就不能假定用户都有 NVIDIA GPU。
+
+CUDA 只能在 NVIDIA GPU 上工作。如果你的应用用 CUDA 做 ML 加速，使用 AMD 或 Intel GPU 的用户就完全得不到加速。他们只能忍受缓慢的 CPU 推理，用户体验差，差评也随之而来。
+
+DirectML 解决了这个问题。它与厂商无关，任何支持 DirectX 12 的 GPU 都能用。你的应用会自动利用用户手上的那块 GPU——NVIDIA、AMD、Intel 或 Qualcomm。一套代码，通用加速。
+
+这种厂商中立性是 DirectML 面向 Windows 应用的杀手级特性。你的 ML 代码只写一次，就能在所有硬件上良好运行。没有厂商专属的代码路径，也不会让使用「错误」GPU 的用户掉进性能悬崖。
+
+=== DirectX 12 集成
+
+DirectML 构建在 DirectX 12 之上，这是微软的现代图形 API。如果你在构建 Windows 图形应用，多半已经在用 DirectX 12 做渲染。DirectML 与你现有的 DirectX 12 代码无缝集成。
+
+你可以在渲染与 ML 推理之间共享命令队列，可以在图形资源与 ML 张量之间共享内存，可以用 DirectX 12 的栅栏机制同步操作。这种紧密集成消除了在彼此独立的图形上下文与 ML 上下文之间搭桥的开销。
+
+对 Vulkan 开发者来说，这形成了一个有趣的局面。DirectML 基于 DirectX 12，但在 Windows 上，Vulkan 与 DirectX 12 可以通过共享资源互操作。我们稍后会在本章探讨这种集成。
+
+=== Windows 生态集成
+
+DirectML 与 Windows 生态深度集成：
+
+*Windows ML*：构建在 DirectML 之上的高层 API，提供简便的模型加载与推理。它面向那些想要 ML 功能、但不想深入掌握 ML 的应用开发者。
+
+*ONNX Runtime*：有 DirectML 执行提供器，让 ONNX 模型自动获得 DirectML 加速。
+
+*Visual Studio*：对 DirectML 应用提供完整的调试与性能分析支持。
+
+*PIX*：微软的 GPU 性能分析器支持 DirectML，让你能同时分析 ML 推理与图形渲染的性能。
+
+这种生态集成让 DirectML 成为 Windows 开发者的自然选择。你原本用于图形开发的工具，同样适用于 ML 开发。
+
+=== 跨平台问题
+
+DirectML 仅限 Windows。如果你需要部署到 Linux、macOS、Android 或 iOS，DirectML 就不在选项之内。与可在所有平台使用的 WebGPU 执行提供器相比，这是一个明显的局限。
+
+对 Windows 独占应用（很多 PC 游戏、Windows 专用工具）来说，直接针对 DirectML，或通过它专属的 ONNX Runtime 提供器来使用，是很好的选择。对跨平台应用，你应当使用 **WebGPU**。WebGPU 在 Windows 上会于后台自动使用 DirectML，你既能得到同样的硬件加速，又能保持一套同时通过 Vulkan 在 Linux 和 Android 上运行的代码库。
+
+== 架构：面向机器学习的 DirectX 12
+
+DirectML 的架构映照了 DirectX 12 的设计哲学：显式控制、低开销、贴近硬件的性能。
+
+=== 算子模型
+
+DirectML 提供一个 ML 算子库——卷积、池化、激活函数、归一化等等。每个算子都实现为高度优化的 GPU 内核，在所有支持 DirectX 12 的硬件上工作。
+
+与需要为每种操作手写自定义内核的 OpenCL 不同，DirectML 提供预置算子。这既是优点也是局限。优点是：算子经过高度优化，且在所有硬件上都能工作。局限是：你被限制在 DirectML 提供的算子范围内。
+
+算子集相当全面，覆盖大多数常见 ML 操作：
+
+- 卷积（2D、3D、深度可分离、分组、转置）
+- 池化（最大、平均、全局、自适应）
+- 激活函数（ReLU、Leaky ReLU、ELU、Sigmoid、Tanh、Softmax 等）
+- 归一化（批、层、实例、局部响应）
+- 逐元素操作（加、乘等）
+- 归约操作（求和、均值、最大值、最小值）
+- 矩阵操作（GEMM、矩阵乘法）
+- 还有许多其他操作
+
+对大多数模型来说，这些算子已经够用。对带有奇异算子的前沿研究模型，你可能需要实现自定义算子，或改用其他框架。
+
+=== 执行模型
+
+DirectML 使用 DirectX 12 的命令列表模型。你构建一个算子图，编译它，然后录制命令来执行这个图。这与你用 DirectX 12 录制渲染命令的方式相似。
+
+工作流程：
+
+1. 创建 DirectML 设备（与一个 DirectX 12 设备绑定）
+2. 为模型中的每个操作创建算子描述符
+3. 把算子编译成执行图
+4. 为输入、输出和中间张量分配 GPU 内存
+5. 录制执行该图的命令
+6. 把命令列表提交给 GPU
+7. 等待完成，或与其他工作同步
+
+这种显式模型让你对执行和同步拥有细粒度控制，代价是代码比使用高层框架更复杂。
+
+=== 内存管理
+
+DirectML 使用 DirectX 12 的资源模型。张量存放在 DirectX 12 的缓冲区或纹理中。你要显式管理内存分配、绑定和生命周期。
+
+这种显式内存管理很强大，但需要小心。你需要负责：
+
+- 分配足够容纳张量的缓冲区
+- 保证正确对齐（DirectML 有特定的对齐要求）
+- 管理缓冲区的生命周期（缓冲区在执行期间必须保持有效）
+- 处理内存复用（以最小化分配开销）
+
+好处是高效。你可以跨多次推理复用缓冲区、在渲染与 ML 之间共享内存，并针对自己的用例优化内存布局。
+
+=== 元命令：硬件专属优化
+
+DirectML 支持「元命令」（metacommand）——常见操作的硬件专属实现，可能比标准算子快得多。
+
+GPU 厂商可以为卷积、矩阵乘法这类操作提供元命令，利用硬件专属特性。可用时，DirectML 会自动使用元命令而不是标准算子，无需改代码就能获得更好的性能。
+
+这就是 DirectML 在保持厂商无关的同时，还能取得与 OpenCL 相当的性能的原因。厂商针对自家硬件优化元命令，应用则自动受益。
+
+== 与 Vulkan 应用集成
+
+在 Windows 上把 DirectML 集成进 Vulkan 应用，需要在两套不同的图形 API 之间搭桥。这可行，但需要小心处理。
+
+=== 挑战：两套图形 API
+
+你的 Vulkan 应用用 Vulkan 渲染，DirectML 用 DirectX 12 做 ML 推理。这是两套独立的 API，有各自的设备上下文、命令队列和内存池。
+
+最朴素的做法——把它们当作完全独立的系统——也能工作，但效率很低。你要把数据从 Vulkan 内存拷贝到 CPU 内存，再拷贝到 DirectX 12 内存做推理，然后经 CPU 内存拷回 Vulkan 内存。这些拷贝代价高昂，会拖累性能。
+
+更好的做法是在 Vulkan 与 DirectX 12 之间共享资源，消除不必要的拷贝。
+
+=== 共享资源：桥梁
+
+Windows 提供了在 Vulkan 与 DirectX 12 之间共享资源的机制：
+
+*共享句柄*：Vulkan 和 DirectX 12 都支持用 Windows 句柄导出和导入内存。你可以在 Vulkan 中分配内存、导出句柄，再把它导入 DirectX 12（反之亦然）。
+
+*共享栅栏*：同样地，你可以在 Vulkan 与 DirectX 12 之间共享同步原语（栅栏/信号量），在无需 CPU 参与的情况下实现正确的同步。
+
+共享内存的工作流程：
+
+1. 用 `VK_KHR_external_memory_win32` 在 Vulkan 中分配内存
+2. 导出该内存的 Windows 句柄
+3. 用 `ID3D12Device::OpenSharedHandle` 把句柄导入 DirectX 12
+4. 两套 API 现在都能访问同一块物理内存
+5. 用共享栅栏同步访问
+
+这就消除了数据拷贝。你的 Vulkan 渲染写入一张纹理，DirectML 从同一块内存读取做推理，再把结果写回 Vulkan 可以读取的共享内存。
+
+=== 实用的集成模式
+
+下面是把 DirectML 与 Vulkan 集成的实用模式：
+
+*初始化阶段*：
+
+1. 创建 Vulkan 设备和 DirectX 12 设备（位于同一块物理 GPU 上）
+2. 为输入和输出张量分配共享内存
+3. 创建 DirectML 算子并编译推理图
+4. 创建用于同步的共享栅栏
+
+*逐帧执行*：
+
+1. Vulkan 渲染到一张共享纹理
+2. 从 Vulkan 发出共享栅栏信号
+3. DirectX 12 等待该栅栏
+4. DirectML 执行推理，从共享纹理读取
+5. DirectML 把结果写入共享内存
+6. 从 DirectX 12 发出另一个共享栅栏信号
+7. Vulkan 等待该栅栏
+8. Vulkan 读取推理结果并继续渲染
+
+这个模式在保持正确同步的同时，把开销降到最低。
+
+=== 代码示例：共享内存设置
+
+下面是在 Vulkan 与 DirectX 12 之间设置共享内存的方法：
+
+[source,cpp]
+----
+// Vulkan side: Allocate exportable memory
+VkExternalMemoryBufferCreateInfo externalInfo = {};
+externalInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+externalInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+VkBufferCreateInfo bufferInfo = {};
+bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+bufferInfo.pNext = &externalInfo;
+bufferInfo.size = tensorSize;
+bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+VkBuffer buffer;
+vkCreateBuffer(device, &bufferInfo, nullptr, &buffer);
+
+// Allocate and bind memory
+VkMemoryAllocateInfo allocInfo = {};
+allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+allocInfo.allocationSize = memRequirements.size;
+allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits);
+
+VkExportMemoryAllocateInfo exportInfo = {};
+exportInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+exportInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+allocInfo.pNext = &exportInfo;
+
+VkDeviceMemory memory;
+vkAllocateMemory(device, &allocInfo, nullptr, &memory);
+vkBindBufferMemory(device, buffer, memory, 0);
+
+// Export handle
+VkMemoryGetWin32HandleInfoKHR handleInfo = {};
+handleInfo.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
+handleInfo.memory = memory;
+handleInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+HANDLE sharedHandle;
+vkGetMemoryWin32HandleKHR(device, &handleInfo, &sharedHandle);
+
+// DirectX 12 side: Import the handle
+ID3D12Resource* d3d12Resource;
+d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(&d3d12Resource));
+
+// Now both Vulkan and DirectX 12 can access the same memory
+----
+
+这很复杂，但只是一次性的初始化成本。一旦建立起来，这块共享内存就可以用于多次推理操作，没有拷贝开销。
+
+=== 性能考量
+
+共享资源集成也有开销：
+
+*同步成本*：等待栅栏会带来一些 CPU 开销。尽量减少同步点的数量。
+
+*内存布局*：对同一份数据，Vulkan 与 DirectX 12 可能有不同的最优内存布局。你可能需要选一种双方都能接受的布局，即使它对任何一方都不是最优。
+
+*驱动开销*：在 API 之间共享资源涉及驱动层的协调，会有一些开销。这通常很小，但如果你共享大量资源，累积起来也不少。
+
+对大多数应用来说，这些成本被消除数据拷贝的收益抵消了。但对于极高频率的推理（每帧都跑，120+ FPS），你可能需要仔细做性能分析并优化。
+
+== 通过 ONNX Runtime 使用 DirectML
+
+虽然可以直接使用 DirectML，但大多数应用是通过 ONNX Runtime 的 DirectML 执行提供器来用它。这提供了更高层的 API，同时仍能利用 DirectML 的性能。
+
+=== 为什么用 ONNX Runtime？
+
+相比直接使用 DirectML，ONNX Runtime 提供了几项优势：
+
+*更简单的 API*：ONNX Runtime 处理算子创建、图编译和内存管理。你只需加载模型并运行推理。
+
+*模型格式支持*：ONNX Runtime 直接加载 ONNX 模型。而直接用 DirectML，你需要自己解析模型格式并手动创建算子。
+
+*跨平台*：ONNX Runtime 在所有平台上都能用，你只需选择使用哪个执行提供器。你可以把 WebGPU 作为所有平台上 GPU 加速的默认选择，因为它在 Windows 上背后由 DirectML 支撑、在 Linux/Android 上由 Vulkan 支撑。不过某些能力可能只在更专用的执行提供器中才有，所以按自己的需求调整。一种合理的思路是：把所有平台的 CPU 当作标准配置，再期望 WebGPU，然后举例来说，在 NVIDIA 上用 CUDA 或类似方案、在 Apple 上用 Metal。
+
+*优化*：ONNX Runtime 会自动应用图优化——算子融合、常量折叠、内存规划等。
+
+对大多数应用来说，配 DirectML 执行提供器的 ONNX Runtime 就是正确选择。只有在你需要细粒度控制，或有 ONNX Runtime 无法满足的特定需求时，才直接使用 DirectML。
+
+=== 使用 DirectML 执行提供器
+
+在 ONNX Runtime 中启用 DirectML 很简单：
+
+[source,cpp]
+----
+#include <onnxruntime_cxx_api.h>
+
+// Create session options
+Ort::SessionOptions sessionOptions;
+
+// Enable DirectML execution provider
+Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
+
+// Create session
+Ort::Session session(env, modelPath, sessionOptions);
+
+// Run inference (same as any ONNX Runtime session)
+auto outputTensors = session.Run(runOptions, inputNames, inputTensors,
+                                   inputCount, outputNames, outputCount);
+----
+
+就这样。ONNX Runtime 会处理所有 DirectML 的初始化、算子创建和执行。你的推理在 Windows 上自动获得 DirectML 加速。
+
+=== 通过 ONNX Runtime 与 Vulkan 集成
+
+使用配 DirectML 的 ONNX Runtime 时，与 Vulkan 的集成遵循与直接使用 DirectML 相同的模式：
+
+1. 在 Vulkan 与 DirectX 12 之间创建共享内存
+2. 把输入数据拷贝到共享内存（或者直接渲染到那里）
+3. 运行 ONNX Runtime 推理（内部使用 DirectML）
+4. 从共享内存读取结果
+
+区别在于，ONNX Runtime 处理了 DirectML 的细节。你不需要创建算子或编译图——ONNX Runtime 替你完成。
+
+== 性能：DirectML 的对比
+
+DirectML 的性能与 CUDA、TensorFlow Lite 以及其他选项相比如何？
+
+=== DirectML 与 CUDA 对比
+
+在 NVIDIA GPU 上，CUDA 通常比 DirectML 更快。CUDA 的优化更成熟、编译器技术更好，并且能直接访问硬件。对 NVIDIA 专属应用来说，CUDA 是性能之王。
+
+但差距在缩小。DirectML 的元命令让厂商能提供高度优化的实现。在近期支持良好 DirectML 元命令的 NVIDIA GPU 上，性能差距常常是 10-20%，而不是 2-3 倍。
+
+在 AMD 和 Intel GPU 上，DirectML 是 GPU 加速的唯一选择，因为 CUDA 无法在非 NVIDIA 硬件上运行。DirectML 针对这些 GPU 做了优化，能提供出色的性能。
+
+对跨厂商的 Windows 应用来说，DirectML 的通用加速通常胜过 CUDA 在 NVIDIA 硬件上的峰值性能。
+
+=== DirectML 与 TensorFlow Lite 对比
+
+TensorFlow Lite 面向移动端，并未针对桌面 GPU 优化。在 Windows 桌面上，对大多数模型来说 DirectML 明显比 TensorFlow Lite 更快。
+
+TensorFlow Lite 的强项是移动部署——在那里它的激进优化和小体积才有意义。在 Windows 桌面上，这些优势关系不大，而 DirectML 对桌面 GPU 更好的利用会胜出。
+
+=== DirectML 与 ONNX Runtime（通用后端）对比
+
+配 **WebGPU** 执行提供器的 ONNX Runtime 是在各处运行的通用方式。在 Windows 平台上，WebGPU 会在后台使用 DirectML 来实现加速。
+
+与纯 CPU 推理相比，DirectML 能带来 5-50 倍的加速。显式针对 DirectML 能为 Windows 独占软件提供尽可能最好的集成，但在 Windows 上，使用通用 WebGPU 提供器带来的性能提升几乎相同，这使得 WebGPU 成为大多数跨平台开发者的更好选择。
+
+== DirectML 适用的场景
+
+DirectML 并不总是正确选择。下面是它发挥优势的场景，以及何时该考虑其他方案。
+
+=== 理想用例
+
+*Windows 独占应用*：如果你只为 Windows 构建（很多 PC 游戏、Windows 专用工具），DirectML 是自然的选择。
+
+*跨厂商 GPU 支持*：如果你的用户使用各种 GPU（NVIDIA、AMD、Intel），DirectML 能确保每个人都获得加速。
+
+*DirectX 12 应用*：如果你已经在用 DirectX 12 渲染，DirectML 可以无缝集成。
+
+*Windows 上的 Vulkan*：如果你在 Windows 上用 Vulkan，并想要 GPU 加速的 ML，DirectML 是一个有力选项（配合共享资源集成）。
+
+*ONNX Runtime 用户*：如果你用 ONNX Runtime 做跨平台部署，在 Windows 上启用 DirectML 非常简单，并能带来显著加速。
+
+=== 何时考虑其他方案
+
+*跨平台部署*：如果你需要部署到 Linux、macOS 或移动端，DirectML 帮不上忙。请用配 **WebGPU** 后端的 ONNX Runtime 来做通用跨平台加速。
+
+*仅面向 NVIDIA 的应用*：如果你确定所有用户都有 NVIDIA GPU，使用专门的 **CUDA** 或 **TensorRT** 提供器，可能针对你的目标硬件取得更好的性能。
+
+*移动部署*：DirectML 仅限桌面。移动端请用 TensorFlow Lite、PyTorch Mobile 或平台专属方案。
+
+*Linux 开发*：DirectML 仅限 Windows。在 Linux 上，请用 **WebGPU** 后端来获得通用的跨厂商加速，因为它会自动利用 **Vulkan** 来提升性能。
+
+== 小结
+
+DirectML 是微软为 Windows 上的硬件加速机器学习提供的方案，构建在 DirectX 12 之上，设计上与任何 GPU 配合工作。它与厂商无关的方式确保了在 NVIDIA、AMD、Intel 和 Qualcomm 硬件上都能获得加速，这使它非常适合拥有多样化用户硬件的 Windows 应用。
+
+它的架构映照 DirectX 12 的显式控制模型，提供全面的算子库、基于命令列表的执行，以及显式的内存管理。元命令在保持厂商中立的同时实现了硬件专属优化。
+
+通过共享资源（内存与栅栏）可以把它集成进 Vulkan 应用，既消除数据拷贝，又保持正确的同步。大多数应用通过 ONNX Runtime 的 DirectML 执行提供器来使用 DirectML，这提供了更简单的 API，同时保留了 DirectML 的性能优势。
+
+对 Windows 独占应用、需要跨厂商 GPU 支持的应用，以及 Windows 上的 DirectX 12 或 Vulkan 应用来说，DirectML 表现出色。对于跨平台部署或移动应用，请考虑配平台合适后端的 ONNX Runtime，或 TensorFlow Lite。
+
+xref:ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc[上一篇：PyTorch Mobile 集成] | xref:ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc[下一篇：集成模式]

@@ -1,0 +1,477 @@
+:pp: {plus}{plus}
+
+= 同步
+
+== 简介
+
+神经网络是一连串相互依赖的运算。第 2 层要等第 1 层完成才能开始。第 5 层不能去读第 4 层还在写的缓冲区。这就带来一个根本性挑战：如何在强制这些依赖关系的同时，仍在可能的地方保留并行？
+
+Vulkan 把同步的控制权明确交给你，这既强大又危险。同步太少会导致竞态——运算在数据写入之前就去读，结果出错。同步太多则会把执行串行化，浪费 GPU 的并行处理能力，拖慢性能。
+
+本章探讨如何正确且高效地同步 ML 运算。我们会讲 Vulkan 的同步原语、顺序运算与并行运算的写法模式，以及在神经网络推理中管理依赖的实用技巧。
+
+== 理解问题
+
+在深入 Vulkan 的同步机制之前，先弄清楚我们要解决什么问题。
+
+=== 神经网络中的依赖
+
+考虑一个简单的三层网络：
+
+[source]
+----
+Input → Layer 1 (Conv) → Layer 2 (ReLU) → Layer 3 (Pool) → Output
+----
+
+依赖关系很清楚：
+
+- 第 2 层依赖第 1 层的输出
+- 第 3 层依赖第 2 层的输出
+- 每一层都必须在下层开始前完成
+
+这是一条*顺序依赖链*。没有正确的同步，第 2 层可能在第 1 层还没写完输出缓冲区时就开始读它。结果呢？数据变成垃圾、预测出错，然后你调试几个小时。
+
+=== 并行分支
+
+现代网络并不总是顺序的。考虑一个残差网络（ResNet）块：
+
+[source]
+----
+Input → Conv1 → Conv2 → Add → Output
+  ↓                        ↑
+  └────────────────────────┘
+----
+
+输入沿两条路径流动：一条经过 Conv1 与 Conv2，另一条直接送到 Add 运算（跳跃连接）。这两条路径相互独立——Conv1 与跳跃连接可以并行执行。但 Add 运算依赖两条路径都完成。
+
+这就形成*带同步点的并行分支*。你希望 Conv1 与跳跃连接并发执行（最大化 GPU 利用率），但又必须确保两者在 Add 开始前都已完成。
+
+=== 内存复用
+
+为了把内存占用降到最低，你会复用缓冲区。第 1 层的输出缓冲区可能被第 3 层的输出复用（因为第 2 层完成之后就不再需要第 1 层的输出了）。
+
+这就产生*读后写依赖*。第 3 层必须等第 2 层读完才能开始往这个缓冲区写。没有同步的话，第 3 层可能覆盖掉第 2 层还在用的数据。
+
+== Vulkan 同步原语
+
+Vulkan 提供了若干同步机制。理解每一种以及何时使用它们，是必不可少的。
+
+=== 管线屏障：主力工具
+
+管线屏障是计算工作负载的主要同步机制。管线屏障的意思是：「此点之前的所有运算都必须完成，此点之后的任何运算才能开始。」
+
+更准确地说，管线屏障会指定：
+
+*源阶段*：哪个管线阶段必须在屏障之前完成
+*目标阶段*：哪个管线阶段必须等待屏障
+*内存屏障*：哪些内存访问必须变为可见
+
+对于 ML 推理，我们通常这样用：
+
+[source,cpp]
+----
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,  // Previous layer wrote
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead    // Next layer reads
+};
+
+commandBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,  // Source: compute shader finished
+    vk::PipelineStageFlagBits::eComputeShader,  // Dest: compute shader waits
+    {},
+    barrier,
+    nullptr,
+    nullptr
+);
+----
+
+这就确保前一层着色器的写入对后一层的着色器读取可见。
+
+=== 缓冲区内存屏障：细粒度控制
+
+要更精细地控制，可以使用缓冲区内存屏障，明确指出涉及哪个缓冲区：
+
+[source,cpp]
+----
+vk::BufferMemoryBarrier bufferBarrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead,
+    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .buffer = *intermediateBuffer,
+    .offset = 0,
+    .size = VK_WHOLE_SIZE
+};
+
+commandBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {},
+    nullptr,
+    bufferBarrier,
+    nullptr
+);
+----
+
+这更明确：「这个特定的缓冲区由前一个着色器写入，并将由后一个着色器读取。」
+
+=== 执行依赖与内存依赖
+
+Vulkan 区分两类依赖：
+
+*执行依赖*：运算 A 必须在运算 B 开始前完成。这是关于顺序的。
+
+*内存依赖*：运算 A 的写入必须对运算 B 的读取可见。这是关于可见性的。
+
+两者都需要。只有执行依赖而没有内存依赖，意味着运算 B 会等运算 A 完成，但可能看不到 A 的写入（因为缓存）。没有执行依赖的内存依赖毫无意义——写入都还没发生，你无法让它可见。
+
+管线屏障同时提供两者：阶段掩码创建执行依赖，访问掩码创建内存依赖。
+
+== ML 运算的同步模式
+
+我们来看 ML 推理中常见的同步模式。
+
+=== 模式 1：顺序层
+
+最简单的模式：一条由依赖层组成的链。
+
+[source,cpp]
+----
+// Dispatch Layer 1
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer1Pipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *layer1DescSet, nullptr);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+
+// Barrier: Layer 1 writes must be visible to Layer 2 reads
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+
+cmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, barrier, nullptr, nullptr);
+
+// Dispatch Layer 2
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer2Pipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *layer2DescSet, nullptr);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+
+// Barrier: Layer 2 writes must be visible to Layer 3 reads
+cmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, barrier, nullptr, nullptr);
+
+// Dispatch Layer 3
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer3Pipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *layer3DescSet, nullptr);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+----
+
+这个模式很直接：派发、屏障、派发、屏障、派发。每个屏障都确保前一层的写入对后一层的读取可见。
+
+=== 模式 2：并行分支
+
+对于带并行路径的网络（比如 ResNet），你希望分支并发执行，但在汇合点同步。
+
+[source,cpp]
+----
+// Dispatch both branches (no barrier between them - they're independent)
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *branch1Pipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *branch1DescSet, nullptr);
+cmd.dispatch(workGroupsX1, workGroupsY1, 1);
+
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *branch2Pipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *branch2DescSet, nullptr);
+cmd.dispatch(workGroupsX2, workGroupsY2, 1);
+
+// Barrier: Both branches must complete before merge
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+
+cmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, barrier, nullptr, nullptr);
+
+// Dispatch merge operation (reads from both branches)
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *mergePipeline);
+cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                       *pipelineLayout, 0, *mergeDescSet, nullptr);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+----
+
+关键点：两个分支之间没有屏障，它们可以并行执行。屏障放在汇合之前，确保两个分支在汇合读取它们的输出之前都已完成。
+
+=== 模式 3：内存复用
+
+复用缓冲区时，你需要读后写同步：
+
+[source,cpp]
+----
+// Layer 1 writes to buffer A
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer1Pipeline);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+
+// Barrier: Layer 1 writes must be visible to Layer 2 reads
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    {}, barrier, nullptr, nullptr);
+
+// Layer 2 reads from buffer A, writes to buffer B
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer2Pipeline);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+
+// Barrier: Layer 2 reads must complete before Layer 3 writes to buffer A
+barrier.srcAccessMask = vk::AccessFlagBits::eShaderRead;
+barrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    {}, barrier, nullptr, nullptr);
+
+// Layer 3 writes to buffer A (reusing Layer 1's buffer)
+cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *layer3Pipeline);
+cmd.dispatch(workGroupsX, workGroupsY, 1);
+----
+
+第二个屏障至关重要：它确保第 2 层对缓冲区 A 的读取结束之后，第 3 层才开始往里面写。没有它，第 3 层可能覆盖第 2 层还在使用的数据。
+
+== 优化同步
+
+同步是要花钱的。每个屏障都可能让 GPU 停顿。我们来看看如何把这笔开销降到最低。
+
+=== 屏障粒度
+
+你可以在每一个运算之后都插一个屏障：
+
+[source,cpp]
+----
+dispatch(op1);
+barrier();
+dispatch(op2);
+barrier();
+dispatch(op3);
+barrier();
+// ... and so on
+----
+
+这正确但低效。每个屏障都迫使 GPU 等待，即使下一个运算实际上并不依赖上一个运算。
+
+更好的做法：只在存在依赖的地方插入屏障：
+
+[source,cpp]
+----
+dispatch(op1);  // Writes to buffer A
+dispatch(op2);  // Writes to buffer B (independent of op1)
+barrier();      // Both must complete before op3
+dispatch(op3);  // Reads from buffers A and B
+----
+
+运算 1 与运算 2 可以重叠。屏障只在必要时出现——也就是在依赖两者的运算 3 之前。
+
+=== 合并屏障
+
+如果多个缓冲区需要在同一处同步，就用一次屏障调用带上多个缓冲区内存屏障：
+
+[source,cpp]
+----
+vk::BufferMemoryBarrier barriers[3] = {
+    {/* buffer A */},
+    {/* buffer B */},
+    {/* buffer C */}
+};
+
+cmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,
+    vk::PipelineStageFlagBits::eComputeShader,
+    {}, nullptr, barriers, nullptr);
+----
+
+这比三次独立的管线屏障调用更高效。
+
+=== 避免不必要的屏障
+
+有些运算不需要屏障：
+
+*只读运算*：如果两个运算都只从同一个缓冲区读取而都不写入，它们之间不需要屏障。读取不会冲突。
+
+*独立缓冲区*：如果运算 A 写缓冲区 X、运算 B 写缓冲区 Y，且彼此都不读对方的缓冲区，则不需要屏障。
+
+*同一次着色器调用*：在一次着色器派发内，工作组在结尾会隐式同步。单次派发内不需要屏障。
+
+== 调试同步问题
+
+同步缺陷出了名的难调。症状——结果错误、偶发崩溃、非确定性行为——往往很隐蔽。
+
+=== 验证层
+
+开发期间请启用 Vulkan 验证层：
+
+[source,cpp]
+----
+const char* validationLayers[] = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
+vk::InstanceCreateInfo createInfo{
+    .enabledLayerCount = 1,
+    .ppEnabledLayerNames = validationLayers
+};
+----
+
+验证层能抓到许多同步错误：缺失的屏障、错误的访问掩码、写后写冒险。
+
+=== 系统性测试
+
+用不同的输入尺寸与批大小测试。同步缺陷往往只在特定数据尺寸下、或 GPU 负载很重时才出现。
+
+把同一次推理跑多遍，验证结果完全一致。非确定性的结果意味着存在竞态。
+
+=== 过度保守的同步
+
+调试时，试着到处都加屏障：
+
+[source,cpp]
+----
+dispatch(layer1);
+barrier();  // Overly conservative
+dispatch(layer2);
+barrier();  // Overly conservative
+dispatch(layer3);
+barrier();  // Overly conservative
+----
+
+如果这样能修好问题，你就知道这是同步问题。然后逐个移除屏障，找出最小必要的集合。
+
+=== RenderDoc 与 GPU 调试器
+
+RenderDoc 之类的工具可以捕获并可视化命令缓冲区的执行过程。你能看到各次派发与屏障的顺序，有助于定位哪里缺少同步或同步不正确。
+
+== 完整示例：三层网络
+
+我们把一切整合到一个完整示例里：一个带正确同步的三层网络。
+
+[source,cpp]
+----
+class SynchronizedInference {
+private:
+    vk::raii::Device device;
+    vk::raii::CommandBuffer cmd;
+
+    // Pipelines for each layer
+    vk::raii::Pipeline convPipeline;
+    vk::raii::Pipeline reluPipeline;
+    vk::raii::Pipeline poolPipeline;
+
+    // Descriptor sets for each layer
+    vk::raii::DescriptorSet convDescSet;
+    vk::raii::DescriptorSet reluDescSet;
+    vk::raii::DescriptorSet poolDescSet;
+
+    vk::raii::PipelineLayout pipelineLayout;
+
+public:
+    void runInference(uint32_t width, uint32_t height) {
+        // Begin command buffer
+        vk::CommandBufferBeginInfo beginInfo{
+            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+        };
+        cmd.begin(beginInfo);
+
+        // Layer 1: Convolution
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *convPipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                               *pipelineLayout, 0, *convDescSet, nullptr);
+
+        uint32_t groupsX = (width + 15) / 16;
+        uint32_t groupsY = (height + 15) / 16;
+        cmd.dispatch(groupsX, groupsY, 1);
+
+        // Barrier: Convolution writes must be visible to ReLU reads
+        vk::MemoryBarrier barrier{
+            .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+            .dstAccessMask = vk::AccessFlagBits::eShaderRead
+        };
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, barrier, nullptr, nullptr);
+
+        // Layer 2: ReLU activation
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *reluPipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                               *pipelineLayout, 0, *reluDescSet, nullptr);
+        cmd.dispatch(groupsX, groupsY, 1);
+
+        // Barrier: ReLU writes must be visible to Pooling reads
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, barrier, nullptr, nullptr);
+
+        // Layer 3: Max pooling
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *poolPipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                               *pipelineLayout, 0, *poolDescSet, nullptr);
+
+        // Pooling reduces dimensions by 2x
+        cmd.dispatch(groupsX / 2, groupsY / 2, 1);
+
+        // Final barrier: Ensure pooling completes before reading results
+        barrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eTransfer,
+            {}, barrier, nullptr, nullptr);
+
+        cmd.end();
+
+        // Submit and wait
+        vk::SubmitInfo submitInfo{
+            .commandBufferCount = 1,
+            .pCommandBuffers = &*cmd
+        };
+
+        vk::raii::Fence fence(device, vk::FenceCreateInfo{});
+        // RAII handles cleanup automatically
+
+        queue.submit(submitInfo, *fence);
+        auto result = device.waitForFences(*fence, VK_TRUE, UINT64_MAX);
+    }
+};
+----
+
+这个示例演示了：
+
+- 各层顺序执行，层与层之间有屏障
+- 正确的访问掩码（SHADER_WRITE → SHADER_READ）
+- 读取结果前有最后的屏障（SHADER_WRITE → TRANSFER_READ）
+- 针对不同层尺寸的工作组数量计算
+
+== 小结
+
+用 Vulkan 计算做正确的 ML 推理，同步是必不可少的。管线屏障强制实现执行依赖与内存依赖，确保各个运算以正确的顺序完成，并让写入对后续读取可见。
+
+关键模式包括：顺序层（每层之间加屏障）、并行分支（分支之间不加屏障，汇合前加屏障）以及内存复用（读后写屏障）。优化手段包括减少屏障数量、合并屏障，以及避免不必要的同步。
+
+调试同步问题需要验证层、系统性测试以及 RenderDoc 这类工具。拿不准时，先从保守的同步开始，等正确性确定之后再优化。
+
+有了正确的同步，你就能构建既正确又高效的 ML 推理管线：既利用 GPU 的并行处理能力，又保持神经网络固有的顺序依赖。
+
+xref:ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc[上一篇：数据管理] | xref:ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc[下一篇：向量加法示例]

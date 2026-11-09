@@ -1,0 +1,60 @@
+:pp: {plus}{plus}
+= 将语义遮挡集成到引擎中
+
+集成**语义遮挡**让我们的 `simple_game_engine` 能够把虚拟资产逼真地混合进物理房间。为此，我们给 `Renderer` 增加一个掩码通道，并更新 `renderer_rendering.cpp` 中最终的合成逻辑。*目前这部分留给读者作为练习实现。*
+
+== 创建遮挡掩码通道
+
+在 `renderer_rendering.cpp` 中，我们增加一个步骤，用 ML 分割的结果填充**模板缓冲区**。这个通道必须在我们收到最新的 ML 掩码之后、绘制虚拟场景几何体之前执行。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::executeOcclusionMaskPass(vk::raii::CommandBuffer& cmd, uint32_t frameIndex) {
+    if (!xrMode || !occlusionEnabled) return;
+
+    // 1. Prepare to fill the stencil buffer
+    // We bind a simple pipeline that reads the ML mask texture
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *occlusionMaskPipeline);
+
+    // 2. Set the stencil reference to 0x1 (meaning "Real World")
+    cmd.setStencilReference(vk::StencilFaceFlagBits::eFrontAndBack, 0x1);
+
+    // 3. Draw a full-screen quad. The shader will discard fragments
+    // where the ML mask doesn't indicate an occluding object (like a hand).
+    cmd.draw(3, 1, 0, 0); // Using a single large triangle for the full screen
+}
+----
+
+== 在 Slang 中合成
+
+在 `composite.slang` 着色器中，我们用模板缓冲区的输出决定如何把虚拟场景与透视摄像头画面混合。如果硬件不支持基于模板的丢弃，我们也可以改用一张专门的纹理。
+
+[source,slang]
+----
+// composite.slang
+[shader("pixel")]
+float4 fragmentMain(V2P input) : SV_Target {
+    // 1. Sample the virtual scene and the passthrough feed
+    float4 virtualColor = virtualScene.Sample(input.uv);
+    float4 passthroughColor = passthroughTexture.Sample(input.uv);
+
+    // 2. Sample our refined occlusion mask
+    float mask = occlusionMask.Sample(input.uv).r;
+
+    // 3. Perform the Final Blend
+    // If mask > 0.5, the real world is occluding. We use a smoothstep
+    // to provide a "soft" edge, reducing jitter.
+    float blendFactor = smoothstep(0.4, 0.6, mask);
+
+    return lerp(virtualColor, passthroughColor, blendFactor);
+}
+----
+
+== 为什么要做这些改动？
+
+通过把遮挡从简单的「开/关」切换变成 `Renderer` 中一个专门的通道，我们让虚拟物体能以逐像素的方式与真实世界交互。虚拟角色现在可以「伸手到」真实物体后面。由于我们的引擎采用现代的**同步 2** 架构，我们可以确保 ML 掩码在这个通道开始之前就绪，而不会让整块 GPU 停摆。
+
+这种像素级的感知，正是把「视频叠加」变成「空间体验」的关键——在空间体验中，虚拟与物理之间的边界对用户的眼睛来说已难以分辨。
+
+xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/01_introduction.adoc[下一页]

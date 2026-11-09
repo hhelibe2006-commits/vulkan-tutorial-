@@ -1,0 +1,56 @@
+:pp: {plus}{plus}
+= 片元密度控制与 VRS
+
+可变速率着色（VRS）通过把着色率与光栅化率解耦，让我们在保持几何锐利度的同时降低着色开销。
+
+== 生态系统视角
+
+本章属于以下类别：**超越 OpenXR 标准**。
+
+Vulkan 提供了实现注视点着色所需的强大 VRS 扩展，但 OpenXR 标准尚未强制要求使用它们，也不负责协调着色率图的生成。你用 Vulkan 来实现这些优化，从而把引擎的性能推到超出标准运行时预期的水平。
+
+== 概念：把光栅化与着色解耦
+
+在传统管线中，降低着色质量往往意味着渲染到较低分辨率的缓冲区再放大，这会引入模糊。现代 Vulkan 通过**可变速率着色（VRS）**提供了优雅得多的方案。
+
+1.  **光栅化**：确定一个三角形覆盖了哪些像素。
+2.  **着色**：运行片元着色器来确定这些像素的颜色。
+
+使用 **VRS** 时，你可以为一*组*像素（例如 2x2 或 4x4 的块）只运行一次片元着色器，同时仍保留光栅化器输出的高分辨率边缘与深度数据。这在显著降低复杂光照 **ALU** 开销的同时维持了**几何锐利度**。
+
+== 着色率图像：密度图
+
+在空间管线中，我们使用一张**着色率图像**。这是一张低分辨率附件，其中每个「像素」代表屏幕上的一个瓦片（例如 8x8 或 16x16）。
+
+[source,cpp]
+----
+// Configuring the shading rate state using designated initializers
+vk::PipelineFragmentShadingRateStateCreateInfoKHR shadingRateState{
+    .fragmentSize = {1, 1}, // Default fallback
+    .combinerOps = {
+        vk::FragmentShadingRateCombinerOpKHR::eReplace, // Use the image's rate
+        vk::FragmentShadingRateCombinerOpKHR::eKeep
+    }
+};
+
+vk::GraphicsPipelineCreateInfo pipelineInfo{
+    .pNext = &shadingRateState
+};
+----
+
+运行时会检查你的硬件所支持的瓦片尺寸，并确保你的密度图符合这些限制。它甚至可能在重投影过程中「扭曲」你的密度图，让高分辨率的「甜点区」始终与透镜光学对齐。
+
+== 进阶：时域稳定性与异步计算
+
+Vulkan 让我们能把 VRS 推进到超出 OpenXR 标准的水平：
+
+*   **时域着色稳定性**：你可以在计算着色器中使用 Vulkan 的**子组操作**分析上一帧的深度与运动矢量，生成更精细的密度图，避免周边出现「闪烁」伪影。
+*   **异步计算协调**：你可以用 Vulkan 执行重型计算工作，并让它遵循主图形通道的着色率图，从而确保你的体积计算或光照计算与几何一起得到优化。
+
+== 固定暗角着色
+
+由于 XR 透镜的边缘天然更模糊、畸变更严重，我们可以预先计算一张「暗角」图。透镜中心设为 1x1，外圈则设为 2x2 或 4x4。由于用户很少去看最边缘的地方，这基本上就是「免费的性能」。
+
+TIP: 关于 VRS 与密度图的更多信息，请参阅官方的 link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#primsrast-fragment-shading-rate[Vulkan 规范中关于 VRS 的部分]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc[下一页]

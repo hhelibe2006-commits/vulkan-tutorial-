@@ -1,0 +1,66 @@
+:pp: {plus}{plus}
+
+= 选择合适的 ML 编译器
+
+== 引言
+
+不存在单一「最好」的 ML 编译器——只有最适合你约束条件的那一个。要围绕输入格式（ONNX、StableHLO、TFLite、NNEF）、目标平台（桌面、移动、嵌入式）、必需后端（Vulkan、Metal、CUDA）、开发者工作流、运行时体积，以及你愿意在调优上投入多少精力来做优化。
+
+== 从不妥协的硬性要求开始
+
+先确定你绝对不能缺的东西。如果 Vulkan 是你各平台的必需项，那么首批候选就是 xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE] 与 xref:ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc[TVM]。如果小运行时与提前编译打包至关重要，就偏向 IREE 或 TVM 的 AOT/CRT 路径。当你需要针对某款手机或 iGPU 做设备专属自动调优时，TVM 表现出色。如果你的训练管线已经在说 StableHLO/XLA，优先导出 StableHLO 并用 IREE 为 Vulkan 编译；对非 Vulkan 目标，XLA 各守其位。而如果你的团队已经统一在 Modular 的工具上，且它们的后端覆盖你的硬件，MAX/Mojo 可能最舒适。
+
+== 一个简单的决策流程
+
+[source]
+----
+Inputs: ONNX / StableHLO / TFLite / NNEF
+Targets: Vulkan / Metal / CUDA / CPU
+
+          ┌───────────────────────────────────────────────────────┐
+          │ Need Vulkan and small runtime?                        │
+          └───────────────┬───────────────────────────────────────┘
+                          Yes                         No
+                           │                           │
+                           ▼                           ▼
+                     Use IREE first              Prefer XLA/MAX/CPU
+                     (StableHLO→SPIR‑V)          backends as needed
+                           │
+                           │ Need device‑specific tuning? (mobile/iGPU)
+                           ├──────────► Yes: Consider TVM (Vulkan/OpenCL)
+                           │               with auto‑scheduler
+                           │
+                           └──────────► No: Ship IREE AOT
+----
+
+这个流程能让你快速得到初步选择。从这里出发，构建一个概念验证来验证它。
+
+== 场景建议
+
+如果你在桌面与 Android 上发布 Vulkan，并且想要一个小而简单的运行时，就从 IREE 开始。如果你的世界只是一部手机或一个 iGPU，每一毫秒都很宝贵，就在 Vulkan 上用 TVM 并做调优。如果你的组织已经从 TensorFlow/JAX 导出 StableHLO，就保留该导出并用 IREE 为 Vulkan 编译。如果你乐于待在 Modular 生态内且你的设备受支持，MAX/Mojo 可能是摩擦最小的选择。
+
+用两个具体画面来锚定思路：
+
+1）嵌入式相机应用（电量/散热重要）：你希望在热降频下仍有可预测的延迟，且体积很小。导出一个固定形状的模型，用 IREE 为 Vulkan 编译，与 CPU 黄金参考核对数值，然后发布。如果设备上的 p95 延迟仍然过高，就试 TVM 并在设备上调优；保持同一套验证工具。选那个以最小集成成本满足你延迟/波动目标的一方。
+
+2）桌面批处理工具（吞吐量主导）：你要处理成批的图像或短视频。IREE 和 TVM 都能用；简单的那条路胜出。如果你预见到要在一批异构硬件上做逐 GPU 调优，就从 TVM 开始。如果你想要一个可移植的产物、尽量少的运行时包袱，就从 IREE 开始。无论哪种情况，如果机器是要花钱的，就测量每瓦与每美元的吞吐量。
+
+== NNEF 相关考虑
+
+如果你的事实来源是 NNEF，先转换为 ONNX 或 StableHLO。从 StableHLO 出发，用 IREE 抵达 Vulkan；从 ONNX 出发，导入 TVM（Relay）并以 Vulkan 为目标。对非 Vulkan 目标，走各自原生的下游（MAX/Metal、XLA/CUDA）。把转换脚本化，并在一份很小的样本上测试，让意外尽早暴露。
+
+== 概念验证清单
+
+在你真实的设备上使用你真实的模型。保持叙述性，而不是购物清单：
+
+首先，锁定一个固定的输入张量，并保存一份 CPU 黄金输出（ONNX Runtime）。接着，用 IREE 和 TVM 在各自默认、保守的选项下为 Vulkan 编译该模型。在目标设备上各跑几分钟：先做 N 次预热，然后在时钟/温度稳定期间测量 p50/p95 延迟与内存。只有在两条路径都正确且稳定之后，才去尝试 fp16 或 INT8。如果你需要在某款手机/iGPU 上拿到最后 20%，就运行 TVM 的自动调度器并重新测量；否则优先选更简单的集成。在手握数字、并把产物/运行时体积摆在桌面上的前提下做决定。
+
+要避免的常见陷阱：
+
+- 依据别人的基准而非你自己的模型与设备做选择。
+- 跳过黄金参考对比，「容忍」悄无声息的数值漂移。
+- 前处理与编译图之间布局不一致；一次定好并坚持。
+- 在还没正确之前就开始调优，或者在内核时间主导时去优化拷贝（反之亦然）。
+- 只报告平均延迟；用户真正感受到的是 p95（交互式应用还有 p99）。
+
+xref:ML_Inference/Third_Party_Libraries/15_openxla.adoc[上一章：OpenXLA：XLA、StableHLO 以及 Vulkan 的定位] | xref:ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc[下一章：面向 ML 的 Vulkan 计算：简介]

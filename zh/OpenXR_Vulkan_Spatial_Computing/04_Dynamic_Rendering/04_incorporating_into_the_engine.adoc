@@ -1,0 +1,109 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+在本章中，我们借助 `renderer_rendering.cpp` 中引擎已有的动态渲染路径，转向了直接的空间渲染。这样既绕过了遗留状态，也支持按眼睛管理视口。该实现的一个示例见 link:../../../attachments/openxr_engine/renderer_rendering.cpp[renderer_rendering.cpp] 和 link:../../../attachments/openxr_engine/renderer_pipelines.cpp[renderer_pipelines.cpp]。
+
+== 直接渲染到空间交换链
+
+在 `renderer_rendering.cpp` 中，我们的 `Render` 函数已经在用 `vk::RenderingInfo`。为了支持 OpenXR，我们必须确保它指向正确的运行时图像：
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ... Wait for runtime to be ready ...
+    uint32_t imageIndex = xrContext.acquireSwapchainImage();
+    xrContext.waitSwapchainImage();
+
+    for (uint32_t eye = 0; eye < 2; ++eye) {
+        // 1. Point rendering at the acquired XR image view
+        // Our engine uses a single multiview swapchain at index [0]
+        vk::RenderingAttachmentInfo colorAttachment{
+            .imageView = *eyeSwapchainImageViews[0][imageIndex],
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp = vk::AttachmentLoadOp::eClear,
+            .storeOp = vk::AttachmentStoreOp::eStore,
+            .clearValue = vk::ClearValue{vk::ClearColorValue{std::array<float, 4>{0.1f, 0.1f, 0.1f, 1.0f}}}
+        };
+
+        vk::RenderingInfo passInfo{
+            .renderArea = vk::Rect2D({0, 0}, swapChainExtent),
+            .layerCount = 1,
+            .viewMask = (1u << eye), // Render specifically to this eye's layer
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colorAttachment
+        };
+
+        commandBuffer.beginRendering(passInfo);
+
+        // Issue draws for this eye
+        RenderEye(commandBuffer, eye);
+
+        commandBuffer.endRendering();
+    }
+
+    // 2. Hand the image back to OpenXR
+    xrContext.releaseSwapchainImage();
+}
+----
+
+== 管理立体视口
+
+对头显来说，我们必须从两个不同的视点渲染。在引擎的 `Render` 循环中，我们按视图应用各自的视口与剪刀矩形：
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ... inside the render loop ...
+
+    for (uint32_t eye = 0; eye < 2; ++eye) {
+        // Retrieve asymmetric projection and eye-specific viewport from OpenXR
+        // xrContext provides these based on xrLocateViews
+        auto viewport = xrContext.getViewport(eye);
+        auto scissor = xrContext.getScissor(eye);
+
+        commandBuffer.setViewport(0, viewport);
+        commandBuffer.setScissor(0, scissor);
+
+        // Update the eye-specific View and Projection matrices in our UBO
+        // Note: Shaders don't need to change yet! We are rendering each eye sequentially.
+        updateUniformBuffer(currentFrame, eye);
+
+        // Draw the scene for this eye
+        // ...
+    }
+}
+----
+
+== `updateUniformBuffer` 辅助函数
+
+由于我们的引擎目前是**顺序**渲染两眼（一只接一只），我们可以复用现有的着色器。只需在每一趟眼睛渲染中更新 `UniformBufferObject` 里的视图矩阵与投影矩阵。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::updateUniformBuffer(uint32_t currentFrame, uint32_t eye, const XrPosef* overridePose) {
+    // 1. Retrieve the predicted View and Projection from OpenXR
+    // If overridePose is null, we query the latest from the context
+    glm::mat4 viewMatrix = overridePose ? xrPoseToMatrix(*overridePose) : xrContext.getViewMatrix(eye);
+    glm::mat4 projMatrix = xrContext.getProjectionMatrix(eye);
+
+    // 2. Update the UBO for the current frame and eye
+    UniformBufferObject ubo{};
+    ubo.view = viewMatrix;
+    ubo.proj = projMatrix;
+    ubo.camPos = overridePose ? glm::vec3(overridePose->position.x, overridePose->position.y, overridePose->position.z)
+                              : xrContext.getEyePosition(eye);
+
+    // 3. Directly update the mapped memory
+    // uniformBuffersMapped is indexed by frame and eye
+    memcpy(uniformBuffersMapped[currentFrame][eye], &ubo, sizeof(UniformBufferObject));
+}
+----
+
+== 为什么要做这些改动？
+
+通过把 XR 图像直接绑定进 `vk::RenderingInfo`，并逐眼更新视口/剪刀矩形，我们就不需要中间的 Blit 通道了。这确保每个 GPU 周期都花在空间内容上，而不是内存拷贝上。在这个阶段，着色器保持不变，因为我们本质上只是从不同视角「把世界画了两遍」。后续章节里我们会看到**多视图**如何把这两趟合并成一趟。
+
+xref:OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc[下一页]

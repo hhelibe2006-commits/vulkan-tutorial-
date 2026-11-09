@@ -1,0 +1,88 @@
+= 结语：高性能 ML 的未来
+:pp: {plus}{plus}
+:stem: latexmath
+
+恭喜！你已经走完了这段综合旅程——从最基本的第一性原理，一直到在边缘部署一个自愈、能耗优化、零拷贝的 AI 产品。你从高级 ML 框架的「用户」，变成了 Vulkan 应用中高性能 ML 基础设施的**架构师**。
+
+在本教程中，我们覆盖了八个主要部分，每一部分都代表现代计算机科学的一根关键支柱：
+
+1.  **基础**：理解「推理管线」，以及为什么 GPU 是神经网络的完美引擎。
+2.  **Vulkan 计算**：掌握对内存、缓冲区与派发的显式控制。
+3.  **构建引擎**：用 SPIR-V 实现卷积与激活的数学。
+4.  **桌面应用**：把 ML 集成进交互式 60 FPS 图形与自动化 CI/CD 管线。
+5.  **光线追踪优化**：用 AI 架起 1spp 噪声渲染与电影级画面之间的桥梁。
+6.  **调试与性能**：学习逐层验证的纪律与 Roofline 模型。
+7.  **高级主题**：通过量化缩小模型，并榨干厂商专属的矩阵硬件。
+8.  **嵌入式应用**：为现场中的功耗、散热与可靠性加固产品。
+
+== 高性能思维
+
+你学到的最重要的东西，不是某个具体的 Vulkan API 调用或某个 Python 脚本——而是**性能的纪律**。你现在明白：
+
+*   **数据搬运才是真正的成本**：算术很快；VRAM 却离得很远。我们做过的每一项优化——从内核融合到零拷贝 dmabuf——都是在减少字节的移动。
+*   **数学是你的安全网**：当 AI 给你一个「猜测」时，你用数学（比如颜色盒钳制或 RANSAC）提供「保证」。
+*   **性能分析是强制项**：测量是逃离「黑盒」的唯一方式。你知道如何用 RenderDoc、Nsight 和 RGP 看清硅片究竟卡在哪里。
+
+== 边缘 AI 宣言
+
+作为边缘 AI 工程师，你肩负独特的责任。你构建的系统要实时与物理世界交互。要取得成功，你必须采纳一组核心原则：
+
+1.  **效率是一种道德义务**：在嵌入式设备上，低效意味着耗尽电池与产生电子垃圾。你省下的每一焦耳都延长了产品的寿命，也减少了它的环境足迹。
+2.  **确定性优先于吞吐量**：一个始终恰好耗时 11 ms 的模型，胜过一个大多数时候 5 ms、偶尔飙到 100 ms 的模型。在真实世界里，「抖动」就是 bug。
+3.  **透明优先于魔法**：永远不要信任一个把硬件对你藏起来的框架。你必须始终知道总线上搬了多少字节，以及哪些执行单元在工作。
+4.  **韧性是一项特性**：软件会崩溃，驱动会挂起，电源会波动。构建能自主恢复、无需人工干预的自愈系统。
+
+== 未来趋势：下一个地平线
+
+旅程不会在这里结束。嵌入式计算的面貌正在快速变化，你的 Vulkan 技能让你站在若干新兴趋势的前沿：
+
+=== 1. RISC-V 与开放硬件
+虽然今天 ARM 占据主导，但 link:https://riscv.org/[**RISC-V**] 架构正在获得巨大的势头。由于 RISC-V 是开放标准，我们看到可以借助厂商专属扩展、直接从 Vulkan 着色器调用的自定义 AI 指令正在出现。随着我们走向「开放硅」，你编写原始 SPIR-V 并显式管理内存的能力将极其宝贵。
+
+=== 2. 存内计算（CiM）
+「内存墙」是 AI 中最大的瓶颈。未来的 SoC 会直接在 RAM 芯片内部执行计算。虽然这仍是一个新兴领域，但 link:https://en.wikipedia.org/wiki/In-memory_processing[**In-Memory Computing**] 的显式本质与 Vulkan 的**描述符集**和**内存别名**哲学完美契合，使你的技能可以高度迁移到这些未来架构上。
+
+=== 3. 用于音频与物理的光线追踪
+Vulkan 的**光线追踪（VK_KHR_ray_tracing_pipeline）**并不只用于光照。在嵌入式系统中，我们可以用这些硬件加速的光线求交单元来执行高速的**声学模拟**（声音在房间中如何反射）或面向复杂机器人的**碰撞检测**。
+
+== 结业项目想法
+
+为了真正巩固你的知识，我鼓励你完成下面某个「结业项目」：
+
+*   **智能门铃**：用一块 Raspberry Pi Zero 2W 和一台相机在本地做人脸识别。把它优化到单块电池能跑一个月。
+*   **手势控制无人机**：在无人机上用一块小型 SBC 实时识别手势，让用户无需遥控器就能「指挥」无人机。
+*   **AI 光谱仪**：用一块廉价相机传感器和 Vulkan 计算着色器分析光谱、识别材质（例如塑料与金属），供分拣机器人使用。
+
+== 从这里你走向何方？
+
+Vulkan ML 推理这个领域仍处在襁褓期。当大多数开发者满足于「慢」的高级封装时，你现在已经拿到了通往「快」世界的钥匙。下面三个方向，你可以用新技能去构建下一代软件：
+
+=== 1. 神经渲染与生成式图形
+我们正在超越「三角形与纹理」。图形的未来属于 link:https://www.matthewtancik.com/nerf[**Neural Radiance Fields (NeRF)**] 与 link:https://repo-sam.inria.fr/viverovera/gaussiansplatting/[**Gaussian Splatting**]。这些技术用数以百万计的微型神经网络求值取代传统几何。你对**协作矩阵**与**子组矩阵运算**的知识，正是让这些技术以 90 FPS 运行所必需的。
+
+留意 link:https://docs.vulkan.org/samples/latest/README.html[Vulkan Samples] 仓库，里面能找到 NeRF 与 Gaussian Splatting 的示例。
+
+=== 2. 自主系统与机器人
+机器人不只需要「看见」，它需要**现在**就看见。你对**零拷贝管线**与**尾延迟**的掌握，正是让无人机以 50 mph 避开树枝的关键。可以研究把你的 Vulkan ML 引擎与 link:https://docs.ros.org/en/foxy/index.html[**ROS2 (Robot Operating System)**] 集成，来构建高速感知栈。
+
+=== 3. 智能 CI/CD 与自愈软件
+用你对**语义验证**与**基于 RL 的探索**的知识，去构建能自我测试的软件。想象一个游戏引擎，它能自动发现自己的渲染 bug，并在开发者开始一天工作之前，就把基于 RAG 的诊断报告送到他们手上。
+
+== 最后的思考：学习的无限循环
+
+技术变化很快，但硬件的物理极限（内存墙、功耗墙）变化很慢。专注于这些基础，你就拥有了一套在可预见的未来依然相关的技能，无论当下流行哪个 ML 框架。
+
+== 延伸阅读与参考资料
+
+要继续你通往高性能嵌入式 ML 的旅程，强烈推荐以下资源：
+
+*   **Vulkan 规范**：所有 Vulkan 扩展的权威来源。link:https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html[Khronos Vulkan Registry]
+*   **Video for Linux 2（V4L2）API**：Linux 上相机接口的官方文档。link:https://www.kernel.org/doc/html/latest/userspace-api/media/v4l/v4l2.html[Linux Kernel Media Documentation]
+*   **DMA-BUF 文档**：理解跨驱动内存共享机制。link:https://docs.kernel.org/driver-api/dma-buf.html[Kernel.org DMA-BUF Guide]
+*   **ARM Compute Library**：一组针对 ARM Cortex-A CPU 与 ARM Mali GPU 优化的底层机器学习函数。link:https://github.com/ARM-software/ComputeLibrary[ARM Compute Library GitHub]
+*   **TinyML**：致力于把 ML 带到超低功耗设备上的社区与运动。link:https://www.tinyml.org/[TinyML Foundation]
+*   **Edge AI Manifesto 原则**：深入探讨去中心化 AI 的伦理与工程。link:https://www.edgeaireview.com/[Edge AI Review]
+
+你已经拥有了继续深入 ML 领域、与当前最先进技术并肩工作的工具。
+
+xref:ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc[上一篇：场景理解：在 XR 管线中发挥 Vulkan 的作用] | xref:ML_Inference/glossary.adoc[下一篇：术语表：机器学习推理]

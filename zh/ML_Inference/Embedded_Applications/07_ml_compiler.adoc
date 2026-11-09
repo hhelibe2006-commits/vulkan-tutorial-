@@ -1,0 +1,104 @@
+:pp: {plus}{plus}
+
+= 嵌入式设备上的 ML 编译器
+
+== 为什么编译器能在小设备上改变局面
+
+在嵌入式平台上，每一毫瓦、每一兆字节都很重要。你要同时平衡三大约束：紧张的内存、会变化的 GPU/CPU 时钟（常常因散热而降频），以及未必长得像其桌面近亲的驱动。通用解释器会带来你负担不起的开销。编译器则接受你训练好的模型，针对你最终要出货的那块设备做特化，产出一个紧凑的产物和一个知道如何高效驱动 GPU 的极简运行时。
+
+这种思维转变很重要：你不再是「加载一个模型、解释算子」。你交付的是由该模型生成的程序。这个程序包含 SPIR-V 内核（面向 Vulkan 目标）以及宿主侧逻辑，用来绑定缓冲区并按正确顺序派发它们。你的工作从「编写内核」变成「选择合适的编译器路径、干净地集成它的运行时，并验证数值」。
+
+== 边界契约：谁拥有什么
+
+把你的应用与编译器运行时之间的接触面想得很窄。
+
+- 你的应用负责产品层面的事务：相机 I/O、前/后处理着色器、UI、存储、功耗策略、日志、崩溃处理。
+- 编译器的运行时负责模型执行：设备选择、SPIR-V 模块、描述符布局、派发调度、模型内部的同步。
+
+让这个边界保持无聊。用几个定义明确的缓冲区或图像交换数据。边界处先从简单的主机可见拷贝开始；一旦正确性锁定，只有运行时暴露了稳定钩子时，才考虑零拷贝或句柄级互操作。
+
+== 选择路径：IREE 还是 TVM
+
+IREE 与 Apache TVM 都能把 Vulkan 作为嵌入式 GPU 的目标。它们走的路子不同，这会影响你日常的工作方式。
+
+- IREE：输入 StableHLO/MLIR，用 Vulkan 后端编译，再链接一个很小的 C/C++ 运行时。优势：体积纤薄、Vulkan 优先的设计、良好的嵌入式支持。你通常会把源（ONNX/TFLite/NNEF）先转成 StableHLO 作为过渡 IR，再编译。具体的开关与最小嵌入示例见 xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE]。
+
+- TVM：导入到 Relay（通常来自 ONNX），以 `target="vulkan"` 构建，然后通过 TVM 的运行时（graph executor 或 AOT/CRT）加载产出的模块。优势：导入支持广泛、可用自动调度针对特定设备调优、灵活。具体的 Python 与 C++ 形态见 xref:ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc[TVM]。
+
+你不必永远只选一个——把两者都做个原型，测量延迟/方差/功耗，然后交付那个在满足约束前提下复杂度最低的方案。
+
+== 针对你手上的设备塑造模型
+
+编译器面对容易推理的模型能做得更多。你可以在导出时做出几个有原则的选择来帮它：
+
+- 热路径上优先使用静态形状。动态形状会增大代码体积，还可能限制激进的调度。如果输入会变化（例如相机分辨率），就在边界处归一化到少数几个固定尺寸。
+- 提前决定精度。如果你的任务能安全地验证 INT8，就在编译前启用量化；它减少带宽，在移动 iGPU 上还能显著降低延迟。如果保持 fp16/fp32，就要明确转换发生在哪里，以免付出隐藏代价。
+- 保持布局一致。channels-last 与 channels-first 会让内存访问模式彻底翻转。让你的前/后处理匹配编译器所选择或锁定的布局。
+
+== 第一个能跑通的构建（讲概念，不是购物清单）
+
+下面这条路线能可靠地把你带到「在设备上正确运行」，而不被各种选项淹没：
+
+1. 导出一个固定形状的模型变体。如果你的真值来源是 NNEF，先转成 ONNX 或 StableHLO（xref:ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc[NNEF 简介] 解释了为什么这一步是干净的过渡）。
+2. 用你选定的工具链为 Vulkan 编译。在 IREE 中意味着使用 Vulkan HAL 后端；在 TVM 中则是在构建 Relay 时设置 `target="vulkan"`。
+3. 先在你的开发机上运行产物。必要时使用无头的 Vulkan ICD（xref:ML_Inference/Desktop_Applications/04_ci_render_validation.adoc[无头 Vulkan]），以排除设备启动阶段的变量。
+4. 只有在这之后，才部署到板子上，并在设备上重复同样的正确性检查。
+
+用一个极小的命令块锚定这个想法（细节在专门的章节里）：
+
+[source]
+----
+# IREE (conceptual): compile to a Vulkan module
+iree-compile model.stablehlo  \
+  --iree-hal-target-backends=vulkan \
+  -o model.vmfb
+
+# TVM (conceptual): build an ONNX model for Vulkan
+# (Python) relay.build(mod, target="vulkan", params=params)
+----
+
+注意这里没有什么：我们既没有编辑 SPIR-V，也没有自己摆弄描述符集。编译器生成的运行时负责这些。
+
+== 把运行时集成进 Vulkan 应用
+
+把编译器运行时当作 ONNX Runtime 或 TFLite 来对待：初始化一次，准备好输入/输出缓冲区，每帧或每次请求调用它，然后把结果交回你的应用。
+
+实践上这感觉像是：
+
+1. 用 Vulkan 后端初始化运行时（IREE），或创建一个 Vulkan 设备目标（TVM）。
+2. 创建或包装输入/输出张量。先从主机可见的分配和 memcpy 开始；等正确性稳定后，再演进到设备本地并显式拷贝。
+3. 按名字调用编译好的函数。
+4. 回读输出，继续你的管线。
+
+[source]
+----
+// Pseudocode: not production code, just the call cadence
+auto runtime = init_compiler_runtime_vulkan(/* VkInstance/Device if supported */);
+auto module  = runtime.load("model.vmfb" /* or model_vulkan.so */);
+Tensor in    = runtime.make_tensor(shape, dtype);
+Tensor out   = runtime.make_tensor(out_shape, dtype);
+
+runtime.set_input(module, "input", in);
+runtime.run(module);
+runtime.get_output(module, 0, out);
+----
+
+如果你之后需要更紧密的互操作（共享 VkDevice 或内存），就去运行时里找受支持的钩子。今天在你自己的 Vulkan 代码库里重新实现宿主侧调度器不是一条稳定的路。
+
+== 证明你是对的（在调优任何东西之前）
+
+建立一条你信任的黄金路径，并让它与编译后的路径并存。通常的选择是 CPU 上的 ONNX Runtime。喂入相同的输入，计算像平均绝对误差这样的误差指标，在第一个不匹配处停下。对于量化模型，设定现实的容差，并逐层分解差异，直到找出第一次分歧。
+
+正是这种纪律，让你能放心地改量化设置、换编译器，或重构前/后处理。
+
+== 在嵌入式上测量真正重要的东西
+
+延迟分布胜过单个数字——在真实的统计窗口上测量 p50/p90/p99，而不只是热缓存的一次运行。关注时钟与散热；许多 SoC 在 10–30 秒后就会降频。把花在编译器运行时内部的时间，与你在边界处拷贝的时间分开看；先优化更大的那根柱子。INT8 之所以获胜，通常是因为减少了内存流量，而不是让 ALU 神奇地变快。
+
+== 简短的部署清单（以决策的形式给出）
+
+决定产物放在哪里（磁盘、APK 内、固件里），以及如何做版本管理。决定你支持哪些 ABI，并在 CI 中搭好运行时的交叉编译。决定你的回退方案：如果 Vulkan 路径不可用，是跑一个 CPU 版本，还是禁用该特性？决定你如何在每次提交时验证（CI 中的无头 Vulkan 加几组固定的测试向量通常就够了）。
+
+如果你停下来把这些决定明确做掉，剩下的启动过程往往会很顺。
+
+xref:ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc[上一篇：场景理解：在 XR 管线中发挥 Vulkan 的作用] | xref:ML_Inference/Embedded_Applications/08_nnef_example.adoc[下一篇：嵌入式上的 NNEF：一个小示例]

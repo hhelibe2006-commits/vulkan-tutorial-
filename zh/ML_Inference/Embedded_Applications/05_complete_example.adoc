@@ -1,0 +1,281 @@
+= 完整嵌入式应用：智能野生动物相机
+:pp: {plus}{plus}
+:stem: latexmath
+
+你已经掌握了交叉编译，搭建了零拷贝相机管线，还用 PID 控制器调校过能耗。现在，是时候把这一切整合起来了。
+
+在这个最后的案例研究中，我们要造一台**智能野生动物相机**。这是一套电池供电、无显示器的系统，设计用途是被螺栓固定在偏远森林的一棵树上。它必须静默待机数天，只在检测到运动时醒来，用量化神经网络对看到的物种进行分类，并把结果写入一个加固过的遥测数据库。
+
+
+== 任务需求
+
+要在野外成功完成任务，我们的相机必须满足若干相互冲突的物理与逻辑约束：
+
+*   **平台**：Raspberry Pi 5（8GB），配一颗 Sony IMX219 link:https://mipi.org/specifications/csi-2[MIPI CSI] 相机。
+*   **运行环境**：无显示器（无显示输出），被动散热（密封的 IP67 外壳），太阳能充电电池。
+*   **推理目标**：以 latexmath:[\ge 15] FPS 对当地 50 个野生动物物种进行分类。
+*   **能耗目标**：平均功耗 latexmath:[< 1.5W]，以便在 10,000mAh 移动电源上撑过 48 小时任务。
+*   **可靠性**：必须开机自启、扛得住内核 panic，并自主应对电压波动。
+
+== 系统架构：「异步三线程」
+
+在嵌入式产品中，我们避免「大循环」模式。单个线程卡住（例如等待一次缓慢的 SD 卡 I/O 写入）不应该让相机失明。我们使用三个独立的服务线程，由**无锁队列**协调。
+
+.野生动物相机软件架构
+----
++-----------------------------------------------------------+
+|                    Hardware Watchdog                      |
++-----------------------------------------------------------+
+          ^                      ^                      ^
+          | (Heartbeat)          | (Heartbeat)          | (Heartbeat)
++---------+----------+  +---------+----------+  +---------+----------+
+|  Capture Thread    |  |  Inference Thread  |  | Persistence Thread |
+|  (V4L2 + dmabuf)   |  |  (Vulkan + ONNX)   |  | (SQLite + LTE)     |
++---------+----------+  +---------+----------+  +---------+----------+
+          |                      ^                      ^
+          | [Filled dmabuf]      | [Inference Result]   |
+          +----------------------+----------------------+
+                      (Shared Memory / Zero-Copy)
+----
+
+1.  **采集线程（V4L2）**：抓取 YUV 帧并管理 `dmabuf` 队列。它提供系统的「脉搏」。
+2.  **推理线程（Vulkan）**：在 GPU 上完成运动检测、格式转换和 ML 推理。它是「大脑」。
+3.  **持久化线程（SQLite）**：把元数据写入 SD 卡，并管理云端遥测（通过 LTE/LoRa）。它是「记忆」。
+
+== 阶段 1：零拷贝「心脏」
+
+我们实现第 3 章的管线。相机硬件直接写入我们的 Vulkan 计算着色器可以访问的内存。我们把 V4L2 与 Vulkan 逻辑封装进一个健壮的 `FrameManager` 类。
+
+[source,cpp]
+----
+class FrameManager {
+public:
+    struct Frame {
+        int dmabufFd;
+        vk::raii::Image image;
+        vk::raii::DeviceMemory memory;
+        vk::raii::Fence fence; // Signals when GPU is done with this frame
+    };
+
+    void init(int width, int height) {
+        // 1. Setup V4L2
+        camera.open("/dev/video0");
+        camera.requestBuffers(4);
+
+        // 2. Setup Vulkan Imports
+        for (int i = 0; i < 4; ++i) {
+            int fd = camera.exportBuffer(i);
+            frames[i] = importExternalMemory(fd, width, height);
+        }
+    }
+
+    Frame& acquireNext() {
+        int index = camera.dequeueBuffer();
+        // Ensure the GPU has finished using this buffer from the previous cycle
+        device.waitForFences({*frames[index].fence}, true, UINT64_MAX);
+        device.resetFences({*frames[index].fence});
+        return frames[index];
+    }
+
+private:
+    V4L2Device camera;
+    std::array<Frame, 4> frames;
+};
+----
+
+== 阶段 2：功耗感知的运动触发器
+
+为了撑过数天，我们不会对每一帧都跑沉重的 MobileNetV2 模型。我们先运行一个**轻量级运动检测器**计算着色器。这个着色器只花 latexmath:[< 0.1ms] 的 GPU 时间。
+
+[source,glsl]
+----
+// Simple Mean Absolute Difference (MAD) Shader
+// This kernel identifies changes in luminance (Y channel)
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    float current = texelFetch(samplerCurrent, pos, 0).r;
+    float previous = texelFetch(samplerPrevious, pos, 0).r;
+
+    // 1. Calculate pixel-level difference
+    float diff = abs(current - previous);
+
+    // 2. Atomically add to a global counter if movement is significant
+    if (diff > 0.15) {
+        atomicAdd(motionCounter, 1);
+    }
+}
+----
+
+如果 `motionCounter` 低于阈值（例如变化的像素不足 0.5%），**推理线程**会立刻用 `vkWaitForFences` 回去睡觉。这让 SoC 有 latexmath:[95\%] 的时间待在低功耗状态，只在真有动物出现时才「唤醒」那个沉重的神经网络。
+
+== 阶段 3：加固的主循环（看门狗）
+
+我们的 `main()` 函数是为「野外设备」设计的。在遥远的森林里，如果应用因驱动的竞态条件而挂死，没有人会来按复位键。通过 link:https://www.kernel.org/doc/Documentation/watchdog/watchdog-api.txt[Linux 看门狗 API] 管理的**硬件看门狗**，就是我们的保险单。
+
+=== 看门狗逻辑：「心跳」的数学
+内核看门狗要求每隔 latexmath:[T_{heart}] 秒来一次「心跳」（向 `/dev/watchdog` 写入）。如果应用崩溃或死锁，写入就会停止，硬件会在 latexmath:[T_{timeout}] 秒后强制硬复位。
+
+[source,cpp]
+----
+// Heartbeat structure for thread monitoring
+struct ThreadStatus {
+    std::atomic<long long> lastHeartbeat{0};
+    void kick() {
+        lastHeartbeat = std::chrono::steady_clock::now().time_since_epoch().count();
+    }
+};
+
+void watchdogLoop(ThreadStatus& cap, ThreadStatus& inf) {
+    int fd = open("/dev/watchdog", O_WRONLY);
+    if (fd < 0) return;
+
+    while(running) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        // 10 second timeout
+        long long timeout = 10000000000LL;
+
+        if ((now - cap.lastHeartbeat) < timeout && (now - inf.lastHeartbeat) < timeout) {
+            ioctl(fd, WDIOC_KEEPALIVE, 0); // System is healthy
+        } else {
+            // BOOM: System will reboot in T-minus 10 seconds
+            syslog(LOG_CRIT, "Watchdog timeout! Cap: %lld, Inf: %lld",
+                   now - cap.lastHeartbeat, now - inf.lastHeartbeat);
+        }
+        std::this_thread::sleep_for(1s);
+    }
+}
+----
+
+== 阶段 4：自愈状态机
+
+现实世界里，东西总会出故障。MIPI CSI 相机偶尔会因为电气噪声丢一帧，或者返回「缓冲区超时」。我们的应用不会崩溃，而是使用**自愈状态机**。
+
+[source,cpp]
+----
+enum class SystemState { INITIALIZING, STREAMING, RECOVERING, SHUTDOWN };
+
+void captureLoop() {
+    SystemState state = SystemState::INITIALIZING;
+    while(state != SystemState::SHUTDOWN) {
+        try {
+            switch(state) {
+                case SystemState::INITIALIZING:
+                    camera.init();
+                    state = SystemState::STREAMING;
+                    break;
+                case SystemState::STREAMING:
+                    if (!camera.processFrame()) {
+                        state = SystemState::RECOVERING;
+                    }
+                    break;
+                case SystemState::RECOVERING:
+                    syslog(LOG_WARNING, "Camera timeout, resetting hardware...");
+                    camera.reset();
+                    std::this_thread::sleep_for(2s);
+                    state = SystemState::INITIALIZING;
+                    break;
+            }
+        } catch (const std::exception& e) {
+            state = SystemState::RECOVERING;
+        }
+    }
+}
+----
+
+== 阶段 5：运行时性能分析
+
+在野外，你没法挂调试器。你需要**实时遥测**来弄清系统为什么会变慢。我们实现一个轻量的性能分析钩子，把每个阶段的耗时记录进 SQLite 数据库。
+
+[source,cpp]
+----
+struct ProfileData {
+    float captureMs;
+    float preprocMs;
+    float inferenceMs;
+    float totalMs;
+};
+
+void logPerformance(const ProfileData& d) {
+    // Log to a specialized 'metrics' table
+    db.execute("INSERT INTO metrics (capture, preproc, inference, total) VALUES (?, ?, ?, ?)",
+               d.captureMs, d.preprocMs, d.inferenceMs, d.totalMs);
+}
+----
+
+=== 在野外分析 Roofline
+通过观察 `preprocMs` 与 `inferenceMs` 的比值，你可以找出瓶颈：
+*   **预处理偏高**：你的格式转换或归一化没有优化。可以考虑使用 `VK_KHR_sampler_ycbcr_conversion`。
+*   **推理偏高**：你的模型对这颗 SoC 来说太重了。考虑进一步量化（INT8 或 INT4）或剪枝。
+
+== 阶段 6：模型版本管理与 A/B 测试
+
+我们引擎最强大的特性之一，是能在运行时更换模型而无需重启应用。这让野外**A/B 测试**成为可能。
+
+1.  **暂存**：把新的 `.onnx` 模型下载到临时目录。
+2.  **校验**：验证哈希值，并在 GPU 上跑一次「预热」推理。
+3.  **原子切换**：更新推理线程中的 `ModelPointer`。
+
+[source,cpp]
+----
+void updateModel(const std::string& newPath) {
+    auto nextModel = std::make_unique<VulkanModel>(newPath);
+    nextModel->warmup(); // Ensure shaders are compiled
+
+    // Atomic swap of the shared pointer
+    std::atomic_store(&currentModel, std::move(nextModel));
+    syslog(LOG_INFO, "Model updated to %s", newPath.c_str());
+}
+----
+
+== SQLite 遥测：记录真相
+
+SD 卡的写入次数有限，而且速度慢。除非运动检测的置信度很高，否则我们不记录原始图像。我们把观测记录写入一个符合 ACID 的 link:https://www.sqlite.org/docs.html[SQLite] 数据库。
+
+=== 针对 SD 卡的优化
+我们用若干 SQLite「pragma」来确保不会用小块的随机写入毁掉 SD 卡：
+1.  **WAL 模式**：预写日志（Write-Ahead Logging）允许并发读写。
+2.  **Synchronous=NORMAL**：减少 `fsync` 调用次数，同时保持掉电安全。
+3.  **页大小 = 4096**：与闪存 NAND 块大小匹配，把「写放大」降到最低。
+
+[source,sql]
+----
+-- telemetry.db
+-- We log environment data alongside species predictions
+CREATE TABLE observations (
+    id INTEGER PRIMARY KEY,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    species_id INTEGER,
+    confidence FLOAT,
+    soc_temp FLOAT,
+    battery_v FLOAT
+);
+----
+
+== 生产加固：Linux 操作系统
+
+产品不只是一个应用，而是整个操作系统。针对我们的野生动物相机，我们实施了几项 Linux 层面的加固措施：
+
+1.  **只读根文件系统**：我们把系统分区挂载为只读。这样能防止突然断电（例如电池耗尽）时损坏 SD 卡。
+2.  **OOM Killer 调优**：我们为相机应用把 `/proc/self/oom_score_adj` 设为 `-1000`。如果系统内存耗尽，内核会先杀掉 `sshd` 之类的后台服务，而不会动我们的 AI 管线。
+3.  **禁用交换**：我们完全关闭交换文件。在 ML 应用里，换页到 SD 卡慢到第一页还没读完看门狗就会触发。
+4.  **CPU 绑定**：我们用 `pthread_setaffinity_np` 把线程绑定到 SoC 上特定的小核，把大核留给 ML 工作的重度爆发。
+5.  **OverlayFS**：我们为 `/var/log` 和 `/tmp` 使用由 RAM 支撑的 link:https://www.kernel.org/doc/Documentation/filesystems/overlayfs.txt[OverlayFS]。这样即使相机写下数千条日志，也不会碰物理 SD 卡，从而避免写损耗。
+
+== 野外可靠性：应对电压波动
+
+在野外，太阳能供电可能不稳定。专业的嵌入式应用必须优雅地应对「掉电」（brownout）。
+
+1.  **提前预警**：使用电源管理 IC（PMIC）的 GPIO 中断，在电压跌破 3.3V 时发出信号。
+2.  **安全关机**：在 C++ 信号处理函数里，立即关闭 SQLite 数据库并调用 `sync()`，在彻底断电前把 SD 卡缓冲区刷入磁盘。
+
+== 小结
+
+把零拷贝视觉、多线程编排和硬件级可靠性结合在一起，你构建的已经不只是脚本——而是一个**专业的边缘 AI 产品**。
+
+*   **你理解了硬件**：直接与传感器和内核看门狗对话。
+*   **你理解了物理**：把能耗和散热当作首要约束来管理。
+*   **你理解了工程纪律**：构建能在野外存活的自愈系统。
+
+在最后的技术章节里，我们会从固定的世界相机，走向**立体 3D 视觉与 OpenXR** 的世界。
+
+xref:ML_Inference/Embedded_Applications/04_power_optimization.adoc[上一篇：功耗与散热优化：管理物理极限] | xref:ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc[下一篇：场景理解：在 XR 管线中发挥 Vulkan 的作用]

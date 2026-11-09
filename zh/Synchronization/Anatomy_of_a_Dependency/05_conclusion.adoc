@@ -1,0 +1,26 @@
+:pp: {plus}{plus}
+= 同步依赖关系剖析：结语
+
+== 小结
+
+在本章中，我们解构了支配所有 GPU 操作的基本「握手」。通过区分执行依赖与内存依赖，我们不再停留在「让它能跑」，而是精确、高性能地理解了如何编排现代 Vulkan 的复杂并行。
+
+=== 屏障类型小结
+
+为巩固理解，我们来总结 Synchronization 2 中使用的三种主要屏障类型：
+
+[cols="1,2,2", options="header"]
+|===
+| 屏障类型 | 用途 | 关键结构
+| **全局内存屏障** | 在指定管线阶段之间同步所有内存访问。当你需要一次与特定资源无关的宽泛刷新时使用。 | `vk::MemoryBarrier2`
+| **缓冲区内存屏障** | 为 `vk::Buffer` 的特定范围提供精细同步。适合计算到计算、或计算到顶点的依赖。 | `vk::BufferMemoryBarrier2`
+| **图像内存屏障** | 最强大的屏障。既处理执行与内存依赖，也执行必需的**图像布局转换**。 | `vk::ImageMemoryBarrier2`
+|===
+
+== 最后的思考
+
+你定义的每一个依赖都是两个操作之间的契约。对管线阶段和访问标志做到精准，就能确保 GPU 把时间花在处理数据上，而不是在不必要的气泡中空等。掌握这种依赖关系，是构建高性能异步引擎架构的第一步。
+
+== 导航
+
+上一节：xref:Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc[精细的管线阶段：精确即性能] | 下一节：xref:Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc[管线屏障与布局转换：核心循环]

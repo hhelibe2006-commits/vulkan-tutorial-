@@ -1,0 +1,56 @@
+:pp: {plus}{plus}
+= CPU 直接访问图像：利用主机图像拷贝
+
+== 在主机上直接搬运数据
+
+**Vulkan 1.4** 最强大的特性之一，是能在主机（CPU）上直接搬运数据。这件事由 `vk::Device::copyMemoryToImageEXT` 函数（或你的 RAII 封装中对应的函数）完成。该函数接收裸 CPU 内存，把它直接拷贝进 GPU 最优布局的图像。
+
+这是生产力的巨大提升。对于简单直接的图像更新，你不再需要管理暂存缓冲区、命令池或提交队列。这是把数据从 CPU 侧资源（比如动态纹理或截图缓冲区）搬进 GPU 侧图像最直接的方式。
+
+== 实现主机拷贝
+
+要使用这个特性，你首先需要检查是否支持 `VK_EXT_host_image_copy` 扩展（现已成为 Vulkan 1.4 的一部分）。确认之后，可以这样执行拷贝：
+
+[,cpp]
+----
+// 1. Prepare the copy info
+auto copyInfo = vk::MemoryToImageCopyEXT{
+    .pHostPointer = cpuData,
+    .memoryRowLength = width,
+    .memoryImageHeight = height,
+    .imageSubresource = { .aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
+    .imageExtent = { .width = width, .height = height, .depth = 1 }
+};
+
+auto hostCopyInfo = vk::CopyMemoryToImageInfoEXT{
+    .dstImage = *gpuImage,
+    .dstImageLayout = vk::ImageLayout::eGeneral,
+    .regionCount = 1,
+    .pRegions = &copyInfo
+};
+
+// 2. Perform the copy directly on the CPU
+device.copyMemoryToImageEXT(hostCopyInfo);
+----
+
+== 使用场景与优势
+
+当你需要快速更新少量数据、又不想等待 GPU 的命令处理器时，主机图像拷贝非常理想。
+
+-   **动态纹理**：更新 UI 元素、字体图集或小型动态纹理。
+-   **截图**：把 GPU 最优布局的图像拷回 CPU 以便存盘（使用反向的 `copyImageToMemoryEXT`）。
+-   **调试**：从 CPU 代码里快速查看 GPU 侧资源的内容。
+
+主要优势是**更低的延迟**。因为你不录制也不提交命令缓冲区，就消除了与提交相关的所有驱动和硬件开销。CPU 只是搬运字节，这些字节立刻就能被 GPU 使用。
+
+== 在 Simple Engine 中的潜力
+
+在 `Simple Engine` 中，我们可以用主机图像拷贝优化**截图**系统。目前截图要经过多个步骤：录制命令缓冲区把交换链图像拷贝到暂存缓冲区，提交该命令缓冲区，然后在 CPU 上等待栅栏。这很慢，会造成可感知的帧率卡顿。
+
+改用 `copyImageToMemoryEXT`（Vulkan 1.4 提供）后，我们可以在 CPU 上直接完成截图拷贝。一旦帧结束、交换链图像处于 `ePresentSrcKHR` 布局，我们就可以在主线程调用 `copyImageToMemoryEXT`。这会把像素直接从 GPU 内存搬进 CPU 侧的截图缓冲区，完全绕开命令提交和栅栏等待的循环。结果是更顺畅的用户体验，以及引擎中更干净、更直接的截图功能实现。
+
+下一节我们会看到如何处理所需的同步，确保这些字节对 GPU 可见，并且不制造任何主机与设备之间的危险。
+
+== 导航
+
+上一节：xref:Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc[主机图像拷贝与内存映射同步：直接访问] | 下一节：xref:Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc[可见性与刷新：精通一致性]

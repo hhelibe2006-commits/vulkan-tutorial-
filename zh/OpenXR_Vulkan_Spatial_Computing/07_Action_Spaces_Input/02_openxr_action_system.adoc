@@ -1,0 +1,85 @@
+:pp: {plus}{plus}
+= OpenXR 动作系统
+
+OpenXR 的输入系统围绕三个核心概念构建：**动作集**、**动作**与**交互配置（Interaction Profile）**。把引擎逻辑与物理硬件分离开来，可以确保我们的应用在庞大的控制器生态中保持健壮。
+
+== 生态系统视角
+
+本章属于以下类别：**在 OpenXR 运行时中使用 Vulkan**。
+
+通过基于动作的系统来定义输入，是 OpenXR 中必须遵循的架构模式。你必须使用这些抽象，才能确保应用可以运行在 OpenXR 生态所支持的各式控制器上。
+
+== 硬件抽象层：用动作来思考
+
+在传统的输入系统里，你可能会写 `if (buttonA.isPressed()) { jump(); }` 这样的代码。在硬件千差万别的 XR 中，这种做法很脆弱。OpenXR 采用**基于动作**的模型。你的引擎不再去寻找按键，而是定义用户可以*做什么*：
+
+1.  **定义动作**：「我需要一个名为『跳跃』的动作。」
+2.  **指定类型**：它是布尔值（开/关）、浮点数（模拟扳机），还是位姿（手部位置）？
+3.  **建议绑定**：XR 运行时在最后一刻完成转换，为你的引擎提供统一的事件流。
+
+运行时充当翻译层——把 `/user/hand/right/input/grip/pose` 这样的路径解析到物理传感器——而你的引擎始终专注于意图。
+
+== 1. 动作集：按情境区分输入
+
+**动作集**是相关动作的容器。它让你可以根据用户当前在做什么来启用或禁用成组的输入（例如「游戏」与「菜单」）。
+
+[source,cpp]
+----
+// 1. Create an Action Set using designated initializers
+XrActionSetCreateInfo actionSetInfo{
+    .type = XR_TYPE_ACTION_SET_CREATE_INFO,
+    .actionSetName = "gameplay",
+    .localizedActionSetName = "Main Gameplay",
+    .priority = 0
+};
+XrActionSet gameplayActionSet;
+xrCreateActionSet(instance, &actionSetInfo, &gameplayActionSet);
+----
+
+== 2. 动作：定义意图
+
+在动作集内部，我们定义一个个**动作**。
+
+[source,cpp]
+----
+// 2. Create a Pose Action for hand tracking
+XrActionCreateInfo actionInfo{
+    .type = XR_TYPE_ACTION_CREATE_INFO,
+    .actionName = "hand_pose",
+    .actionType = XR_ACTION_TYPE_POSE_INPUT,
+    .localizedActionName = "Hand Pose"
+};
+XrAction handPoseAction;
+xrCreateAction(gameplayActionSet, &actionInfo, &handPoseAction);
+----
+
+== 3. 交互配置：建议映射关系
+
+最后，我们为已知的控制器类型提供「建议绑定」（Suggested Bindings）。
+
+[source,cpp]
+----
+// 3. Map the action to a specific controller path using designated initializers
+std::vector<XrActionSuggestedBinding> bindings = {
+    { .action = handPoseAction, .binding = xrPathToString(instance, "/user/hand/right/input/grip/pose") }
+};
+
+XrInteractionProfileSuggestedBinding profileBinding{
+    .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+    .interactionProfile = xrPathToString(instance, "/interaction_profiles/oculus/touch_controller"),
+    .countSuggestedBindings = static_cast<uint32_t>(bindings.size()),
+    .suggestedBindings = bindings.data()
+};
+xrSuggestInteractionProfileBindings(instance, &profileBinding);
+----
+
+== 进阶：基于 GPU 的输入滤波与触觉合成
+
+Vulkan 让你可以实现 OpenXR 标准本身并不提供的复杂输入逻辑：
+
+*   **基于 GPU 的输入滤波**：你可以用 Vulkan 的**计算着色器**处理来自 OpenXR 的高频位姿数据流，直接在 GPU 上做实时信号分析（比如降噪或手势意图预测），以获得最快的响应。
+*   **物理驱动的触觉反馈**：OpenXR 的触觉反馈只是简单的振动指令，而你可以用 Vulkan 的**存储缓冲区**在着色器中生成复杂的、物理驱动的触觉波形并流式传给运行时，让视觉效果与物理反馈之间的联系更紧密。
+
+TIP: 更多细节请参阅官方的 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#input[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc[下一页]

@@ -1,0 +1,87 @@
+:pp: {plus}{plus}
+= 后处理变形与镜头畸变
+
+对头戴式显示器（HMD）而言，变形是抵消镜片物理上**枕形畸变**的基本手段。
+
+== 生态视角
+
+本章属于以下类别：**你的 OpenXR 运行时大概正在做的事**。
+
+我们在此讲解镜头变形背后的数学与 Vulkan 实现，但对大多数商用 HMD 来说，这些操作由运行时的合成器在内部处理。理解这一过程，对于开发自定义硬件、或实现超出标准运行时管线的进阶变形后效果至关重要。
+
+== 镜片的物理：为什么要变形？
+
+VR 镜片的设计目标是取一块微小的显示屏，将其放大到覆盖你的整个视场。这种放大并不均匀，因而引入了**枕形畸变**。
+
+为抵消它，引擎必须应用**桶形畸变**后处理。我们在着色器中把四角「挤压」进去，镜片的物理拉伸便会把它们拉回正确的直线位置。
+
+大多数运行时隐式地应用这种畸变，但为自定义硬件或**色差校正**之类的进阶效果，你也能自己实现。
+
+== 畸变的数学模型
+
+大多数镜头畸变都可以用径向多项式建模（例如 **Brown-Conrady** 模型）。该模型使用系数（$k_1, k_2, k_3$）根据 $(u, v)$ 坐标到光心的距离来偏移这些坐标。
+
+[source,slang]
+----
+// Applying a simple radial distortion model in Slang
+float2 ApplyDistortion(float2 uv, float2 k)
+{
+    float2 center = float2(0.5, 0.5);
+    float2 d = uv - center;
+    float r2 = dot(d, d);
+
+    // Barrel distortion: shifts pixels towards the center based on distance
+    float2 distortedD = d * (1.0 + k.x * r2 + k.y * r2 * r2);
+
+    return center + distortedD;
+}
+----
+
+在 C++ 一侧，我们用指定初始化器为这些后处理通道绑定源渲染结果：
+
+[source,cpp]
+----
+// Binding the source render for post-process warping using designated initializers
+vk::DescriptorImageInfo sourceInfo{
+    .sampler = *linearSampler,
+    .imageView = *sourceView,
+    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+};
+
+vk::WriteDescriptorSet write{
+    .dstSet = *postProcessSet,
+    .dstBinding = 0,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eSampledImage,
+    .pImageInfo = &sourceInfo
+};
+----
+
+== 进阶：DLSS 与自定义畸变内核
+
+Vulkan 让我们得以拓展 HMD 后处理的边界：
+
+*   **DLSS 与超分辨率**：你可以在运行时的变形之前插入自己的**深度学习超采样**通道。这样即使源分辨率较低，合成器也能收到细节丰富的图像，从而提供超越标准 OpenXR 管线的视觉清晰度。
+*   **自定义变形后效果**：借助 Vulkan 的**着色器对象**，你可以把局部镜头光晕或光学胶片颗粒等效果直接注入最终的合成通道，绕开运行时的「黑盒」合成器。
+
+== 色差：彩虹效应
+
+镜片还会以不同角度折射不同波长的光，产生「色边」。为修正它，我们对每个颜色通道应用略微不同的变形。
+
+[source,slang]
+----
+float4 color;
+// We sample the source image three times with different distortion coefficients
+color.r = sourceRender.SampleLevel(s, ApplyDistortion(uv, k_red), 0).r;
+color.g = sourceRender.SampleLevel(s, ApplyDistortion(uv, k_green), 0).g;
+color.b = sourceRender.SampleLevel(s, ApplyDistortion(uv, k_blue), 0).b;
+color.a = 1.0;
+----
+
+== 以 1.2 倍渲染：过采样的代价
+
+由于变形会「挤压」图像，有些区域被缩小，有些则被放大。为防止视野中心变模糊，你必须以高于显示分辨率的**更高分辨率**渲染 3D 场景（通常是 1.2 倍到 1.4 倍）。
+
+TIP: 关于后处理变形的更多信息，请查阅官方 link:https://registry.khronos.org/OpenXR/specs/1.1/html/xpspec.html#distortion[OpenXR 规范]、link:https://docs.vulkan.org/guide/latest/index.html[Vulkan 指南]，以及我们的 link:00_introduction.adoc[主教程系列]。
+
+xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc[下一页]

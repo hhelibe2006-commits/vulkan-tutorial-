@@ -1,0 +1,69 @@
+:pp: {plus}{plus}
+= 信号前等待提交：解耦执行
+
+== 范式转变
+
+在旧版 Vulkan 中，你通常必须按照工作预期执行的顺序来提交它。如果命令缓冲区 B 依赖命令缓冲区 A，你要么先提交 A，要么把它们放在同一个 `vkQueueSubmit` 调用中提交，并用一个二值信号量把它们连接起来。
+
+时间线信号量引入了**信号前等待**的提交模式。这让你可以在命令缓冲区 A 尚未录制——更不用说提交——之前，就把命令缓冲区 B 提交给 GPU。你只需告诉命令缓冲区 B 去等待时间线信号量上的某个特定值。只要命令缓冲区 A（或某个其他过程）最终发出了该值的信号，GPU 就能正确地管理这个依赖关系。
+
+== 工作原理
+
+这种模式之所以可行，是因为 Vulkan 把工作的**提交**与工作的**执行**分开了。当你调用 `queue.submit2` 时，驱动只是把你的命令加入队列的内部缓冲区。随后，硬件的命令处理器会监视指定的时间线信号量。在所有「等待」值都达到之前，它不会开始执行命令。
+
+[,cpp]
+----
+// Submit the "Waiter" first!
+auto waitInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *timelineSemaphore,
+    .value = 10,
+    .stageMask = vk::PipelineStageFlagBits2::eAllCommands
+};
+
+auto submitWaiter = vk::SubmitInfo2{
+    .waitSemaphoreInfoCount = 1,
+    .pWaitSemaphoreInfos = &waitInfo,
+    .commandBufferInfoCount = 1,
+    .pCommandBufferInfos = &waitCommandBufferInfo
+};
+
+graphicsQueue.submit2(submitWaiter);
+
+// ... Later, perhaps in a different thread or even a different frame ...
+
+// Submit the "Signaler"
+auto signalInfo = vk::SemaphoreSubmitInfo{
+    .semaphore = *timelineSemaphore,
+    .value = 10,
+    .stageMask = vk::PipelineStageFlagBits2::eAllCommands
+};
+
+auto submitSignaler = vk::SubmitInfo2{
+    .signalSemaphoreInfoCount = 1,
+    .pSignalSemaphoreInfos = &signalInfo,
+    .commandBufferInfoCount = 1,
+    .pCommandBufferInfos = &signalCommandBufferInfo
+};
+
+transferQueue.submit2(submitSignaler);
+----
+
+== 为何重要
+
+这种解耦对于现代的多线程引擎架构来说是一场变革。
+
+1.  **降低 CPU 延迟**：命令缓冲区一录制完成，主线程就可以把所有工作提交给 GPU，无需等待后台线程（例如资产加载器或物理引擎）完成它们的工作。
+2.  **异步重叠**：它让实现相互重叠的通道容易得多。例如，只要后处理通道等待几何通道的时间线值，GPU 就可以在 CPU 仍在录制后处理通道时开始执行几何通道。
+3.  **简化架构**：你可以围绕每个通道的「需求」来构建提交逻辑，而不必操心 API 调用的严格顺序。
+
+信号前等待是真正现代 Vulkan 渲染器的最后一块拼图。把 Synchronization 2 的精确性与时间线信号量的灵活性结合起来，你就能构建出一个既更容易推理、又能把硬件性能榨到最后一滴的引擎。
+
+== 简易引擎：非阻塞提交
+
+在 `Simple Engine` 中，我们将用这种模式把 `PhysicsSystem` 与 `Renderer` 解耦。目前，渲染器必须等待物理模拟在 CPU 上完成，才能开始*录制*它的命令缓冲区。这每帧都会造成巨大的 CPU 停顿。
+
+有了信号前等待，我们的 `Renderer` 只需录制好命令，等待 `physicsTimeline` 达到某个特定值（例如 `currentFrameIndex`），然后就可以立刻把这些命令提交给 `graphicsQueue`。即使 `PhysicsSystem` 尚未在 `computeQueue` 上完成模拟，GPU 也会在该帧渲染开始时正确地等待。这让 CPU 能腾出手来处理其他任务（例如音频处理或输入处理），同时 GPU 高效地自行管理依赖关系。
+
+== 导航
+
+上一篇：xref:Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc[单调计数器：跟踪全局进度] | 下一篇：xref:Synchronization/Frame_in_Flight/01_introduction.adoc[飞行框架构：引擎的心跳]

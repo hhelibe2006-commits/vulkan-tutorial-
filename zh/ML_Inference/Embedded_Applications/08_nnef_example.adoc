@@ -1,0 +1,89 @@
+:pp: {plus}{plus}
+
+= 嵌入式上的 NNEF：一个小示例
+
+== 你会完成什么
+
+读完这一页，你会拿到一个极小的 NNEF 模型，把它转换成编译器友好的 IR，为一块支持 Vulkan 的嵌入式 GPU 编译它，并验证数值与黄金参考一致。我们会让整个流程保持可教学、具体，而不用各种工具开关把你淹没。
+
+为了具体起见，我们走 ONNX→TVM→Vulkan 这条路线（TVM 的 ONNX 导入路径是稳定的），如果你的技术栈更合适 StableHLO 路线，可以去看 IREE 那一章。
+
+== 心智模型，再讲一次
+
+NNEF 描述模型是什么。TVM 或 IREE 把这份描述变成你设备能运行的程序。你的工作是：1) 把模型归一化成编译器喜欢的格式，2) 为 Vulkan 编译，3) 通过编译器的运行时运行产物，4) 与你信任的参考做对比。
+
+== 1) 从一个极小的 NNEF 模型开始
+
+挑一个 Conv→ReLU→Pool 或一个小分类器——简单到你能推理形状、一眼看出错误。你会有一个文本图（例如 `graph.nnef`）和若干二进制权重文件。如果你之前没读过 NNEF 包，先浏览一下 xref:ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc[NNEF 简介]——它解释了磁盘上有什么，以及如何看待布局与量化。
+
+== 2) 把 NNEF 转换为 ONNX
+
+用你工具链里的转换器把 NNEF 图与权重翻译成 ONNX。转换器的工作是机械的：映射算子种类与属性、保留形状与 dtype、搬运任何量化元数据。你不需要记住具体的二进制名字——重点是落到 ONNX，因为 TVM 的导入器在这方面很稳。
+
+转换之后，用查看器打开 ONNX 文件，或打印图节点。检查三件事：第一个输入的形状、输出的形状，以及你的 conv/pool 属性是否看起来正确（核大小、步长、填充）。
+
+== 3) 建立黄金参考
+
+在把 Vulkan 牵进来之前，先在 CPU 上生成期望输出。ONNX Runtime 让这件事简短又轻松。把它和你编译后的路径放在一起；后面在设备上你还会再用到它。
+
+[source,python]
+----
+import onnxruntime as ort
+import numpy as np
+
+sess = ort.InferenceSession("model.onnx", providers=["CPUExecutionProvider"])
+inp  = np.random.randn(1, 3, 64, 64).astype("float32")  # adjust to your model
+ref  = sess.run(None, {sess.get_inputs()[0].name: inp})[0]
+----
+
+== 4) 用 TVM 把 ONNX 编译到 Vulkan
+
+在 TVM 中，你把 ONNX 模型导入 Relay，以 `target="vulkan"` 构建，拿回一个模块以及一个知道如何执行它的小型运行时包装。完整示例在 xref:ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc[TVM 章节] 里；下面是锚定这个想法的要点形态：
+
+[source,python]
+----
+from tvm import relay, target, transform
+import tvm, onnx
+from tvm.contrib import graph_executor
+
+onnx_model = onnx.load("model.onnx")
+mod, params = relay.frontend.from_onnx(onnx_model, {"input": inp.shape}, freeze_params=True)
+
+with transform.PassContext(opt_level=3):
+    lib = relay.build(mod, target=tvm.target.Target("vulkan"), params=params)
+
+dev    = tvm.vulkan(0)
+rt_mod = graph_executor.GraphModule(lib["default"](dev))
+rt_mod.set_input("input", tvm.nd.array(inp, device=dev))
+rt_mod.run()
+out = rt_mod.get_output(0).numpy()
+----
+
+此时你可以把 `out` 与 `ref` 比较，计算一个简单的误差指标。如果你用了量化，预期会有小而有界的差异；否则它们应当非常接近。
+
+要部署，导出一个共享库，并在设备上以同样的方式加载它：
+
+[source,python]
+----
+lib.export_library("model_vulkan.so")
+----
+
+在设备上，你会为你的 ABI 链接 TVM 的运行时，加载 `model_vulkan.so`，设置输入，运行，取回输出。这个调用节奏在 TVM 页面的最小 C++ 草图里有展示。
+
+== 5) 在设备上重复检查
+
+在你的板子上运行编译好的模块，喂入同样的固定输入，并对保存的 `ref` 计算同样的误差指标。你会在这里抓到布局搞混、dtype 提升，或不同构建之间精度决策不一致的问题。只有这一步通过之后，才应该改动任何与性能有关的东西。
+
+== 如果你更偏好 IREE
+
+IREE 路线在概念上看起来很相似：把 NNEF→StableHLO，用 Vulkan 后端编译，部署 `.vmfb` 产物，并通过 IREE 的运行时调用函数。详细的开关与最小嵌入示例在 xref:ML_Inference/Third_Party_Libraries/12_iree.adoc[IREE] 里。同一套黄金参考校验框架原样适用。
+
+== 你很可能遇到的疑难
+
+布局不匹配是「能跑但看起来不对」的头号原因。尽早决定用 NCHW 还是 NHWC，并在预处理、模型与后处理之间保持一致。如果 TVM 导入失败，试着简化 ONNX 图（去掉训练算子、折叠常量），并确保所有输入形状都已指定。如果数值漂移，逐层二分找出第一个不一致的张量并修它，而不是修最后一层的输出。
+
+== 「完成」是什么样子
+
+你能在嵌入式设备上运行编译好的产物，输出在约定的容差内与 CPU 参考一致，并且能测量稳态延迟而不会热崩。从这里开始，你可以迭代精度（fp16/INT8），必要时用 TVM 自动调优，并在正确性变得无聊之后——也只有在那之后——用 Vulkan 优化边界处的数据搬运。
+
+xref:ML_Inference/Embedded_Applications/07_ml_compiler.adoc[上一篇：嵌入式设备上的 ML 编译器] | xref:ML_Inference/Embedded_Applications/09_conclusion.adoc[下一篇：结语：高性能 ML 的未来]

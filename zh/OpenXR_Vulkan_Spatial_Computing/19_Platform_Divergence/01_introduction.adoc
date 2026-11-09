@@ -1,0 +1,10 @@
+:pp: {plus}{plus}
+= 平台差异：桌面 DirectMode 与移动端分块渲染/ASW
+
+空间计算之所以独特，是因为它横跨两个截然不同的硬件世界。一端是由 400 瓦的 GPU 和高速 PCIe 总线驱动的高端**桌面 VR** PC；另一端则是**移动一体机**头显，运行在功耗预算严格低于 10 瓦的移动处理器上。
+
+作为引擎开发者，你不能把这两个平台一视同仁。在桌面上能跑到 200 FPS 的「标准」渲染循环，到了移动端很可能几分钟就把电池耗光，或者无法维持空间舒适度所需的稳定 72Hz。
+
+本章将探讨驾驭这两个平台所需的技巧。我们会学习如何利用**直接模式（Direct Mode）**与 **HDR10** 把高端 GPU 压到满载，以及如何用**分块渲染（Tile-Based Rendering，TBR）**和**应用空间扭曲（Application SpaceWarp，ASW）**从移动芯片里榨出最后一滴性能。读完本章，你将知道如何架构引擎后端，让它根据检测到的空间硬件自动伸缩画质与效率。
+
+xref:OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/02_desktop_high_end.adoc[下一页]

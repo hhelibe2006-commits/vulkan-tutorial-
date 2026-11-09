@@ -1,0 +1,72 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+从桌面控制的交换链过渡到由 OpenXR 运行时拥有的交换链，需要我们在 `renderer_rendering.cpp` 中拦截引擎的资源创建与帧获取逻辑。实现示例可参见 link:../../../attachments/openxr_engine/xr_context.cpp[xr_context.cpp] 与 link:../../../attachments/openxr_engine/renderer_resources.cpp[renderer_resources.cpp]。
+
+== 调整交换链创建
+
+在 `renderer_rendering.cpp` 中，我们需要修改 `Renderer::createSwapChain`，使其在 XR 模式下绕开标准的基于 Vulkan 表面的交换链。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+bool Renderer::createSwapChain() {
+    if (xrMode) {
+        // NEW: Negotiate with OpenXR instead of the windowing system
+        vk::Extent2D xrExtent = xrContext.getRecommendedExtent();
+        xrContext.createSwapchains(*device, vk::Format::eB8G8R8A8Srgb, xrExtent);
+
+        // Use a single swapchain with 2 layers for multiview
+        eyeSwapchainImages[0] = xrContext.enumerateSwapchainImages();
+        eyeSwapchainImages[1].clear(); // Not used in multiview mode
+
+        swapChainExtent = xrContext.getSwapchainExtent();
+        swapChainImageFormat = xrContext.getSwapchainFormat();
+
+        return createImageViews();
+    }
+
+    // ... original desktop vk::raii::SwapchainKHR logic ...
+}
+----
+
+== 处理帧生命周期
+
+「等待-获取-释放」节奏每帧都会发生。我们必须更新 `Renderer::Render`，改为与 XR 合成器同步，而非桌面窗口。
+
+[source,cpp]
+----
+// renderer_rendering.cpp
+void Renderer::Render(...) {
+    // ...
+    uint32_t imageIndex;
+
+    if (xrMode) {
+        // 1. ACQUIRE: Get the index of the next available XR image from the runtime
+        imageIndex = xrContext.acquireSwapchainImage();
+
+        // 2. WAIT: Block until the image is safe to be written to
+        xrContext.waitSwapchainImage();
+    } else {
+        // Standard desktop acquisition
+        auto result = swapChain.acquireNextImage(UINT64_MAX, *imageAvailableSemaphores[currentFrame]);
+        imageIndex = result.second;
+    }
+
+    // ... record and submit command buffers ...
+
+    if (xrMode) {
+        // 3. RELEASE: Hand the image back to the compositor for display
+        xrContext.releaseSwapchainImage();
+    } else {
+        // Standard desktop present
+        presentQueue.presentKHR(presentInfo);
+    }
+}
+----
+
+== 为什么要做这些改动？
+
+把这些调用注入 `createSwapChain` 与 `Render`，我们在把**生命周期**的控制权交给 XR 运行时的同时，保留了引擎的高层抽象（例如 `vk::raii::Image`）。`xrContext` 充当桥梁，确保引擎绝不会试图绘制到合成器正在读取、准备投射到头显镜片上的图像。
+
+xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc[下一页]

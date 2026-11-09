@@ -1,0 +1,52 @@
+:pp: {plus}{plus}
+= 屏障批处理：合并你的同步
+
+== 一次调用的代价
+
+每次调用 `commandBuffer.pipelineBarrier2`，你都在从 CPU 代码走进 Vulkan 驱动一趟。驱动随后要解析你的 `vk::DependencyInfo`、校验你的阶段掩码与访问掩码，然后把实际的硬件指令录制进命令缓冲区。
+
+如果你有十张不同的图像要转换，却录制了十个独立的屏障，那你就是在跑十趟驱动。这种开销会累积，尤其是在包含许多通道的复杂帧中。
+
+== 解决方案：批处理
+
+**屏障批处理**是指把所有全局、图像和缓冲区屏障收集起来，在单次 `pipelineBarrier2` 调用中提交的做法。这是降低同步代码 CPU 开销最简单的方式之一。
+
+`vk::DependencyInfo` 结构正是为此设计的。它允许你为每种类型提供一组屏障。
+
+[,cpp]
+----
+std::vector<vk::ImageMemoryBarrier2> imageBarriers = { /* ... multiple image transitions ... */ };
+vk::MemoryBarrier2 globalBarrier = { /* ... a broad memory dependency ... */ };
+
+auto dependencyInfo = vk::DependencyInfo{
+    .memoryBarrierCount = 1,
+    .pMemoryBarriers = &globalBarrier,
+    .imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size()),
+    .pImageMemoryBarriers = imageBarriers.data()
+};
+
+// One call into the driver instead of many
+commandBuffer.pipelineBarrier2(dependencyInfo);
+----
+
+== 硬件上的收益
+
+批处理不只是减少 CPU 开销；它在 GPU 上也能带来显著收益。当你在一次调用中提供多个屏障时，驱动可以合并缓存刷新与管线停顿。
+
+与其五次停顿管线并刷新缓存，硬件有可能一次全部完成。这减少了 GPU 等待的总时间，增加了用于渲染的时间。
+
+== 实现策略
+
+对引擎来说，一个好策略是有一个「屏障管理器」，在一个通道内收集屏障。当你到达同步点——例如 G-Buffer 通道结束时——管理器就把收集到的所有屏障作为一批刷出去。
+
+以批而非单个屏障为单位思考，你会走向一种更「整体」的同步方式，确保引擎在你给渲染器增加更多复杂性时仍保持高性能。下一节我们会看到如何用性能分析工具把这些优化带来的影响可视化。
+
+== Simple Engine：合并
+
+在 `Simple Engine` 中，我们在 `Renderer::Render` 循环里应用了屏障批处理的原则。例如在**不透明通道**到**后处理**的转换期间，我们把所有必要的图像屏障——包括场景颜色和深度缓冲区的屏障——收集进单个 `vk::DependencyInfo`。
+
+我们为 `Simple Engine` 未来版本计划的一项优化是进一步集中化。通过实现一个跨所有系统（Renderer、Physics、Audio）收集屏障的「屏障管理器」，我们可以减少每帧 `pipelineBarrier2` 调用的总数。这是通往完整**渲染图**系统路线图上的关键一步——在那种系统里，所有同步都按帧全局计算，确保我们永不发出冗余屏障，且所有转换都被批处理以获得最大的硬件性能。
+
+== 导航
+
+上一页：xref:Synchronization/Profiling_Optimization/01_introduction.adoc[性能分析、批处理与优化：榨取 GPU 性能] | 下一页：xref:Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc[可视化停顿：找出管线气泡]

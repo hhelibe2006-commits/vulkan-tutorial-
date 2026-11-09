@@ -1,0 +1,183 @@
+:pp: {plus}{plus}
+= 集成到引擎中
+
+在本章中，我们探讨了 OpenXR 与 Vulkan 1.3 之间的基础握手。要把这些概念落实到 `simple_game_engine` 中，我们必须演进 `renderer_core.cpp` 与 `xr_context.cpp` 里的核心初始化逻辑。实现示例可参见 link:../../../attachments/openxr_engine/xr_context.cpp[xr_context.cpp] 与 link:../../../attachments/openxr_engine/renderer_core.cpp[renderer_core.cpp]。
+
+== 检测 XR 模式
+
+在改动引擎之前，我们需要一种判断是否应该尝试使用 OpenXR 的方法。在 `main.cpp` 的 `main` 函数中，我们可以在初始化引擎之前加一个检查：
+
+[source,cpp]
+----
+// main.cpp
+int main(int, char *[]) {
+    // ... initial setup ...
+
+    Engine engine;
+
+    // Test if we are able to run in XR mode
+    bool useXR = false;
+    if (XrContext::checkRuntimeAvailable()) {
+        std::cout << "OpenXR Runtime detected. Attempting spatial initialization..." << std::endl;
+        useXR = true;
+    }
+
+    if (!engine.Initialize("Simple Engine", WINDOW_WIDTH, WINDOW_HEIGHT, ENABLE_VALIDATION_LAYERS, useXR)) {
+        throw std::runtime_error("Failed to initialize engine");
+    }
+
+    // ...
+}
+----
+
+== 修改渲染器的初始化
+
+在 `renderer_core.cpp` 中，我们需要更新 `Renderer::Initialize` 及其辅助方法，以处理 OpenXR 握手。
+
+== 配套代码：XrContext 辅助类
+
+整个教程中，我们会用一个名为 `XrContext`（实例名为 `xrContext`）的辅助类来封装 OpenXR API。这样能让引擎代码保持整洁，专注于空间逻辑。在改动渲染器之前，请确保你的引擎已经有这个辅助类的基本结构。
+
+[source,cpp]
+----
+// xr_context.h
+class XrContext {
+public:
+    // Core Handshake (Chapter 2)
+    std::vector<const char*> getVulkanInstanceExtensions();
+    // The runtime hands back the exact VkPhysicalDevice it requires — no matching needed.
+    vk::PhysicalDevice getRequiredPhysicalDevice();
+
+    // Swapchain Management (Chapter 3)
+    void createSwapchains(vk::Device device, vk::Format format, vk::Extent2D extent);
+    std::vector<vk::Image> enumerateSwapchainImages();
+    vk::Extent2D getSwapchainExtent();
+    vk::Format getSwapchainFormat();
+    void waitSwapchainImage();
+    uint32_t acquireSwapchainImage();
+    void releaseSwapchainImage();
+
+    // Frame Lifecycle (Chapter 5)
+    XrFrameState waitFrame();
+    void beginFrame();
+    void endFrame(const std::array<std::vector<vk::ImageView>, 2>& eyeViews);
+
+    // View & Projection (Chapter 4 & 11)
+    void locateViews(XrTime predictedTime);
+    std::vector<XrView> getLatestViews();
+    std::array<XrPosef, 2> getLatestViewPoses(); // Added for Late Latching
+    vk::Viewport getViewport(uint32_t eye);
+    vk::Rect2D getScissor(uint32_t eye);
+    glm::mat4 getProjectionMatrix(uint32_t eye);
+    glm::mat4 getViewMatrix(uint32_t eye);
+    glm::vec3 getEyePosition(uint32_t eye); // Added for UBO updates
+
+    // Input Actions (Chapter 7)
+    void pollActions();
+    bool isActionActive(const std::string& name);
+    XrPosef getActionPose(const std::string& name);
+
+    // Scene Understanding (Chapter 16)
+    std::vector<XrSpatialMesh> getLatestSpatialMeshes();
+
+    // ML & Occlusion (Chapter 17 & 18)
+    glm::vec2 getGazeNDC();
+    XrReferenceSpaceType getReferenceSpace();
+};
+
+// Common Helper: Convert XrPosef to glm::mat4
+inline glm::mat4 xrPoseToMatrix(const XrPosef& pose) {
+    glm::quat q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
+    glm::mat4 m = glm::mat4_cast(q);
+    m[3] = glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0f);
+    return m;
+}
+----
+
+== 1. 使用 XR 扩展创建实例
+
+在 `Renderer::createInstance` 中，我们必须追加 OpenXR 要求的扩展。我们不再只依赖 GLFW，而是向 XR 运行时查询：
+
+[source,cpp]
+----
+// renderer_core.cpp
+bool Renderer::createInstance(const std::string& appName, bool enableValidationLayers) {
+    // ...
+    std::vector<const char *> extensions;
+
+    // Standard GLFW extensions
+    #if defined(PLATFORM_DESKTOP)
+    uint32_t glfwExtensionCount = 0;
+    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    extensions.insert(extensions.end(), glfwExtensions, glfwExtensions + glfwExtensionCount);
+    #endif
+
+    // NEW: Add OpenXR mandatory extensions
+    if (xrMode) {
+        auto xrExtensions = xrContext.getVulkanInstanceExtensions();
+        extensions.insert(extensions.end(), xrExtensions.begin(), xrExtensions.end());
+    }
+
+    // ... create vk::raii::Instance ...
+}
+----
+
+=== 2. 硬件对齐（运行时强制指定的设备）
+
+在 `Renderer::pickPhysicalDevice` 中，我们必须确保选中的是 OpenXR 要求的 GPU。运行时不只是建议某块设备——它强制指定一块，并通过 `xrGetVulkanGraphicsDevice2KHR` 直接交还给我们。我们只需比较句柄：
+
+[source,cpp]
+----
+// renderer_core.cpp
+bool Renderer::pickPhysicalDevice() {
+    // ... enumerate devices ...
+
+    for (auto& _device : devices) {
+        if (xrMode) {
+            // The OpenXR runtime already told us which VkPhysicalDevice to use.
+            vk::PhysicalDevice required = xrContext.getRequiredPhysicalDevice();
+            if (static_cast<VkPhysicalDevice>(required) == VK_NULL_HANDLE) {
+                continue; // Could not query the runtime's required device.
+            }
+            if (*_device != required) {
+                continue; // Not the GPU OpenXR requires.
+            }
+        }
+        // ... rest of suitability scoring ...
+    }
+}
+----
+
+NOTE: 本教程的早期版本通过比较 LUID（`VkPhysicalDeviceIDProperties::deviceLUID`）与从运行时设备中提取的 LUID 来匹配设备。那一步是多余的——`xrGetVulkanGraphicsDevice2KHR` 本身就已经给出 `VkPhysicalDevice` 句柄——而且在 `deviceLUIDValid` 未置位的运行时/驱动上并不可靠。请直接比较句柄。
+
+=== 3. 启用 Vulkan 1.3 特性
+
+在 `Renderer::createLogicalDevice` 中，我们必须显式启用空间计算所需的 Vulkan 1.3 特性，尤其是**动态渲染**与**同步 2**：
+
+[source,cpp]
+----
+// renderer_core.cpp
+bool Renderer::createLogicalDevice(bool enableValidationLayers) {
+    // ...
+
+    // Enable Vulkan 1.3 features using designated initializers
+    vk::PhysicalDeviceVulkan13Features vulkan13Features{
+        .synchronization2 = vk::True,
+        .dynamicRendering = vk::True
+    };
+
+    // Enable Multiview (if in XR mode) using designated initializers
+    vk::PhysicalDeviceMultiviewFeatures multiviewFeatures{
+        .pNext = &vulkan13Features,
+        .multiview = xrMode ? vk::True : vk::False
+    };
+
+    // ... create vk::raii::Device with multiviewFeatures in pNext ...
+}
+----
+
+== 为什么要做这些改动？
+
+通过查看 `renderer_core.cpp` 中的具体位置，可以看到 OpenXR 并非一个「附加组件」——它是 Vulkan 生命周期中的**协作者**。如果在 `pickPhysicalDevice` 中不遵从运行时强制指定的设备，我们的引擎可能会在独立 GPU 上初始化，而 VR 头显却接在集成 GPU 上，导致完全无法显示。同样，扩展协商确保 XR 合成器与我们的引擎说的是同一种 Vulkan「方言」。
+
+xref:OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc[下一页]

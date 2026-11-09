@@ -1,0 +1,64 @@
+:pp: {plus}{plus}
+= 将平台差异处理集成到引擎中
+
+集成**平台差异**处理，能让我们的 `simple_game_engine` 自动针对高端桌面与低功耗移动硬件优化空间管线。做法是在 `renderer_core.cpp` 的 `Renderer` 中新增一个配置层。*这部分目前留作读者的实现练习。*
+
+== 定义硬件配置档
+
+在 `renderer_core.cpp` 中，我们引入一个方法，根据检测到的硬件应用渲染预设。这套逻辑确保引擎按平台的约束伸缩画质。
+
+[source,cpp]
+----
+// renderer_core.cpp
+void Renderer::applySpatialPlatformPresets() {
+    // Note: platform is our Engine's platform abstraction
+    if (platform->isMobile()) {
+        // 1. Mobile Mastery: Optimize for Tile-Based GPUs
+        renderScale = 0.75f; // Lower initial resolution for stability
+
+        // 2. Explicitly set Load/Store ops for tile memory efficiency
+        // Discarding depth/multisample data saves massive bandwidth
+        mainColorAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+        mainDepthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+
+        // 3. Enable Application SpaceWarp for synthetic frame generation
+        xrConfig.enableASW = true;
+    } else {
+        // 4. Desktop High-End: Maximum Fidelity
+        renderScale = 1.0f;
+        useHDR10 = true; // Use 10-bit color formats
+
+        // Enable high-bandwidth features like Ray Query
+        vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+        // ... request features from the runtime-required physical device ...
+    }
+}
+----
+
+== 在桌面端处理直接模式
+
+对桌面头显，我们必须确保引擎的窗口系统（GLFW）不会干扰头显的**直接模式**显示。我们在 `main.cpp` 中配置窗口创建逻辑。
+
+[source,cpp]
+----
+// main.cpp
+void setupEngineWindow() {
+    if (engine.isXRMode()) {
+        // On Desktop, the headset is a "hidden" display.
+        // We create a small "Mirror Window" for the monitor
+        // while the main spatial rendering bypasses the OS compositor.
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        engine.createMirrorWindow("XR Mirror", 1280, 720);
+    } else {
+        engine.createStandardWindow("Simple Engine", 1920, 1080);
+    }
+}
+----
+
+== 为什么要做这些改动？
+
+通过实现平台专属预设与直接模式处理，我们确保引擎无论跑在高端桌面 GPU 还是移动 SOC 上都能保持良好性能。`simple_game_engine` 已经使用了模块化的 `Platform` 抽象，我们正好借此在桌面专属逻辑（例如 10 位 HDR）与移动专属优化（例如**分块**丢弃）之间切换。
+
+正是这种架构上的灵活性，让我们的空间应用能够从尽可能高的画质，一直覆盖到最高效的移动一体机性能，而无需重写核心渲染逻辑。
+
+xref:OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/03_mobile_mastery.adoc[上一页] | xref:OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/01_introduction.adoc[下一页]
