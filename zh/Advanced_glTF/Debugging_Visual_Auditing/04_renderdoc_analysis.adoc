@@ -1,0 +1,86 @@
+:pp: {plus}{plus}
+= RenderDoc 分析：检查计算蒙皮输出
+
+== RenderDoc 能给你什么
+
+RenderDoc 是一套帧捕获与 GPU 调试工具，它让你冻结单个已渲染的帧，检查捕获那一刻的每一个 GPU 资源与命令，并单独重新执行个别的绘制调用和计算派发。对角色管线而言，它最有价值的功能是能在帧中的任意时刻查看任意 GPU 缓冲区的内容——包括计算蒙皮派发的输出缓冲区，而且是在光栅化器读取它之前。
+
+这是 GPU 层面的真实基准校验。参考查看器（第 7 章）已经确认资产本身是正确的，调试绘制器显示的是物理模拟状态。RenderDoc 回答的是一个尽可能窄的问题：计算蒙皮着色器运行之后，输出缓冲区里的顶点位置和法线在几何上是否正确？如果正确，那么光栅化器、材质和场景图都没有问题。如果不正确，错误就在计算蒙皮管线里——着色器、关节矩阵或输入顶点格式。
+
+== 捕获一帧
+
+RenderDoc 的捕获很直接：通过 RenderDoc 启动你的应用，在想要捕获的时刻按 F12（或你配置的捕获键），帧就被冻结。之后你可以在 RenderDoc 的界面里打开它。
+
+对 Vulkan 应用来说，有一个重要的准备步骤：确保你的应用在构建时没有定义 `-DNDEBUG` 标志（或等价物），并且用 `vkSetDebugUtilsObjectNameEXT` 设置了调试对象名称。这能让 RenderDoc 的资源浏览器变得可读——你看到的不再是 `VkBuffer (0x12345678)`，而是 `character_skin_output_buffer`。针对计算蒙皮的输出缓冲区，可以这样写：
+
+[source,cpp]
+----
+void set_debug_name(VkDevice device, VkBuffer buffer, const char* name)
+{
+#ifdef VULKAN_DEBUG
+    VkDebugUtilsObjectNameInfoEXT info{};
+    info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    info.objectType   = VK_OBJECT_TYPE_BUFFER;
+    info.objectHandle = reinterpret_cast<uint64_t>(buffer);
+    info.pObjectName  = name;
+    vkSetDebugUtilsObjectNameEXT(device, &info);
+#endif
+}
+
+// When creating the skinning output buffer:
+set_debug_name(device, skinning_output.buffer, "skinning_output_buffer");
+----
+
+同样，用 `vkCmdBeginDebugUtilsLabelEXT` 和 `vkCmdEndDebugUtilsLabelEXT` 给你的命令缓冲区分段加标签：
+
+[source,cpp]
+----
+VkDebugUtilsLabelEXT label{};
+label.sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+label.pLabelName = "Compute Skinning Pass";
+label.color[0]   = 0.2f; label.color[1] = 0.8f;
+label.color[2]   = 0.2f; label.color[3] = 1.0f;
+vkCmdBeginDebugUtilsLabelEXT(cmd, &label);
+
+// ... dispatch compute skinning ...
+
+vkCmdEndDebugUtilsLabelEXT(cmd);
+----
+
+这些标签会在 RenderDoc 的事件列表里显示为具名的区段，因此即使一帧里有成千上万条 GPU 命令，导航到蒙皮派发也轻而易举。
+
+== 检查输出缓冲区
+
+有了捕获之后，在事件列表里导航到计算蒙皮派发处。选中它，打开 **Resource Inspector** 或 **Buffer Viewer** 面板。找到输出缓冲区（如果你设了调试名称，它就叫 `skinning_output_buffer`）。RenderDoc 会让你以结构化表格的形式查看这个缓冲区的原始内容。
+
+你需要告诉 RenderDoc 你的顶点结构体布局。在 Buffer Viewer 中，你可以为每个字段配置字节偏移、步长和格式。对于典型的顶点结构体：
+
+[source,slang]
+----
+Position:    float3, offset 0,  stride sizeof(Vertex)
+Normal:      float3, offset 12, stride sizeof(Vertex)
+Tangent:     float4, offset 24, stride sizeof(Vertex)
+TexCoord:    float2, offset 40, stride sizeof(Vertex)
+JointIdx:    uint4,  offset 48, stride sizeof(Vertex)
+JointWeight: float4, offset 64, stride sizeof(Vertex)
+----
+
+配置好这个布局后，RenderDoc 会为每个顶点显示一行，位置、法线等字段都以可读的数值呈现。现在你可以：
+
+**校验静止姿态。** 在角色处于绑定姿态（所有动画时间为 0）的那一帧暂停应用。输出的顶点位置应当与 glTF 的原始顶点位置完全一致——静止姿态下不应有任何形变。如果动画时间为 0 时位置就与静止姿态不同，那么要么逆绑定矩阵错了，要么关节层级遍历错了。
+
+**校验一个已知姿态。** 把动画挪到某一帧，你确切知道角色此时应该长什么样——比如一个 T 姿态，一只手臂抬起 90 度。检查抬起手臂上的某个顶点，它的输出位置应当是原位置绕相应轴旋转 90 度后的结果。如果它朝错误的方向移动了，说明关节旋转所用的坐标空间不对。
+
+**检查法线。** 在平坦表面上选一个顶点，它的法线应当是指向表面之外的单位向量。如果它本应指向 Y 方向却带有明显的 X 或 Z 分量，或者它的长度与 1.0 相差很大，那么计算着色器里的法线变换就是错的。
+
+**校验绕序。** 在 RenderDoc 中，你可以把网格以线框叠加的方式重绘。如果你在本该是正面的地方看到背面三角形，说明输出缓冲区里的绕序被反转了。当着色器应用了行列式为负的矩阵（例如某一轴缩放为 -1）而翻转了坐标系时，就会发生这种情况。
+
+== 使用着色器调试器
+
+RenderDoc 的着色器调试器让你选中捕获帧中的任意像素，并单步执行产生该像素的着色器代码。对于计算蒙皮派发，你可以选中任意一个调用（按线程组和线程索引），单步执行着色器，看清输出值究竟是如何算出来的。
+
+当你手上有一个明确可疑的顶点时——它在缓冲区查看器里的位置看起来不对——这个功能最有用。找到顶点索引，算出派发线程 ID（`vertex_index / 64` 为组号，`vertex_index % 64` 为线程号），然后为该调用启动调试器。接着你可以单步走过关节矩阵查找、线性混合计算和位置变换，观察每一个中间值。当某个值与你预期不符时，你就找到了 bug。
+
+着色器调试器在启动和使用上都比单纯查看缓冲区内容更慢，但对于细微的数值错误——矩阵元素符号写反、四元数转矩阵时轴搞错——它提供的是最直接的诊断路径。
+
+xref:Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc[上一章：蒙皮热力图] | xref:Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc[下一章：小结与本系列结语]

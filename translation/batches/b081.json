@@ -1,0 +1,12 @@
+{
+  "id": "b081",
+  "words": 6812,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc",
+      "words": 6812,
+      "title": "Inference Explained"
+    }
+  ]
+}

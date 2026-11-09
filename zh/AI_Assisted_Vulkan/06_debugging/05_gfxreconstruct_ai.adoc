@@ -1,0 +1,119 @@
+:pp: {plus}{plus}
+
+= AI 辅助的跟踪分析：GFXReconstruct
+
+== 简介
+
+RenderDoc 围绕单个冻结帧构建，这意味着它会漏掉那些只在多帧之间才显现的 bug——例如同步隐患、资源生命周期问题，以及初始化阶段的驱动特定回归。
+
+**GFXReconstruct** 捕获并重放完整的 Vulkan API 调用流，从第一次 `vkCreateInstance` 到最后一次 `vkDestroyDevice`。把这条调用流交给 AI 助手，就能把多 GB 的跟踪文件变成真正可以查询的东西，而不必手工一路滚动查看。
+
+== 为什么把 AI 与 GFXReconstruct 搭配
+
+GFXReconstruct 给你原始调用数据，AI 帮你搜索它。一份跟踪可能包含数百万次调用，助手可以在这条流里扫描这些内容：
+
+*   **初始化隐患。** 你是不是启用了目标硬件不支持的扩展？助手可以把 `gfxrecon-info` 的输出与你的 `vk.xml` 注册表上下文交叉比对。
+*   **资源生命周期问题。** 你是否在命令缓冲区里最后一次使用某个缓冲区之前就把它销毁了？助手可以解析转换成 JSON 的跟踪，找出对象失效的确切调用序列。
+*   **驱动回归对比。** 如果一份跟踪在一个驱动上正常、在另一个驱动上出问题，助手可以去找未定义行为——某个驱动恰好容忍，另一个则不容忍。
+
+== 跟踪审计流程
+
+要让 Goose 这样的代理能够对 GFXReconstruct 跟踪做推理，先把二进制捕获转换成 JSON。
+
+1.  **捕获跟踪。**
+    启用 GFXReconstruct 层运行你的程序。
++
+[source,bash]
+----
+# On Windows/Linux
+vkconfig # Use the GUI to enable GFXReconstruct
+# OR use environment variables
+VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_gfxreconstruct ./VulkanApp
+----
++
+这会生成类似 `vulkan_capture_20260313_174700.gfxr` 的文件。
+
+2.  **转换成 JSON。**
+    用 `gfxrecon-convert` 把二进制跟踪变成结构化文本。跟踪很长时，过滤到特定的帧范围，免得超出模型的上下文窗口。
++
+[source,bash]
+----
+# Convert frames 100 to 110 to JSON
+gfxrecon-convert --to-json --frames 100-110 capture.gfxr capture_frames.json
+----
+
+3.  **让代理审计它。**
+    在你的 Goose 会话里，让它检查 JSON 中是否存在特定隐患。
++
+[source,text]
+----
+Goose, I have converted a GFXReconstruct trace to JSON.
+Analyze 'capture_frames.json' and find all 'vkCmdPipelineBarrier' calls.
+Compare the 'oldLayout' and 'newLayout' of the 'GBuffer_Diffuse' image.
+Is there any point where we are transitioning FROM 'UNDEFINED'
+after the first frame? If so, this is a redundant clear hazard.
+----
+
+== 构建 GFXReconstruct MCP 服务器
+
+如果希望助手查询跟踪文件时不用你每次手工敲命令行，可以把 GFXReconstruct 的命令行工具包进一个小小的 MCP 服务器。
+
+下面是一个基于 MCP SDK 的最小 Python 实现：
+
+[source,python]
+----
+import subprocess
+import json
+from mcp.server import McpServer
+
+# Initialize the server
+server = McpServer("GFXReconstruct-Connector")
+
+@server.tool()
+def get_trace_info(file_path: str):
+    """Prints hardware and extension requirements for a .gfxr trace."""
+    result = subprocess.run(
+        ["gfxrecon-info", file_path],
+        capture_output=True, text=True
+    )
+    return result.stdout
+
+@server.tool()
+def extract_frame_json(file_path: str, frame_range: str):
+    """Extracts a range of frames (e.g., '10-15') from a trace to JSON."""
+    output_file = "temp_audit.json"
+    subprocess.run([
+        "gfxrecon-convert", "--to-json",
+        "--frames", frame_range,
+        file_path, output_file
+    ])
+    with open(output_file, "r") as f:
+        return f.read(50000) # Return the first 50k chars for reasoning
+
+if __name__ == "__main__":
+    server.run()
+----
+
+这个服务器在 `goose/config.yaml` 里注册之后，你就可以这样问：*“Goose，分析 'crash.gfxr' 的硬件需求，告诉我它有没有用到 M4 Max GPU 上缺失的扩展。”*
+
+== 示例：只在某一个驱动上出现的布局隐患
+
+假设你正在把引擎从 Windows（NVIDIA）移植到 Android（Qualcomm）。Windows 上一切正常，但 Android 上阴影贴图闪烁。
+
+=== 手工检查
+
+你花一天时间手工过了一遍屏障。看起来都对，你怀疑是驱动差异，但还没有证据。
+
+=== 用跟踪来查
+
+你捕获一份跟踪，问代理：*“分析跟踪里所有把 `VK_IMAGE_LAYOUT_UNDEFINED` 用作 `oldLayout`、而资源本身已经含有有效数据的 `VkImageMemoryBarrier`。”*
+
+扫描这些调用时，它发现你的级联阴影贴图通道为第二级联把布局重置成了 `UNDEFINED`——同时丢掉了第一级联的数据。NVIDIA 的驱动恰好容忍了这次未定义的转换；Qualcomm 基于瓦片的渲染器则正确地丢弃了瓦片内存，所以这个 bug 只在那里显现。
+
+代理指出 `ShadowRenderer.cpp` 中的确切代码行，并给出修复：`oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`。
+
+== 小结
+
+GFXReconstruct 给你的是完整时间线而不是单帧，AI 助手则让这条时间线变得可搜索，而不是只能手工滚动。对跨驱动的 bug 和 RenderDoc 单独无法捕捉的多帧隐患来说，它是个有用的工具。
+
+下一节：xref:AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc[高级 MCP 工具与自动化]

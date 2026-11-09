@@ -1,0 +1,12 @@
+{
+  "id": "b088",
+  "words": 3289,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc",
+      "words": 3289,
+      "title": "GPU Resource Sharing"
+    }
+  ]
+}

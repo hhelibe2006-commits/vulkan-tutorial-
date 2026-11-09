@@ -1,0 +1,18 @@
+{
+  "id": "b095",
+  "words": 4164,
+  "files": [
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc",
+      "words": 2149,
+      "title": "Data Management"
+    },
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc",
+      "words": 2015,
+      "title": "Synchronization"
+    }
+  ]
+}

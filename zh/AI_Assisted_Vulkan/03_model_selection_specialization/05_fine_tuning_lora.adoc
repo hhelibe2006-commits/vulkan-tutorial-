@@ -1,0 +1,146 @@
+:pp: {plus}{plus}
+
+= 为你的引擎微调（LoRA）
+
+== 风格问题
+
+一个精通 C{pp}、熟悉 Vulkan 规范的新人，第一天上班依然会写出裸的 `vkCreateBuffer` 调用，在你的引擎实际使用 Vulkan Memory Allocator 和自定义 `FixedArray` 类型的地方伸手去拿 `std::vector`。你得花第一周时间纠正他的风格，让它符合你们的约定。
+
+基础模型也有同样的问题：即便是 Qwen 3-Coder 这样强的模型，也只懂泛泛的 Vulkan，而不懂你这个具体的引擎。微调——具体说是低秩适配（Low-Rank Adaptation，LoRA）——是缩小这一差距的一种办法。
+
+== LoRA 大致是怎么工作的
+
+完整微调会重新训练模型的所有参数，代价高昂，而且需要真正的 GPU 集群。LoRA 则只训练一个小适配器——通常不到模型体积的 1%——把它叠加在冻结的基础模型之上。这样你既得到基础模型通用的 Vulkan 与 C{pp} 知识，又得到一个承载你引擎特定命名约定与抽象的适配器。
+
+== 用云端模型生成训练数据
+
+要把一个通用的 12–17B 模型变成专门针对你引擎的模型，需要一个像样的指令/回答数据集，而手工写几千条对小团队来说不现实。常见做法是用更强的云端模型（Claude 4.6、GPT-5.3）基于你自己的源码生成这个数据集：
+
+1.  **整理**引擎的核心头文件与架构文档。
+2.  **生成指令。**把这些文件喂给云端模型，让它产出用于检验对你 API 理解程度的指令/回答对。
+3.  用这份生成的数据集**在本地微调**。
+
+由于云端模型是基于你真实的头文件工作的，由此得到的本地微调模型往往会学到你引擎抽象的**逻辑**，而不只是孤立的代码片段；在应对你特定的同步原语或分配器时，它甚至可能比一个只懂通用 Vulkan 知识、体积大得多的模型做得更好。
+
+== 为什么值得专门用 LoRA
+
+每个有一定规模的引擎都有自己的约定——有的用 `vmaCreateBuffer`，有的用在 Android `AHardwareBuffer` 之上构建的自定义子分配器，还有的用 `vk::raii` 这层 C{pp} 包装。没有 LoRA 适配器，你就得每个会话都反复用 RAG 或手工提示来提醒模型这些偏好。
+
+== 训练 LoRA 适配器
+
+一块高端消费级 GPU（RTX 3090/4090）就足以在一小时内为 Llama 4 这样的 17B 模型训练好一个 LoRA 适配器。
+
+**工作流：**
+
+1.  **收集数据集。**从你的仓库中提取「头文件/实现」配对——比如把 `PipelineBuilder.hpp` 与使用它的 `main.cpp` 配成一对。
+2.  用 Unsloth 之类的工具**运行训练**。你会看到 loss 下降，因为模型不再建议通用的 `VkGraphicsPipelineCreateInfo`，转而建议你引擎自己的 `GraphicsPipelineBuilder`。
+3.  **使用结果。**把得到的适配器（通常不到 50MB）加载进 Ollama 或 LM Studio。当你开始一个新的渲染通道时，模型无需额外提示就会使用你引擎的同步包装。
+
+== 分步操作
+
+=== 步骤 1：整理数据集
+
+用一个强大的云端模型，基于你自己的头文件生成指令/回答对。
+
+**示例提示：**
+[source,text]
+----
+I am uploading our core engine headers (Renderer.hpp, Buffer.hpp)
+and three sample apps. Generate 50 technical 'Instruction/Response'
+pairs in JSONL format that teach a model how to:
+1. Initialize our 'GraphicsPipelineBuilder' for a depth-only pass.
+2. Correct the usage of 'vmaCreateBuffer' for a staging buffer.
+3. Implement our custom 'ImageMemoryBarrier' logic for layout transitions.
+----
+
+=== 步骤 2：格式化为 JSONL
+
+`train.jsonl` 的每一行应该像这样：
+
+[source,json]
+----
+{"instruction": "Create a vertex buffer using our VMA wrapper.", "input": "Target: 1024 bytes, Usage: VERTEX_BUFFER_BIT", "output": "Buffer::Builder(device).setSize(1024).setUsage(VMA_MEMORY_USAGE_GPU_ONLY).build();"}
+----
+
+=== 步骤 3：用 Unsloth 训练
+
+在一台至少有 24GB VRAM 的 Linux 机器上运行（RTX 3090/4090）：
+
+[source,python]
+----
+from unsloth import FastLanguageModel
+import torch
+
+# 1. Load the base model
+model, tokenizer = FastLanguageModel.from_pretrained("unsloth/llama-4-8b-bnb-4bit")
+
+# 2. Add LoRA adapters
+model = FastLanguageModel.get_peft_model(
+    model,
+    r = 16, # Rank (higher = more capacity but larger file)
+    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"],
+    lora_alpha = 16,
+    lora_dropout = 0,
+)
+
+# 3. Start training (pointing to your jsonl file)
+# [Insert standard Unsloth trainer setup here]
+model.save_pretrained_gguf("vulkan_expert_lora", tokenizer, quantization_method = "q4_k_m")
+----
+
+观察训练过程中 loss 值下降，是判断模型是否真的在学会你引擎 API 的合理检查。在 RTX 4090 上这通常需要 30–60 分钟。
+
+== 结合 LoRA 与 RAG
+
+一个同时拥有 LoRA 适配器和 RAG 索引的小模型（大约 17–30B），在针对你引擎的任务上足以与体量大得多的通用模型抗衡。LoRA 适配器负责你这一方言中的通用 C{pp} 约定；RAG 索引负责那些会变化的事实（文档、当前任务列表），这样模型在两件事上都不必依赖冻结的权重。
+
+== 搭建共享推理服务器
+
+在团队环境中，你通常希望有一个具备能力的模型——包括你训练好的 LoRA——集中运行，而不是让每个开发者各自承担 VRAM 开销。
+
+在一台 VRAM 充足的宿主机上，把 `OLLAMA_HOST` 设为 `0.0.0.0` 再运行 `ollama serve`，让 Ollama 监听所有网络接口，然后拉取一个能力足够的基础模型，比如 Qwen 3-Coder（30B）。
+
+之后每个开发者把自己本地的 Goose 实例指向这台远程服务器。代理本身仍留在本地——它可以读取本地文件——但把推理卸载到共享机器上。由于 OpenAI API 已成为这类场景的通用接口，Goose 可以用 `openai` provider 与远程 Ollama 服务器通信。编辑你的 Goose 配置（Unix 上是 `~/.config/goose/config.yaml`，Windows 上是 `%APPDATA%\goose\config.yaml`），添加一个指向宿主 IP 的条目：
+
+[source,yaml]
+----
+models:
+  shared-vulkan-expert:
+    provider: openai
+    base_url: "http://<SERVER_IP_ADDRESS>:11434/v1"
+    model: "qwen3-coder:30b"
+    api_key: "not-needed"
+----
+
+在这种配置下，Goose 读取你的本地文件，把相关片段发送到共享服务器做推理，再把回答写回本地磁盘——这样你就能拿到 30B 模型的输出，而不用消耗自己 GPU 的 VRAM。
+
+为了让团队保持一致，把技术手册和规范放进一个由 git 跟踪的共享目录，并让 Goose 在每个会话开始时先索引该目录。
+
+**示例。**一个遇到新同步缺陷的开发者可以这样问：「Goose，查询我们共享的 `docs/sync_patterns.md`，再问远程的 30B 模型，审查我当前的管线屏障。」检索在本地针对开发者真实的代码进行，而更重的推理在共享服务器上运行——所以开发者自己的帧率不受影响。
+
+更新 `config.yaml` 之后，验证连接：
+
+[source,bash]
+----
+# List available models to ensure the 'shared-vulkan-expert' is visible
+goose models
+
+# Start a session using the shared expert
+goose session --model shared-vulkan-expert
+----
+
+如果这能跑通，那么即使模型在推演一个庞大的着色器，你本地的 VRAM 占用也应该保持平稳。
+
+== RAG 与 LoRA
+
+把 RAG 用于经常变化的东西——第三方文档、项目需求、当前任务列表。把 LoRA 用于结构性的、稳定的东西——命名约定、内存管理理念，以及引擎特有的抽象。
+
+== 小结
+
+用 LoRA 微调是本节涉及的最深层次的专门化——它弥合了一个泛泛称职的程序员与一个已经了解你团队约定的程序员之间的差距。
+
+本节到此结束，你已经选好了基础模型、算清了 VRAM 预算、通过 RAG 与 MCP 补充了真实依据、用 LoRA 调整了模型的风格，并可选地把它部署到团队的共享服务器上。
+
+接下来我们看多模态 AI——用具备视觉能力的模型来诊断阴影痤疮、Z-fighting 这类视觉缺陷。
+
+下一篇：xref:AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc[多模态 AI：视觉推理能力]

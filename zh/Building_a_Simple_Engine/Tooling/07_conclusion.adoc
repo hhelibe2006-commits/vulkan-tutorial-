@@ -1,0 +1,232 @@
+:pp: {plus}{plus}
+
+= 工具链：结语
+
+== 结语
+
+这一章里，我们探讨了一整套用于开发、调试和分发 Vulkan 应用的工具与技术。下面我们总结学到的内容，并讨论如何在你自己的项目中运用这些技术。
+
+=== 我们学到了什么
+
+==== Vulkan 项目的 CI/CD
+
+我们从为 Vulkan 应用量身定制的持续集成与持续部署管线开始。这包括：
+
+* 用 GitHub Actions 搭建基础的 CI/CD 管线
+* 处理 Vulkan 特有的考量，例如 SDK 安装与 GPU 可用性
+* 自动化 Vulkan 应用的测试
+* 在不同平台上打包与分发 Vulkan 应用
+
+设计良好的 CI/CD 管线有助于在不同构建和平台之间保持一致的质量，并在开发早期就发现问题。
+
+==== 使用 VK_KHR_debug_utils 与 RenderDoc 调试
+
+接着，我们探讨了面向 Vulkan 应用的强大调试工具：
+
+* 使用 VK_KHR_debug_utils 扩展在应用内调试
+* 为对象、命令缓冲区和队列操作打标签，以便更好地调试
+* 集成 RenderDoc，进行帧捕获与分析
+* 把这些做法结合起来，实现全面的调试
+
+这些工具让你能看清 GPU 上发生的复杂操作，从而更容易发现并修复渲染管线中的问题。
+
+==== 崩溃处理与小转储
+
+接下来，我们实现了健壮的崩溃处理机制：
+
+* 针对异常和信号的基础崩溃处理
+* 生成小转储（minidump），用于详细的崩溃分析
+* 在崩溃报告中收集 Vulkan 特有的信息
+* 与遥测系统集成，供生产环境的应用使用
+
+妥善的崩溃处理能帮你诊断并修复生产环境中出现的问题，从而得到更稳定、更可靠的应用。
+
+==== 提升健壮性的 Vulkan 扩展
+
+最后，我们探讨了一些能让应用更好地抵御未定义行为的 Vulkan 扩展：
+
+* 使用 VK_EXT_robustness2 处理越界访问和空描述符
+* 实现其他健壮性扩展，例如 VK_KHR_buffer_device_address 和 VK_EXT_descriptor_indexing
+* 把健壮性扩展与调试工具结合，以获得最大效果
+
+这些扩展为抵御常见错误提供了有价值的工具，但它们不应被当作修复根本问题的替代品。
+
+=== 整合起来
+
+整章里，我们都使用现代 C++20 模块和 vk::raii 命名空间来做资源管理。这种做法有几个优点：
+
+* 用模块改善代码组织
+* 用 RAII 自动清理资源
+* 代码更易读、更易维护
+* 用异常实现更好的错误处理
+
+下面看看这些组件如何在一个完整应用中协同工作：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+class VulkanApplication {
+public:
+    VulkanApplication() {
+        // Initialize crash handler
+        crash_handler::initialize("MyVulkanApp", "crash_logs");
+
+        // Initialize Vulkan with debugging and robustness
+        initialize_vulkan();
+    }
+
+    void run() {
+        // Main application loop
+        while (!should_close()) {
+            try {
+                update();
+                render();
+            } catch (const vk::SystemError& e) {
+                // Handle recoverable Vulkan errors
+                std::cerr << "Vulkan error: " << e.what() << std::endl;
+                if (!recover_from_error()) {
+                    break;
+                }
+            }
+        }
+
+        cleanup();
+    }
+
+private:
+    void initialize_vulkan() {
+        // Create instance with validation layers in debug builds
+        #ifdef _DEBUG
+        enable_validation_layers = true;
+        #else
+        enable_validation_layers = false;
+        #endif
+
+        // Create instance
+        instance = create_instance();
+
+        // Set up debug messenger if validation is enabled
+        if (enable_validation_layers) {
+            debug_messenger = create_debug_messenger(instance);
+        }
+
+        // Select physical device
+        physical_device = select_physical_device(instance);
+
+        // Check for robustness support
+        has_robustness2 = check_robustness2_support(physical_device);
+
+        // Create logical device with robustness if available
+        device = create_device(physical_device);
+
+        // Name Vulkan objects for debugging
+        if (enable_validation_layers) {
+            debug_utils::set_name(device, *device, "Main Device");
+            // Name other objects as they're created
+        }
+
+        // Initialize other Vulkan resources
+        // ...
+    }
+
+    void render() {
+        // Begin frame
+        auto cmd_buffer = begin_frame();
+
+        // Label command buffer regions for debugging
+        if (enable_validation_layers) {
+            vk::DebugUtilsLabelEXT label_info{};
+            label_info.setPLabelName("Main Render Pass");
+            label_info.setColor(std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f});
+            cmd_buffer.beginDebugUtilsLabelEXT(label_info);
+        }
+
+        // Record rendering commands
+        // ...
+
+        // End debug label
+        if (enable_validation_layers) {
+            cmd_buffer.endDebugUtilsLabelEXT();
+        }
+
+        // End frame
+        end_frame(cmd_buffer);
+
+        // Capture frame with RenderDoc if requested
+        if (capture_next_frame) {
+            if (renderdoc_api) {
+                renderdoc_api->TriggerCapture();
+            }
+            capture_next_frame = false;
+        }
+    }
+
+    // Vulkan objects
+    vk::raii::Context context;
+    vk::raii::Instance instance{nullptr};
+    vk::raii::DebugUtilsMessengerEXT debug_messenger{nullptr};
+    vk::raii::PhysicalDevice physical_device{nullptr};
+    vk::raii::Device device{nullptr};
+
+    // Flags
+    bool enable_validation_layers = false;
+    bool has_robustness2 = false;
+    bool capture_next_frame = false;
+
+    // RenderDoc API
+    RENDERDOC_API_1_4_1* renderdoc_api = nullptr;
+};
+----
+
+=== 专业 Vulkan 开发的最佳实践
+
+基于本章涵盖的内容，下面是专业 Vulkan 开发的一些最佳实践：
+
+1. *自动化你的工作流*：用 CI/CD 管线自动完成应用的构建、测试与打包。
+
+2. *尽早且频繁地调试*：在整个开发过程中都用验证层和调试工具，而不是等问题出现才用。
+
+3. *给对象命名*：用 VK_KHR_debug_utils 为 Vulkan 对象起有意义的名字，让调试轻松得多。
+
+4. *为崩溃做好准备*：从项目一开始就实现健壮的崩溃处理与报告机制。
+
+5. *权衡健壮性*：根据应用的需求，评估使用健壮性扩展的取舍。
+
+6. *跨平台测试*：Vulkan 应用在不同硬件和驱动上的行为可能不同，所以要充分测试。
+
+7. *记录你的需求*：清楚记录应用需要哪些 Vulkan 扩展和特性。
+
+8. *保持更新*：Vulkan 生态在不断演进，所以要持续关注新的扩展和工具。
+
+=== 未来方向
+
+随着 Vulkan 不断演进，用于开发、调试和分发应用的新工具与新技术会不断涌现。值得关注的领域包括：
+
+* *更完善的调试工具*：RenderDoc 等工具持续为 Vulkan 调试增加新功能。
+* *光线追踪工具链*：随着光线追踪越来越普遍，可以期待出现更多用于调试和优化光线追踪管线的专用工具。
+* *机器学习集成*：用机器学习识别潜在问题或优化性能的工具。
+* *跨 API 开发*：帮助在多个图形 API（Vulkan、DirectX、Metal）之间管理开发的工具。
+
+=== 最后的思考
+
+开发专业的 Vulkan 应用，光懂 API 是不够的——还需要一套覆盖整个开发生命周期的完整工具生态。通过实践本章介绍的工具与技术，你就能从容地开发、调试和分发高质量的 Vulkan 应用。
+
+请记住，工具链是一项会在整个开发过程中持续带来回报的投资。现在花时间搭好 CI/CD 管线、调试工具和崩溃处理机制，日后就能省下不计其数的排错与手工劳动。
+
+=== 代码示例
+
+本章的完整代码可以在以下文件中找到：
+
+* `simple_engine/32_cicd_setup.cpp`：Vulkan 项目 CI/CD 的实现
+* `simple_engine/33_debug_utils.cpp`：使用 VK_KHR_debug_utils 与 RenderDoc 调试的实现
+* `simple_engine/34_crash_handling.cpp`：崩溃处理与小转储的实现
+* `simple_engine/35_robustness_extensions.cpp`：健壮性 Vulkan 扩展的实现
+
+link:{attachmentsdir}/simple_engine/32_cicd_setup.cpp[CI/CD 搭建 C{pp} 代码]
+link:{attachmentsdir}/simple_engine/33_debug_utils.cpp[调试工具 C{pp} 代码]
+link:{attachmentsdir}/simple_engine/34_crash_handling.cpp[崩溃处理 C{pp} 代码]
+link:{attachmentsdir}/simple_engine/35_robustness_extensions.cpp[健壮性扩展 C{pp} 代码]
+
+xref:Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc[上一篇：工具链：打包与分发] | xref:Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc[下一篇：移动端开发：简介]

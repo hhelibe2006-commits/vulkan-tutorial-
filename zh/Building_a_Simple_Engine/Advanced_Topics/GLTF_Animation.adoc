@@ -1,0 +1,270 @@
+= glTF 动画与变换合成
+
+动画为 3D 场景带来生气——旋转的吊扇、转动的齿轮、行走的角色。本页解释这个引擎如何从 glTF 文件加载并播放动画，重点放在*变换合成*上（正是它让对象在原地动画，而不是「飘走」）。
+
+== 什么是 glTF 动画？
+
+glTF（GL Transmission Format）是一种 3D 资产标准，包含对骨骼动画与基于节点的动画的支持。glTF 中的动画由以下部分组成：
+
+* **通道**：定义要动画哪个节点属性（平移、旋转或缩放）
+* **采样器**：提供关键帧数据与插值方法（阶跃、线性或三次样条）
+* **时间线**：时间值映射到输出值，以实现平滑播放
+
+当你从 Blender、Maya 或其他 3D 工具导出带动画的模型时，动画数据记录的是节点*相对于其初始变换*随时间如何运动。这一点至关重要：动画描述的是*增量*（变化），而不是绝对的世界坐标位置。
+
+== 理解变换合成
+
+变换合成是 3D 引擎中动画运行方式的根基。理解这个概念对实现任何动画系统都至关重要。
+
+**核心原理**：GLTF 中的动画数据描述的是*变化*（增量），而不是绝对位置。当美术在 Blender 中为旋转的吊扇制作动画时，他们定义的是它随时间旋转多少，而不是它在世界空间中的位置。
+
+考虑一台位于位置 (10, 5, 8) 的吊扇，带有一段让它旋转的动画。动画关键帧可能指定：
+
+* 平移：(0, 0, 0)——没有移动
+* 旋转：绕 Y 轴 0° → 360°——旋转
+* 缩放：(1, 1, 1)——没有缩放
+
+为了正确显示它，我们必须把动画增量与对象的基准变换**合成**：
+
+* **基准变换**：对象来自场景层级的初始位置/旋转/缩放
+* **动画变换**：来自关键帧的随时间变化的增量
+* **最终变换**：由基准与动画合成而成
+
+合成规则是：
+
+* 平移：`final = base + animDelta`（加法）
+* 旋转：`final = base * animDelta`（四元数乘法）
+* 缩放：`final = base * animDelta`（逐分量乘法）
+
+有了正确的合成，我们的吊扇会停留在 (10, 5, 8) 并原地旋转。
+
+== 在我们的引擎中如何工作
+
+我们的动画系统有三个关键组成部分：
+
+=== 1. 加载：提取基准变换与动画数据
+
+加载 glTF 文件时（`model_loader.cpp`），我们提取：
+
+* **节点变换**：每个 GLTF 节点的局部变换矩阵存储在 `animatedNodeTransforms` 映射中
+* **动画数据**：通道、采样器与关键帧存储在 `Animation` 对象中
+* **节点到网格的映射**：把节点索引连接到网格索引，以匹配实体
+
+[source,cpp]
+----
+// In model_loader.cpp (conceptual)
+std::unordered_map<int, glm::mat4> animatedNodeTransforms;  // nodeIndex -> base transform
+std::unordered_map<int, int> animatedNodeMeshes;            // nodeIndex -> meshIndex
+std::vector<Animation> animations;                          // animation clips
+----
+
+=== 2. 场景设置：创建实体并应用基准变换
+
+在 `scene_loading.cpp` 中，对每个动画节点：
+
+* **创建独立实体**：如果多个节点共享同一网格（比如两台吊扇），为每个节点创建独立实体，使它们能各自独立动画
+* **应用基准变换**：把节点的变换矩阵分解为位置/旋转/缩放，并设置实体的 TransformComponent
+* **构建 nodeToEntity 映射**：把 GLTF 节点索引连接到实体指针，以定位动画目标
+
+[source,cpp]
+----
+// For each animated node
+glm::mat4 nodeTransform = animatedNodeTransforms[nodeIndex];
+glm::vec3 position, scale;
+glm::quat rotation;
+glm::decompose(nodeTransform, scale, rotation, position, ...);
+
+transform->SetPosition(position);      // Base position (e.g., ceiling)
+transform->SetRotation(eulerAngles(rotation));
+transform->SetScale(scale);
+----
+
+**关键洞察**：共享几何体的动画节点必须有独立的实体。GPU 实例化（一个实体、多个变换）无法实现逐个动画控制。
+
+== 在代码中看哪里
+
+如果你想端到端地跟踪数据：
+
+* glTF 解析（节点、动画、采样器）：
+** `model_loader.cpp`
+** `model_loader.h`
+* 场景/实体创建与节点→实体映射：
+** `scene_loading.cpp`
+* 动画播放与变换合成：
+** `animation_component.cpp`
+** `animation_component.h`
+* 变换存储与合成辅助函数：
+** `transform_component.cpp`
+** `transform_component.h`
+
+== 后续工作想法
+
+如果你想扩展动画系统：
+
+* 支持动画混合（片段之间的交叉淡化）。
+* 添加骨骼蒙皮（顶点混合），如果你需要角色动画的话。
+* 添加一个动画调试 UI，显示每个实体当前活动的片段/时间（仅开发构建）。
+* 添加「烘焙变换」选项（对只需要单个动画姿态的静态网格很有用）。
+
+== 接下来读什么
+
+* `Synchronization_and_Streaming.adoc`（在大场景中，动画与流式加载会相互影响）
+* `Rendering_Pipeline_Overview.adoc`
+* `Push_Constants_Per_Object.adoc`
+
+=== 3. 播放：把动画与基准变换合成
+
+在 `AnimationComponent::Update()` 中：
+
+1. **在首帧捕获基准变换**：动画开始时存储每个实体的初始位置/旋转/缩放
+2. **采样关键帧**：在当前时间插值动画数据
+3. **合成变换**：把动画增量与基准变换相加/相乘
+4. **应用到实体**：用合成结果更新 TransformComponent
+
+[source,cpp]
+----
+// Animation update logic
+glm::vec3 basePos = basePositions[nodeIndex];           // e.g., (10, 5, 8)
+glm::vec3 animTranslation = SampleVec3(sampler, time);  // e.g., (0, 0, 0)
+transform->SetPosition(basePos + animTranslation);      // Result: (10, 5, 8)
+
+glm::quat baseRot = baseRotations[nodeIndex];           // e.g., identity quaternion
+glm::quat animRotation = SampleQuat(sampler, time);     // e.g., 45° around Y
+glm::quat finalRotation = baseRot * animRotation;       // Compose using quaternion multiplication
+transform->SetRotation(glm::eulerAngles(finalRotation)); // Convert to Euler for transform
+----
+
+== 变换合成规则
+
+不同的变换属性合成方式不同：
+
+**平移**：相加
+
+[source]
+----
+finalPosition = basePosition + animationTranslation
+----
+
+对于 3D 空间中的位置，加法天然适用。
+
+**旋转**：四元数乘法
+
+[source]
+----
+finalRotation = baseRotation * animationRotation  // quaternion math
+finalEuler = eulerAngles(finalRotation)            // convert for display
+----
+
+旋转必须用四元数乘法合成，以避免万向节锁并正确保持旋转顺序。合成过程中始终在四元数空间中工作，只在设置变换时才转换为欧拉角。
+
+**缩放**：相乘
+
+[source]
+----
+finalScale = baseScale * animationScale  // component-wise
+----
+
+动画缩放为 (1, 1, 1) 表示「无变化」，(2, 1, 1) 表示「X 轴加倍」。
+
+== 处理多个实例
+
+当两个 GLTF 节点引用同一网格（例如两台一模一样的吊扇）时，你需要独立的实体来实现彼此独立的动画。
+
+**为什么要独立实体？**
+
+* GPU 实例化是为大量相同、不动的对象（树、岩石、草）设计的
+* 实例变换每帧只设置一次；你无法单独驱动每个实例的动画
+* 动画需要每帧更新的逐实体 TransformComponent
+
+**实现方式**：创建独立实体
+
+[source,cpp]
+----
+// First node reuses existing entity
+nodeEntity = geometryEntities[meshIndex];
+
+// Second node creates new entity with cloned geometry
+nodeEntity = engine->CreateEntity("AnimNode_5");
+mesh->SetVertices(sourceMesh->vertices);  // Clone mesh data
+mesh->SetIndices(sourceMesh->indices);
+----
+
+每个实体都有自己的 TransformComponent，可以独立动画。
+
+== 关键帧插值
+
+GLTF 支持三种插值模式：
+
+**阶跃**：立即跳到下一个关键帧（无平滑）
+
+[source,cpp]
+----
+return keyframe0.value;  // Robotic, retro feel
+----
+
+**线性**：关键帧之间平滑的线性混合
+
+[source,cpp]
+----
+return glm::mix(v0, v1, t);  // Most common, looks natural
+----
+
+**三次样条**：使用切线生成平滑曲线
+
+[source,cpp]
+----
+// Hermite spline using in-tangent, value, out-tangent
+// For production: implement full cubic interpolation for smoother motion
+----
+
+对于旋转，使用球面线性插值（slerp）而不是 mix：
+
+[source,cpp]
+----
+return glm::slerp(q0, q1, t);  // Avoids gimbal lock
+----
+
+== 性能考虑
+
+**动画更新开销**：O(channels × entities)
+
+* 对于 10 个各有 3 个通道（平移、旋转、缩放）的动画对象：每帧约 30 次变换更新
+* 这很便宜；变换数学很快
+
+**内存**：每个动画实体需要：
+
+* 克隆的网格数据（顶点、索引）：吊扇约 100KB
+* 变换存储：每个节点 3×vec3 = 36 字节
+
+**优化提示**：如果你有数百个相同的动画对象（例如草叶），考虑用计算着色器在 GPU 侧做动画，而不是逐实体做 CPU 更新。
+
+== 替代方案与扩展
+
+**骨骼动画（蒙皮）**::
+
+* 用于带骨骼/关节的角色
+* 需要顶点蒙皮（每个顶点混合多个骨骼变换）
+* 比节点动画复杂，但能实现真实的形变
+
+**变形目标（混合形状）**::
+
+* 用于面部动画或平滑的形状过渡
+* GLTF 为变形目标支持权重通道
+* 超越节点变换，直接对网格顶点进行形变
+
+**程序化动画**::
+
+* 在运行时生成动画数据（例如风吹摇曳、基于噪声的运动）
+* 更灵活，但需要自定义创作
+
+== 接下来读什么
+
+如果你想深入了解：
+
+* **变换组件**：参见 `transform_component.h`，了解我们如何存储和计算模型矩阵
+* **GLTF 规范**：link:https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#animations[关于动画的 GLTF 规范]
+* **同步**：动画更新如何与渲染帧时序相互作用
+
+关键要点：**始终把动画变换与基准变换合成**。正是这一基本原则让对象在其正确的世界位置上动画，而动画数据本身描述的是相对变化。理解这种合成对任何动画系统都至关重要。
+
+现在你已经有了在自己的项目中实现 GLTF 动画的基础。祝你动画愉快！🚁

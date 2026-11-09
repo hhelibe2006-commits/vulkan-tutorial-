@@ -1,0 +1,232 @@
+:pp: {plus}{plus}
+
+= 从硬编码到灵活实现
+
+看看上一章的硬编码实现。三个全连接层，几乎一模一样的代码重复了三次。改描述符、更新推送常量、派发。屏障。重复。
+
+这能跑，但很脆弱。想加第四层？再多复制粘贴一些代码。想换一种架构？全部重写。想支持卷积层？自己想办法找出该把它们插在硬编码序列的哪个位置。
+
+代码在冲我们大喊：这里有模式。我们把它提取出来。
+
+== 哪些相同，哪些不同？
+
+每一次层的执行都遵循这样的结构：
+
+1. 绑定管线（计算着色器）
+2. 绑定描述符集（输入/输出缓冲区、权重）
+3. 设置推送常量（尺寸、参数）
+4. 派发（工作组数量）
+5. 为下一层插入屏障
+
+结构完全相同。变化的到底是什么？
+
+**管线**：全连接层用 dense.spv 着色器，卷积会用 conv2d.spv，ReLU 用 relu.spv。
+
+**描述符**：输入/输出用的缓冲区不同，权重张量也不同。但绑定模式是一样的——输入、权重、输出。
+
+**推送常量**：尺寸会变（128 个输出还是 64 个输出），但机制完全相同。
+
+**派发尺寸**：由输出尺寸算出，但公式是可预期的。
+
+如果我们能把这些差异参数化，就可以只写一次执行代码，然后在每一层复用。
+
+== 层的抽象
+
+如果每一层都是一个知道自己如何执行的对象呢？类似这样：
+
+[source,cpp]
+----
+class Layer {
+public:
+    virtual void execute(
+        vk::raii::CommandBuffer& cmdBuffer,
+        const vk::raii::Buffer& inputBuffer,
+        const vk::raii::Buffer& outputBuffer
+    ) = 0;
+};
+----
+
+那么我们的前向传播就变成了：
+
+[source,cpp]
+----
+for (auto& layer : layers) {
+    layer->execute(cmdBuffer, currentBuffer, nextBuffer);
+    insertBarrier(cmdBuffer);
+    std::swap(currentBuffer, nextBuffer);
+}
+----
+
+干净多了。每一层都封装了自己的特定行为——用哪个着色器、如何计算派发尺寸、要设置哪些参数。执行循环不必关心这些细节。
+
+== 一个具体例子：DenseLayer
+
+我们用一个全连接层把这个想法具体化：
+
+[source,cpp]
+----
+class DenseLayer : public Layer {
+public:
+    DenseLayer(
+        vk::raii::Device& device,
+        uint32_t inputSize,
+        uint32_t outputSize,
+        const std::vector<float>& weights,
+        const std::vector<float>& bias
+    ) : inputSize_(inputSize), outputSize_(outputSize) {
+        // Create weight and bias buffers
+        createWeightBuffer(device, weights);
+        createBiasBuffer(device, bias);
+
+        // Load shader and create pipeline
+        createPipeline(device, "shaders/dense.spv");
+    }
+
+    void execute(
+        vk::raii::CommandBuffer& cmdBuffer,
+        const vk::raii::Buffer& input,
+        const vk::raii::Buffer& output
+    ) override {
+        // Bind our pipeline
+        cmdBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
+
+        // Bind descriptors (input, weights, bias, output)
+        cmdBuffer.bindDescriptorSets(/*...*/);
+
+        // Push constants
+        struct { uint32_t inSize, outSize; } params = {inputSize_, outputSize_};
+        cmdBuffer.pushConstants(/*...*/, params);
+
+        // Dispatch
+        uint32_t workgroups = (outputSize_ + 63) / 64;
+        cmdBuffer.dispatch(workgroups, 1, 1);
+    }
+
+private:
+    uint32_t inputSize_, outputSize_;
+    vk::raii::Buffer weightBuffer_;
+    vk::raii::Buffer biasBuffer_;
+    vk::raii::Pipeline pipeline_;
+    // ... memory, descriptors, etc.
+};
+----
+
+现在创建我们的三层网络就简单了：
+
+[source,cpp]
+----
+std::vector<std::unique_ptr<Layer>> layers;
+
+layers.push_back(std::make_unique<DenseLayer>(
+    device, 784, 128, weights.fc1_weights, weights.fc1_bias
+));
+
+layers.push_back(std::make_unique<DenseLayer>(
+    device, 128, 64, weights.fc2_weights, weights.fc2_bias
+));
+
+layers.push_back(std::make_unique<DenseLayer>(
+    device, 64, 10, weights.fc3_weights, weights.fc3_bias
+));
+----
+
+好多了。想要四层网络？再加一个 push_back。想在两个全连接层之间插入一个 ReLU 层？创建一个 ReLULayer 类并插进去。
+
+== 缓冲区管理
+
+注意到 execute 签名里的问题了吗？我们传入输入和输出缓冲区，但层与层之间的中间结果怎么办？
+
+第 1 层输出到某个缓冲区。第 2 层需要它作为输入。第 3 层需要第 2 层的输出。我们需要一种管理这些中间张量的方式。
+
+一种做法：预先分配好缓冲区并显式传进去。但遇到分支架构（跳跃连接、多输出等）时，这会变得很乱。
+
+更好的做法：让每一层拥有自己的输出缓冲区。构造时，各层分配自己的输出缓冲区。执行时，每一层写入自己的输出缓冲区，而下一层从那里读取。
+
+这意味着层需要知道彼此的缓冲区。图表示就是为此而生的——但我们还没走到那一步。眼下我们先保持简单：顺序执行，显式传缓冲区。
+
+== 卷积呢？
+
+全连接层很直接。卷积更复杂——它需要卷积核尺寸、步长、填充这些参数。它怎么套进我们的抽象？
+
+同样的模式，更多参数：
+
+[source,cpp]
+----
+class Conv2DLayer : public Layer {
+public:
+    Conv2DLayer(
+        vk::raii::Device& device,
+        uint32_t inputChannels,
+        uint32_t outputChannels,
+        uint32_t kernelHeight,
+        uint32_t kernelWidth,
+        uint32_t stride,
+        uint32_t padding,
+        const std::vector<float>& weights,
+        const std::vector<float>& bias
+    ) { /* ... */ }
+
+    void execute(/*...*/) override {
+        // Bind conv2d.spv shader
+        // Push constants include kernel size, stride, padding
+        // Dispatch with 2D workgroups for spatial dimensions
+    }
+};
+----
+
+不同的参数、不同的着色器、不同的派发模式。但接口是一样的——execute() 做好自己的事，调用者不需要知道细节。
+
+== 激活函数
+
+ReLU 这类激活函数就更简单了——它们是逐元素运算，没有可学习的参数：
+
+[source,cpp]
+----
+class ReLULayer : public Layer {
+public:
+    ReLULayer(vk::raii::Device& device, uint32_t elementCount)
+        : elementCount_(elementCount) {
+        createPipeline(device, "shaders/relu.spv");
+    }
+
+    void execute(/*...*/) override {
+        // Bind relu.spv
+        // Push element count
+        // Dispatch ((elementCount + 255) / 256) workgroups
+    }
+};
+----
+
+没有权重，没有偏置，只要一个元素数量。着色器也微不足道——`output[i] = max(0, input[i])`。
+
+== 模式浮现
+
+每一种层类型都实现同一个接口，但内部各不相同：
+
+- **DenseLayer**：矩阵乘法，需要权重矩阵和偏置向量
+- **Conv2DLayer**：卷积，需要带空间参数的卷积核
+- **ReLULayer**：逐元素取最大值，无参数
+- **MaxPoolLayer**：空间池化，需要池化尺寸和步长
+- **BatchNormLayer**：归一化，需要均值/方差/缩放/偏移
+
+从调用者的角度看，它们的执行方式完全一样。抽象把复杂度藏了起来。
+
+== 我们得到了什么
+
+这个抽象给我们带来：
+
+**灵活性**：添加新的层类型很容易——实现接口，搞定。
+
+**可复用性**：执行循环对任意层序列都适用。
+
+**可测试性**：可以单独测试每一种层类型。
+
+**清晰性**：前向传播现在一眼就能看懂——「按顺序执行每一层」，而不是好几页几乎一模一样的代码。
+
+但我们只解决了一部分问题。我们仍然要手动实例化各层、管理缓冲区连接、自己知道执行顺序。对一个三层网络，这没问题。但对带有跳跃连接的 50 层 ResNet-50 呢？我们需要更多结构。
+
+这就是图表示的用武之地。我们不再用扁平的层列表，而是把网络表示成有向无环图，节点是运算，边是数据依赖。
+
+下一章：构建这种图表示。
+
+xref:ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc[上一篇：硬编码前向传播] | xref:ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc[下一篇：模型表示]

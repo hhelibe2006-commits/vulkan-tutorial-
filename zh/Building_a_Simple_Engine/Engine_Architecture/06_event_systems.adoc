@@ -1,0 +1,568 @@
+:pp: {plus}{plus}
+
+= 引擎架构：事件系统
+
+== 事件系统
+
+事件系统为引擎的不同部分提供了一种灵活的通信方式，无需制造紧密耦合。本节将探讨如何为你的渲染引擎设计与实现一套有效的事件系统。
+
+=== 为什么需要事件系统
+
+即便在我们正在构建的这套简易引擎中，各子系统也需要高效地相互通信。随着引擎不断成长，这些通信需求会变得越来越重要：
+
+1. *物理*需要在发生碰撞时通知*音频*。
+2. *输入*需要在按键被按下时通知*游戏逻辑*。
+3. *游戏逻辑*需要在对象发生变化时通知*渲染*。
+4. *资源管理*需要在资产加载完成时通知*渲染*。
+
+如果没有事件系统，这些交互就需要在子系统之间建立直接引用，从而造成紧密耦合，让代码更难维护和扩展。
+
+=== 事件系统设计原则
+
+设计事件系统时，请考虑以下原则：
+
+1. *解耦* —— 尽量减少事件生产者与消费者之间的依赖。
+2. *类型安全* —— 利用类型系统防止出错。
+3. *性能* —— 高效地派发事件，尤其是高频事件。
+4. *灵活性* —— 支持不同的事件投递模式（立即、排队等）。
+5. *可调试性* —— 让事件流的调试变得容易。
+
+=== 基本事件系统实现
+
+下面来实现一个基本的事件系统：
+
+==== 基类事件类型与便捷宏
+
+我们先从一个最小的事件基类接口开始，再加一个辅助宏，用来定义强类型事件，而无需样板代码。
+
+[source,cpp]
+----
+// Base event class
+class Event {
+public:
+    virtual ~Event() = default;
+
+    // Get the type of the event
+    virtual const char* GetType() const = 0;
+
+    // Clone the event (for queued events)
+    virtual Event* Clone() const = 0;
+};
+
+// Macro to help define event types
+#define DEFINE_EVENT_TYPE(type) \
+    static const char* GetStaticType() { return #type; } \
+    virtual const char* GetType() const override { return GetStaticType(); } \
+    virtual Event* Clone() const override { return new type(*this); }
+----
+
+这样我们就能以通用方式识别和复制事件，同时让具体事件类保持精简。
+
+==== 具体事件类型
+
+让事件的载荷保持聚焦而轻量；它们应当表示事实，而不是行为。
+
+[source,cpp]
+----
+// Example event types
+class WindowResizeEvent : public Event {
+private:
+    int width;
+    int height;
+
+public:
+    WindowResizeEvent(int w, int h) : width(w), height(h) {}
+
+    int GetWidth() const { return width; }
+    int GetHeight() const { return height; }
+
+    DEFINE_EVENT_TYPE(WindowResizeEvent)
+};
+
+class KeyPressEvent : public Event {
+private:
+    int keyCode;
+    bool repeat;
+
+public:
+    KeyPressEvent(int key, bool isRepeat) : keyCode(key), repeat(isRepeat) {}
+
+    int GetKeyCode() const { return keyCode; }
+    bool IsRepeat() const { return repeat; }
+
+    DEFINE_EVENT_TYPE(KeyPressEvent)
+};
+----
+
+==== 监听器与类型安全派发器
+
+监听器负责接收事件；派发器则在类型匹配时，把通用的 `Event` 路由到带类型的处理函数。
+
+[source,cpp]
+----
+// Event listener interface
+class EventListener {
+public:
+    virtual ~EventListener() = default;
+    virtual void OnEvent(const Event& event) = 0;
+};
+
+// Event dispatcher
+class EventDispatcher {
+private:
+    const Event& event;
+
+public:
+    explicit EventDispatcher(const Event& e) : event(e) {}
+
+    // Dispatch event to handler if types match
+    template<typename T, typename F>
+    bool Dispatch(const F& handler) {
+        if (event.GetType() == T::GetStaticType()) {
+            handler(static_cast<const T&>(event));
+            return true;
+        }
+        return false;
+    }
+};
+----
+
+==== 事件总线（立即模式与排队模式）
+
+事件总线既可以立即投递（低延迟），也可以排队稍后处理（跨帧的确定性顺序）。
+
+[source,cpp]
+----
+// Event bus
+class EventBus {
+private:
+    std::vector<EventListener*> listeners;
+    std::queue<std::unique_ptr<Event>> eventQueue;
+    std::mutex queueMutex;
+    bool immediateMode = true;
+
+public:
+    void SetImmediateMode(bool immediate) {
+        immediateMode = immediate;
+    }
+
+    void AddListener(EventListener* listener) {
+        listeners.push_back(listener);
+    }
+
+    void RemoveListener(EventListener* listener) {
+        auto it = std::find(listeners.begin(), listeners.end(), listener);
+        if (it != listeners.end()) {
+            listeners.erase(it);
+        }
+    }
+
+    void PublishEvent(const Event& event) {
+        if (immediateMode) {
+            // Dispatch event immediately
+            for (auto listener : listeners) {
+                listener->OnEvent(event);
+            }
+        } else {
+            // Queue event for later processing
+            std::lock_guard<std::mutex> lock(queueMutex);
+            eventQueue.push(std::unique_ptr<Event>(event.Clone()));
+        }
+    }
+
+    void ProcessEvents() {
+        if (immediateMode) return;
+
+        std::queue<std::unique_ptr<Event>> currentEvents;
+
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            std::swap(currentEvents, eventQueue);
+        }
+
+        while (!currentEvents.empty()) {
+            auto& event = *currentEvents.front();
+
+            for (auto listener : listeners) {
+                listener->OnEvent(event);
+            }
+
+            currentEvents.pop();
+        }
+    }
+};
+----
+
+=== 使用事件系统
+
+下面展示你可能如何在应用中使用事件系统：
+
+[source,cpp]
+----
+// Component that listens for events
+class CameraController : public Component, public EventListener {
+private:
+    CameraComponent* camera;
+    float moveSpeed = 5.0f;
+    float rotateSpeed = 0.1f;
+
+    bool moveForward = false;
+    bool moveBackward = false;
+    bool moveLeft = false;
+    bool moveRight = false;
+
+public:
+    void Initialize() override {
+        camera = GetOwner()->GetComponent<CameraComponent>();
+
+        // Register as event listener
+        GetEventBus().AddListener(this);
+    }
+
+    void Update(float deltaTime) override {
+        if (!camera) return;
+
+        // Handle movement
+        glm::vec3 movement(0.0f);
+
+        if (moveForward) movement.z -= 1.0f;
+        if (moveBackward) movement.z += 1.0f;
+        if (moveLeft) movement.x -= 1.0f;
+        if (moveRight) movement.x += 1.0f;
+
+        if (glm::length(movement) > 0.0f) {
+            movement = glm::normalize(movement) * moveSpeed * deltaTime;
+
+            auto transform = GetOwner()->GetComponent<TransformComponent>();
+            if (transform) {
+                glm::vec3 position = transform->GetPosition();
+                position += movement;
+                transform->SetPosition(position);
+            }
+        }
+    }
+
+    void OnEvent(const Event& event) override {
+        EventDispatcher dispatcher(event);
+
+        // Handle key press events
+        dispatcher.Dispatch<KeyPressEvent>([this](const KeyPressEvent& e) {
+            switch (e.GetKeyCode()) {
+                case KEY_W: moveForward = true; break;
+                case KEY_S: moveBackward = true; break;
+                case KEY_A: moveLeft = true; break;
+                case KEY_D: moveRight = true; break;
+            }
+            return false;
+        });
+
+        // Handle key release events
+        dispatcher.Dispatch<KeyReleaseEvent>([this](const KeyReleaseEvent& e) {
+            switch (e.GetKeyCode()) {
+                case KEY_W: moveForward = false; break;
+                case KEY_S: moveBackward = false; break;
+                case KEY_A: moveLeft = false; break;
+                case KEY_D: moveRight = false; break;
+            }
+            return false;
+        });
+
+        // Handle window resize events
+        dispatcher.Dispatch<WindowResizeEvent>([this](const WindowResizeEvent& e) {
+            if (camera) {
+                float aspectRatio = static_cast<float>(e.GetWidth()) / static_cast<float>(e.GetHeight());
+                camera->SetAspectRatio(aspectRatio);
+            }
+            return false;
+        });
+    }
+
+    ~CameraController() override {
+        // Unregister as event listener
+        GetEventBus().RemoveListener(this);
+    }
+
+private:
+    EventBus& GetEventBus() {
+        // Get event bus from somewhere (e.g., singleton or parameter)
+        static EventBus eventBus;
+        return eventBus;
+    }
+};
+
+// Input system that generates events
+class InputSystem {
+private:
+    EventBus& eventBus;
+
+    // Key states
+    std::unordered_map<int, bool> keyStates;
+
+public:
+    explicit InputSystem(EventBus& bus) : eventBus(bus) {}
+
+    void Update() {
+        // Poll input events from the platform
+        // ...
+
+        // Example: Process a key press
+        ProcessKeyPress(KEY_W, false);
+    }
+
+    void ProcessKeyPress(int keyCode, bool repeat) {
+        bool& keyState = keyStates[keyCode];
+
+        if (!keyState || repeat) {
+            // Key was not pressed before or this is a repeat
+            KeyPressEvent event(keyCode, repeat);
+            eventBus.PublishEvent(event);
+        }
+
+        keyState = true;
+    }
+
+    void ProcessKeyRelease(int keyCode) {
+        bool& keyState = keyStates[keyCode];
+
+        if (keyState) {
+            // Key was pressed before
+            KeyReleaseEvent event(keyCode);
+            eventBus.PublishEvent(event);
+        }
+
+        keyState = false;
+    }
+};
+----
+
+=== 事件系统的高级特性
+
+==== 事件类别
+
+事件可以被分类，让监听器能够过滤自己接收的事件类型：
+
+[source,cpp]
+----
+// Event categories
+enum class EventCategory {
+    None = 0,
+    Application = 1 << 0,
+    Input = 1 << 1,
+    Keyboard = 1 << 2,
+    Mouse = 1 << 3,
+    MouseButton = 1 << 4,
+    Window = 1 << 5
+};
+
+// Enhanced event base class
+class Event {
+public:
+    virtual ~Event() = default;
+
+    virtual const char* GetType() const = 0;
+    virtual Event* Clone() const = 0;
+
+    // Get the categories this event belongs to
+    virtual int GetCategoryFlags() const = 0;
+
+    // Check if event is in category
+    bool IsInCategory(EventCategory category) const {
+        return GetCategoryFlags() & static_cast<int>(category);
+    }
+};
+
+// Enhanced macro to define event types with categories
+#define DEFINE_EVENT_TYPE_CATEGORY(type, categoryFlags) \
+    static const char* GetStaticType() { return #type; } \
+    virtual const char* GetType() const override { return GetStaticType(); } \
+    virtual Event* Clone() const override { return new type(*this); } \
+    virtual int GetCategoryFlags() const override { return categoryFlags; }
+
+// Example event with categories
+class KeyPressEvent : public Event {
+private:
+    int keyCode;
+    bool repeat;
+
+public:
+    KeyPressEvent(int key, bool isRepeat) : keyCode(key), repeat(isRepeat) {}
+
+    int GetKeyCode() const { return keyCode; }
+    bool IsRepeat() const { return repeat; }
+
+    DEFINE_EVENT_TYPE_CATEGORY(KeyPressEvent,
+                              static_cast<int>(EventCategory::Input) |
+                              static_cast<int>(EventCategory::Keyboard))
+};
+----
+
+==== 事件过滤
+
+监听器可以基于类别过滤事件：
+
+[source,cpp]
+----
+// Enhanced event bus with filtering
+class EventBus {
+private:
+    struct ListenerInfo {
+        EventListener* listener;
+        int categoryFilter;
+    };
+
+    std::vector<ListenerInfo> listeners;
+    std::queue<std::unique_ptr<Event>> eventQueue;
+    std::mutex queueMutex;
+    bool immediateMode = true;
+
+public:
+    void AddListener(EventListener* listener, int categoryFilter = -1) {
+        listeners.push_back({listener, categoryFilter});
+    }
+
+    void RemoveListener(EventListener* listener) {
+        auto it = std::find_if(listeners.begin(), listeners.end(),
+                              [listener](const ListenerInfo& info) {
+                                  return info.listener == listener;
+                              });
+        if (it != listeners.end()) {
+            listeners.erase(it);
+        }
+    }
+
+    void PublishEvent(const Event& event) {
+        if (immediateMode) {
+            // Dispatch event immediately
+            for (const auto& info : listeners) {
+                if (info.categoryFilter == -1 || (event.GetCategoryFlags() & info.categoryFilter)) {
+                    info.listener->OnEvent(event);
+                }
+            }
+        } else {
+            // Queue event for later processing
+            std::lock_guard<std::mutex> lock(queueMutex);
+            eventQueue.push(std::unique_ptr<Event>(event.Clone()));
+        }
+    }
+
+    // Rest of the implementation...
+};
+----
+
+==== 事件优先级
+
+某些事件可能需要先于其他事件被处理：
+
+[source,cpp]
+----
+// Enhanced event bus with priorities
+class EventBus {
+private:
+    struct ListenerInfo {
+        EventListener* listener;
+        int categoryFilter;
+        int priority;
+    };
+
+    std::vector<ListenerInfo> listeners;
+    // Rest of the implementation...
+
+public:
+    void AddListener(EventListener* listener, int categoryFilter = -1, int priority = 0) {
+        listeners.push_back({listener, categoryFilter, priority});
+
+        // Sort listeners by priority (higher priority first)
+        std::sort(listeners.begin(), listeners.end(),
+                 [](const ListenerInfo& a, const ListenerInfo& b) {
+                     return a.priority > b.priority;
+                 });
+    }
+
+    // Rest of the implementation...
+};
+----
+
+==== 事件冒泡与捕获
+
+在 UI 这类层级系统中，事件可以通过两种方式在层级之间传播：
+
+* *事件冒泡* —— 事件从目标元素开始，沿着层级「向上冒泡」，经过各个父元素。例如，按钮上的点击事件先在按钮上触发，然后在其容器上触发，并继续向上直到根元素。
+
+* *事件捕获* —— 事件从根元素开始，沿层级向下传播到目标元素（与冒泡方向相反）。
+
+这种做法让父元素能够拦截并处理在子元素上触发的事件，同时也让子元素可以在需要时阻止传播。对于 UI 这类层级系统，这提供了一种在合适层级处理事件的灵活方式：
+
+[source,cpp]
+----
+// UI event with bubbling
+class UIEvent : public Event {
+private:
+    UIElement* target;
+    bool bubbles;
+    bool cancelBubble = false;
+
+public:
+    UIEvent(UIElement* targetElement, bool bubbling = true)
+        : target(targetElement), bubbles(bubbling) {}
+
+    UIElement* GetTarget() const { return target; }
+    bool Bubbles() const { return bubbles; }
+
+    void StopPropagation() {
+        cancelBubble = true;
+    }
+
+    bool IsPropagationStopped() const {
+        return cancelBubble;
+    }
+
+    DEFINE_EVENT_TYPE_CATEGORY(UIEvent, static_cast<int>(EventCategory::UI))
+};
+
+// UI system with event bubbling
+class UISystem {
+public:
+    void DispatchEvent(UIEvent& event) {
+        UIElement* target = event.GetTarget();
+
+        // Capturing phase (top-down)
+        std::vector<UIElement*> path;
+        UIElement* current = target;
+
+        while (current) {
+            path.push_back(current);
+            current = current->GetParent();
+        }
+
+        // Dispatch to each element in the path (bottom-up)
+        for (auto it = path.rbegin(); it != path.rend(); ++it) {
+            (*it)->OnEvent(event);
+
+            if (event.IsPropagationStopped()) {
+                break;
+            }
+        }
+    }
+};
+----
+
+=== 结语
+
+一套设计良好的事件系统，对于构建灵活而可维护的引擎架构至关重要。通过实现本节介绍的技术，你就能建立一个具备以下特点的系统：
+
+1. 解耦各子系统，让代码更模块化、更易维护
+2. 提供类型安全的事件处理
+3. 支持不同的事件投递模式
+4. 可以通过过滤、优先级和冒泡等高级特性加以扩展
+
+至此，我们对引擎架构的探讨就结束了。本章涵盖了：
+
+1. 用于组织引擎的架构模式
+2. 用于构建灵活游戏对象的组件系统
+3. 用于高效处理资产的资源管理
+4. 用于灵活高效渲染的渲染管线设计
+5. 用于子系统间解耦通信的事件系统
+
+有了这些基础，你就有能力构建一个健壮而灵活的渲染引擎，并可将其扩展以支持各种特性与技术。
+
+xref:Building_a_Simple_Engine/Engine_Architecture/05_rendering_pipeline.adoc[上一篇：引擎架构：渲染管线] | xref:Building_a_Simple_Engine/Engine_Architecture/conclusion.adoc[下一篇：引擎架构：结语]

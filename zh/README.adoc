@@ -1,0 +1,117 @@
+// Copyright 2023-2026 The Khronos Group, Inc.
+// SPDX-License-Identifier: CC-BY-4.0
+
+= Khronos Vulkan^®^ 教程
+
+ifndef::site-gen-antora[]
+[NOTE]
+====
+本教程使用 Antora 站点生成器，在 git 仓库中查看时文档链接可能无法正常工作。请改用 link:https://docs.vulkan.org/tutorial/latest/00_Introduction.html[此链接] 查看教程。
+====
+endif::[]
+
+== 署名
+
+Khronos Vulkan^®^ 教程基于 Alexander Overvoorde 编写的 "link:https://vulkan-tutorial.com/[Vulkan Tutorial]"，该教程以 link:https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0] 许可发布。
+
+以下教程由 Holochip Corporation 编写，并以 link:https://www.apache.org/licenses/LICENSE-2.0[Apache-2.0] 许可发布：
+
+* xref:ML_Inference/introduction.adoc[使用 Vulkan 进行机器学习推理：简介]
+* xref:OpenXR_Vulkan_Spatial_Computing/introduction.adoc[OpenXR 与 Vulkan 1.3 空间计算：简介]
+* xref:AI_Assisted_Vulkan/introduction.adoc[AI 辅助的 Vulkan 开发]
+* xref:Advanced_glTF/introduction.adoc[高级 glTF：高性能角色管线]
+* xref:Advanced_Vulkan_Compute/introduction.adoc[高级 Vulkan 计算：并行之力]
+* xref:Building_a_Simple_Engine/introduction.adoc[构建简易引擎：简介]
+* xref:Synchronization/introduction.adoc[Synchronization 2：精通 GPU 与 CPU 的握手]
+* xref:Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc[不透明度微图：面向真实世界的更智能阴影]
+
+以下课程由 Arm Limited 编写。
+
+* xref:courses/18_Ray_tracing/00_Overview.adoc[SIGGRAPH 2025：基于动态渲染的 Vulkan 光线追踪实战]
+* xref:courses/siggraph2026_vk_tutorial/00_Overview.adoc[SIGGRAPH 2026：如何在 2026 年编写 Vulkan 应用]
+
+== 关于
+
+本仓库托管 link:https://docs.vulkan.org/tutorial/latest[Khronos Vulkan 教程] 的内容。本教程是 link:https://github.com/KhronosGroup/Vulkan-Site[Vulkan Documentation Project] 的一部分。
+
+== 差异
+
+与最初的教程相比，本版本教程讲授的是最新的概念：
+
+* 以 Vulkan 1.4 为基线
+* 用动态渲染取代渲染通道
+* 时间线信号量
+* 以 link:https://shader-slang.org/[Slang] 作为主要着色语言
+* 现代 C++（20）
+* link:https://github.com/KhronosGroup/Vulkan-Hpp[Vulkan-Hpp] 配合 link:https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization[RAII]
+
+它还包含 Vulkan 用法澄清、改进的同步机制以及全新内容。
+
+== 项目结构
+
+仓库组织为若干个重要目录：
+
+* `en/` —— 包含英文版教程内容，按章节组织
+** 主教程涵盖 Vulkan 的基础概念（第 00-17 章）
+** "Building a Simple Engine" 部分在这些基础之上构建一个结构化的渲染引擎
+* `attachments/` —— 包含教程中使用的代码示例、着色器文件和资源
+* `images/` —— 包含教程中使用的插图、示意图和截图
+* `scripts/` —— 包含实用脚本，包括依赖安装脚本
+* `antora/` —— 包含 Antora 文档系统的配置文件
+
+== 安装依赖
+
+本项目提供脚本，帮助你安装所需的依赖：
+
+=== Linux
+运行以下命令在 Linux 上安装依赖：
+[source,bash]
+----
+./scripts/install_dependencies_linux.sh
+----
+
+该脚本会检测你的包管理器（apt、dnf、pacman），并安装所需依赖，包括：
+* 构建基础工具（gcc、cmake、ninja-build）
+* GLFW、GLM、tinyobjloader、stb
+* X Window System 相关依赖
+
+它还提供了安装 Vulkan SDK 的说明。
+
+=== Windows
+运行以下命令在 Windows 上安装依赖：
+[source,batch]
+----
+scripts\install_dependencies_windows.bat
+----
+
+该脚本使用 vcpkg 安装所需依赖，包括：
+* GLFW、GLM、tinyobjloader、stb
+
+你还需要从 https://vulkan.lunarg.com/ 单独安装 Vulkan SDK。
+
+== 许可证
+
+除另有说明外，本仓库的内容以 https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0] 许可发布。
+向本仓库贡献内容，即表示你同意以相同的许可证将你的贡献公开发布。
+
+`attachments` 目录中的代码清单以 https://creativecommons.org/publicdomain/zero/1.0/[CC0 1.0 Universal] 许可发布。
+向该目录贡献内容，即表示你同意以相同的类公有领域许可证将你的贡献公开发布。
+
+== 贡献
+
+欢迎贡献。关于如何贡献以及必须满足的技术要求，详见 link:CONTRIBUTING.adoc[本文档]。
+
+[NOTE]
+====
+Claude、ChatGPT、Gemini 等 LLM 以及本地 SLM 曾被用于协助编写这些教程。
+
+AI 被用于：
+
+* 审校，尤其是拼写和语法方面。
+* 协助进行小幅重构
+* 在人工编写的内容之间生成通用衔接文字。
+
+所有教程的全部内容均已由人工审核，我们欢迎反馈。
+
+这些教程及示例代码中的所有 LLM 使用均基于 xref:AI_Assisted_Vulkan/introduction.adoc[AI 辅助的 Vulkan 开发] 教程。
+====

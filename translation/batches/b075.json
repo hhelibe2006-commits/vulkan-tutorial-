@@ -1,0 +1,12 @@
+{
+  "id": "b075",
+  "words": 8527,
+  "files": [
+    {
+      "source": "en/ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc",
+      "words": 8527,
+      "title": "Ray Tracing Optimization: Denoising and Adaptive Sampling"
+    }
+  ]
+}

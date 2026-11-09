@@ -1,0 +1,798 @@
+:pp: {plus}{plus}
+
+= 加载模型：理解 glTF
+
+== 理解 glTF
+
+=== 什么是 glTF？
+
+glTF（GL Transmission Format）是由 Khronos Group 开发的标准 3D 文件格式，而 Khronos Group 也正是 OpenGL 与 Vulkan 背后的组织。它常被称为「3D 界的 JPEG」，因为它的目标是成为一种通用而高效的 3D 内容格式。
+
+glTF 的主要目的是弥合 3D 内容创作工具（如 Blender、Maya、3ds Max）与游戏、可视化工具这类实时渲染应用之间的鸿沟。在 glTF 出现之前，开发者往往不得不自己编写导出器，或者使用那些并未针对实时渲染优化的中间格式。
+
+glTF 的主要优势包括：
+
+* *效率*：针对加载速度与渲染性能做了优化，所需处理极少
+* *完整性*：在单一格式中包含几何体、材质、纹理、动画与场景层级
+* *PBR 支持*：内置对现代基于物理的渲染材质的支持
+* *标准化*：被业界广泛采用，减少了对自定义导出器的需求
+* *可扩展性*：支持用于厂商特定特性的扩展，同时保持兼容性
+
+=== glTF 文件结构与数据组织
+
+glTF 文件包含若干按结构化方式组织的关键组成部分：
+
+* *场景与节点*：把对象按层次结构组织进场景图
+* *网格*：3D 几何数据（顶点、索引，以及法线、UV 等属性）
+* *材质*：使用基于物理的渲染（PBR）模型的表面属性
+* *纹理与图像*：供材质使用的视觉数据，支持多种纹理类型
+* *动画*：用于驱动节点（位置、旋转、缩放）的关键帧数据
+* *蒙皮*：骨骼动画所需的数据（关节层级与顶点权重）
+* *相机*：透视或正交相机的定义
+
+==== 缓冲区系统：高效的二进制数据存储
+
+glTF 最强大的特性之一，是它的三级缓冲区系统：
+
+1. *缓冲区（Buffers）*：原始二进制数据块（类似磁盘上的文件）
+2. *缓冲区视图（BufferViews）*：对缓冲区的视图，带特定的偏移与长度
+3. *访问器（Accessors）*：描述如何解释 bufferView 中的数据（类型、分量类型、数量等）
+
+这套系统让不同属性（位置、法线、UV）可以共用同一个底层缓冲区，从而降低内存占用与文件大小。例如：
+
+* 一个缓冲区可能包含全部顶点数据
+* 一个 bufferView 指向该缓冲区中的位置数据
+* 另一个 bufferView 指向法线数据
+* 访问器描述如何解释每个 bufferView（例如解释为 vec3 浮点数）
+
+=== 使用 tinygltf 库高效解析
+
+与其从零编写一个 glTF 解析器（那会是一项相当大的工程），我们不如使用 tinygltf 库：
+
+* 它轻量、只有头文件，是易于集成的 C++ 库
+* 它透明地处理 .gltf 与 .glb 两种格式
+* 它承担解析 JSON 与二进制数据这些复杂工作
+* 它提供简洁的 API 来访问所有 glTF 组件
+* 它处理缓冲区系统的细节，包括 base64 编码的数据
+
+使用 tinygltf 让我们能把精力放在更高层的任务上：把解析出的数据转换成引擎里的结构，而不必纠缠于解析 JSON 与二进制数据的底层细节。
+
+=== 实现健壮的 glTF 加载器
+
+在实现可用于生产环境的 glTF 加载器时，有几件事需要考虑：
+
+* *错误处理*：稳健地处理格式错误的文件，并优雅地失败
+* *格式检测*：同时支持 .gltf 与 .glb 两种格式
+* *内存管理*：高效地分配与处理大数据
+* *扩展支持*：处理可选的 glTF 扩展
+
+下面看看我们如何实现最初的文件加载：
+
+----
+void loadModel(const std::string& modelPath) {
+    // Create a tinygltf loader
+    tinygltf::Model gltfModel;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    // Detect file extension to determine which loader to use
+    bool ret = false;
+    std::string extension = modelPath.substr(modelPath.find_last_of(".") + 1);
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+    if (extension == "glb") {
+        ret = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, modelPath);
+    } else if (extension == "gltf") {
+        ret = loader.LoadASCIIFromFile(&gltfModel, &err, &warn, modelPath);
+    } else {
+        err = "Unsupported file extension: " + extension + ". Expected .gltf or .glb";
+    }
+
+    // Handle errors and warnings
+    if (!warn.empty()) {
+        std::cout << "glTF warning: " << warn << std::endl;
+    }
+    if (!err.empty()) {
+        std::cout << "glTF error: " << err << std::endl;
+    }
+    if (!ret) {
+        throw std::runtime_error("Failed to load glTF model");
+    }
+
+    // Clear existing model data
+    model = Model();
+
+    // Process the loaded data (covered in the following sections)
+}
+----
+
+同时支持 .gltf 与 .glb 两种格式，能让美术师在工作流中灵活选择。
+
+glTF 有两种格式，各有各的优势：
+
+* *.gltf*：基于 JSON 的格式，二进制数据与图像作为外部文件
+- 人类可读，调试更方便
+- 便于资产管理（纹理作为独立文件）
+- 更适合开发工作流
+* *.glb*：把所有内容打包进单个文件的二进制格式
+- 更紧凑，分发效率更高
+- 减少加载时的文件操作次数
+- 更适合部署与分发
+
+=== 理解基于物理的渲染（PBR）材质
+
+[NOTE]
+====
+本节简要概述与 glTF 加载相关的 PBR 材质。关于 PBR 概念与光照模型的更全面讲解，请参阅光照材质一章中的 xref:Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc#physically-based-rendering-pbr[基于物理的渲染（PBR）] 一节。
+====
+
+材质定义了表面渲染出来的样子。现代游戏与引擎使用基于物理的渲染（PBR），它依据物理原理模拟光与真实世界材质的相互作用。
+
+==== 材质系统的演进
+
+3D 图形中的材质系统经历了显著的演进：
+
+1. *基础材质（1990 年代）*：简单的漫反射颜色，可选的高光
+2. *多纹理材质（2000 年代）*：组合多张纹理贴图实现不同效果
+3. *基于着色器的材质（2000 年代末）*：用自定义着色器程序实现高级效果
+4. *基于物理的渲染（2010 年代）*：基于真实世界表面物理属性的材质
+
+PBR 代表了实时图形当前的技术水平。它在不同光照条件下都能给出更真实的结果，并保证无论环境如何，外观都保持一致。
+
+==== PBR 材质的关键属性
+
+glTF 中的 PBR 模型基于「金属度-粗糙度」工作流，使用以下关键属性：
+
+* *基础颜色*：表面的反照率或漫反射颜色（RGB 或纹理）
+* *金属度*：表面有多像金属（0.0 = 非金属，1.0 = 金属）
+  - 金属没有漫反射，但镜面反射很强
+  - 非金属（电介质）有漫反射，镜面反射极弱
+* *粗糙度*：表面有多光滑或多粗糙（0.0 = 镜面般光滑，1.0 = 粗糙）
+  - 控制引起光散射的微表面细节
+  - 影响反射与高光的锐利程度
+* *法线贴图*：在不增加几何体的情况下添加表面细节
+  - 扰动表面法线，营造出更多细节的错觉
+  - 比添加真实几何体更高效
+* *遮蔽贴图*：近似模拟表面缝隙中的自阴影
+  - 让接收环境光较少的区域变暗
+  - 增强对深度与细节的感知
+* *自发光*：让表面发光（RGB 或纹理）
+  - 用于屏幕、灯具或霓虹灯这类发光物体
+  - 不受场景光照影响
+
+这些属性既可以指定为常量，也可以指定为纹理贴图，让属性在表面上产生空间变化。接下来的几章我们会详细讨论 PBR。
+
+image::images/bookstand.png[带复杂 PBR 材质的书架——展示木、玻璃、金属与纸张纹理，以及各不相同的材质属性]
+
+==== 纹理格式与压缩
+
+在我们的引擎中，纹理使用 KTX2 加 Basis Universal 压缩。这种做法有几个优势：
+
+* *减小文件体积*：Basis Universal 压缩在保持视觉质量的同时显著减小纹理体积
+* *GPU 就绪格式*：KTX2 纹理可以直接转码为平台特定的 GPU 格式
+* *跨平台兼容性*：Basis Universal 纹理可在不同平台与图形 API 上工作
+* *mipmap 支持*：KTX2 包含对 mipmap 的支持，可提升渲染质量与性能
+
+===== glTF/glb 中的嵌入纹理
+
+glTF 格式支持两种包含纹理的方式：
+
+1. *外部引用*：.gltf 文件引用外部图像文件
+2. *嵌入数据*：图像以二进制数据直接嵌入 .glb 文件
+
+我们的引擎使用带嵌入 KTX2 纹理的 .glb 格式。这种做法：
+
+* 减少加载时的文件操作次数
+* 确保纹理始终随模型一起可用
+* 简化资产管理与分发
+
+glTF 规范通过图像对象的 `bufferView` 属性支持嵌入纹理。使用 KTX2 纹理时，`mimeType` 设为 `"image/ktx2"` 以表明格式。
+
+纹理加载过程涉及若干复杂步骤，这些步骤架起了 glTF 抽象的纹理引用与 Vulkan 底层 GPU 资源之间的桥梁。
+
+=== 纹理加载：遍历 glTF 纹理并提取元数据
+
+首先，我们遍历 glTF 模型的纹理定义，提取定位与识别每个纹理资源所需的基本信息。
+
+----
+// First, load all textures from the model
+std::vector<Texture> textures;
+for (size_t i = 0; i < gltfModel.textures.size(); i++) {
+    const auto& texture = gltfModel.textures[i];
+    const auto& image = gltfModel.images[texture.source];
+
+    Texture tex;
+    tex.name = image.name.empty() ? "texture_" + std::to_string(i) : image.name;
+----
+
+glTF 的纹理系统采用间接引用的方式：纹理引用图像，图像则包含实际像素数据或对数据的引用。这种分离让多张纹理可以共用同一份图像数据，但使用不同的采样参数（例如不同的过滤或环绕模式）。我们的遍历过程会建立一份完整清单，涵盖材质最终要引用的所有纹理资源。
+
+命名策略提供了调试与资产管理上的必要能力。美术师在 3D 应用中创建纹理时，有意义的名称能帮助开发者在开发过程中判断哪张纹理用于什么用途。当美术师没有提供描述性名称时，后备命名方案会保证每张纹理仍有唯一标识。
+
+=== 纹理加载：格式检测与缓冲区访问
+
+接下来，我们需要判断纹理是否嵌入在 glTF 文件中并确认其格式，为选择合适的加载策略打下基础。
+
+----
+    // Check if the image is embedded as KTX2
+    if (image.mimeType == "image/ktx2" && image.bufferView >= 0) {
+        // Get the buffer view that contains the KTX2 data
+        const auto& bufferView = gltfModel.bufferViews[image.bufferView];
+        const auto& buffer = gltfModel.buffers[bufferView.buffer];
+
+        // Extract the KTX2 data from the buffer
+        const uint8_t* ktx2Data = buffer.data.data() + bufferView.byteOffset;
+        size_t ktx2Size = bufferView.byteLength;
+----
+
+MIME 类型检测确保我们处理的确实是 KTX2 格式，相比 PNG 或 JPEG 这类传统图像格式，它有几个优势。KTX2 专为 GPU 纹理设计，支持 Basis Universal 压缩、多级 mipmap 以及与 GPU 格式直接兼容等高级特性。而对 bufferView 的检查则确认图像数据嵌入在 glTF 文件内部，而非引用外部文件。
+
+缓冲区的访问方式体现了 glTF 精巧的数据组织体系。我们不做多余的拷贝，而是直接取得指向已加载 glTF 缓冲区中 KTX2 数据的指针。这种做法把内存占用降到最低，也避免了代价高昂的拷贝操作；在处理轻松达到数百兆字节的大型纹理数据集时，这一点尤其重要。
+
+=== 纹理加载：解析与校验 KTX2
+
+现在需要用专门的 KTX-Software 库加载 KTX2 纹理数据，并做初步校验，确保纹理数据可用。
+
+----
+        // Load the KTX2 texture using KTX-Software library
+        ktxTexture2* ktxTexture = nullptr;
+        KTX_error_code result = ktxTexture2_CreateFromMemory(
+            ktx2Data, ktx2Size,
+            KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+            &ktxTexture
+        );
+
+        if (result != KTX_SUCCESS) {
+            std::cerr << "Failed to load KTX2 texture: " << ktxErrorString(result) << std::endl;
+            continue;
+        }
+----
+
+KTX-Software 库能稳健地解析复杂的 KTX2 格式，处理多级 mipmap、各种像素格式与元数据等细节；这些若从零实现会极其复杂。`KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT` 标志让库立即把实际像素数据加载到内存，为后续处理步骤做好准备。
+
+这一阶段的错误处理至关重要，因为纹理文件可能在资产管线处理或文件传输中损坏。某张纹理加载失败时继续处理下一张，就能确保单个有问题的纹理不会阻止整个模型加载。这种优雅降级的做法对健壮的生产系统必不可少——内容层面的问题不应该让应用崩溃。
+
+=== 纹理加载：Basis Universal 转码
+
+接下来处理转码：把 Basis Universal 压缩纹理转换为 GPU 原生格式，以获得最佳的运行时性能。
+
+----
+        // If the texture uses Basis Universal compression, transcode it to a GPU-friendly format
+        if (ktxTexture->isCompressed && ktxTexture2_NeedsTranscoding(ktxTexture)) {
+            // Choose the appropriate format based on GPU capabilities
+            ktx_transcode_fmt_e transcodeFmt = KTX_TTF_BC7_RGBA;
+
+            // For devices that don't support BC7, use alternatives
+            // if (!deviceSupportsBC7) {
+            //     transcodeFmt = KTX_TTF_ASTC_4x4_RGBA;
+            // }
+            // if (!deviceSupportsASTC) {
+            //     transcodeFmt = KTX_TTF_ETC2_RGBA;
+            // }
+
+            // Transcode the texture
+            result = ktxTexture2_TranscodeBasis(ktxTexture, transcodeFmt, 0);
+            if (result != KTX_SUCCESS) {
+                std::cerr << "Failed to transcode KTX2 texture: " << ktxErrorString(result) << std::endl;
+                ktxTexture2_Destroy(ktxTexture);
+                continue;
+            }
+        }
+----
+
+Basis Universal 代表了一种颠覆性的纹理压缩思路，它解决了跨平台开发中的一个根本问题：不同 GPU 支持不同的纹理压缩格式。传统做法必须为不同平台分别存储多份纹理，存储需求因此急剧膨胀。Basis Universal 把纹理存成一种中间格式，在加载时即可快速转码为任意 GPU 原生格式。
+
+格式选择逻辑（以注释形式给出）展示了生产系统如何应对 GPU 能力差异。桌面 GPU 通常支持 BC7 压缩，质量出色；移动 GPU 则常用 ASTC 或 ETC2 格式。转码在运行时依据目标 GPU 的实际能力进行，从而在每个平台上都保证最佳的性能与质量。
+
+转码本身计算量很大，但只会在资产加载时发生一次。得到的 GPU 原生格式在渲染时的性能远好于未压缩纹理，因此前期付出的转码代价是值得的。转码失败时会清理已处理到一半的资源，避免错误状态下出现内存泄漏。
+
+=== 纹理加载：创建 Vulkan 资源并上传到 GPU
+
+最后，创建 GPU 渲染所需的 Vulkan 资源，并把处理好的纹理数据上传到显存。
+
+----
+        // Create Vulkan image, memory, and view
+        vk::Format format = static_cast<vk::Format>(ktxTexture2_GetVkFormat(ktxTexture));
+        vk::Extent3D extent{
+            static_cast<uint32_t>(ktxTexture->baseWidth),
+            static_cast<uint32_t>(ktxTexture->baseHeight),
+            static_cast<uint32_t>(ktxTexture->baseDepth)
+        };
+        uint32_t mipLevels = ktxTexture->numLevels;
+
+        // Create the Vulkan image
+        vk::ImageCreateInfo imageCreateInfo{
+            .imageType = vk::ImageType::e2D,
+            .format = format,
+            .extent = extent,
+            .mipLevels = mipLevels,
+            .arrayLayers = 1,
+            .samples = vk::SampleCountFlagBits::e1,
+            .tiling = vk::ImageTiling::eOptimal,
+            .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+            .sharingMode = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined
+        };
+
+        // Create the image, allocate memory, and bind them
+        // ... (code omitted for brevity)
+
+        // Upload the texture data to the image
+        ktxTexture2_VkUploadEx(ktxTexture, &ktxVulkanTexture, &vkDevice, &vkQueue,
+                              &ktxVulkanDeviceMemory, &ktxVulkanImage,
+                              &ktxVulkanImageView, &ktxVulkanImageLayout,
+                              &ktxVulkanImageMemory);
+
+        // Store the Vulkan resources in our texture object
+        tex.image = ktxVulkanImage;
+        tex.imageView = ktxVulkanImageView;
+        tex.memory = ktxVulkanImageMemory;
+
+        // Clean up KTX resources
+        ktxTexture2_Destroy(ktxTexture);
+    } else {
+        // Handle other image formats or external references
+        // ... (code omitted for brevity)
+    }
+
+    // Create a sampler for the texture
+    VkSamplerCreateInfo samplerInfo = {};
+    // ... (code omitted for brevity)
+
+    textures.push_back(tex);
+}
+
+// Now load materials and associate them with textures
+for (const auto& material : gltfModel.materials) {
+    Material mat;
+
+    // Base color
+    if (material.pbrMetallicRoughness.baseColorFactor.size() == 4) {
+        mat.baseColorFactor.r = material.pbrMetallicRoughness.baseColorFactor[0];
+        mat.baseColorFactor.g = material.pbrMetallicRoughness.baseColorFactor[1];
+        mat.baseColorFactor.b = material.pbrMetallicRoughness.baseColorFactor[2];
+        mat.baseColorFactor.a = material.pbrMetallicRoughness.baseColorFactor[3];
+    }
+
+    // Metallic and roughness factors
+    mat.metallicFactor = material.pbrMetallicRoughness.metallicFactor;
+    mat.roughnessFactor = material.pbrMetallicRoughness.roughnessFactor;
+
+    // Associate textures with the material
+    if (material.pbrMetallicRoughness.baseColorTexture.index >= 0) {
+        const auto& texture = gltfModel.textures[material.pbrMetallicRoughness.baseColorTexture.index];
+        mat.baseColorTexture = &textures[texture.source];
+    }
+
+    if (material.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0) {
+        const auto& texture = gltfModel.textures[material.pbrMetallicRoughness.metallicRoughnessTexture.index];
+        mat.metallicRoughnessTexture = &textures[texture.source];
+    }
+
+    if (material.normalTexture.index >= 0) {
+        const auto& texture = gltfModel.textures[material.normalTexture.index];
+        mat.normalTexture = &textures[texture.source];
+    }
+
+    if (material.occlusionTexture.index >= 0) {
+        const auto& texture = gltfModel.textures[material.occlusionTexture.index];
+        mat.occlusionTexture = &textures[texture.source];
+    }
+
+    if (material.emissiveTexture.index >= 0) {
+        const auto& texture = gltfModel.textures[material.emissiveTexture.index];
+        mat.emissiveTexture = &textures[texture.source];
+    }
+
+    model.materials.push_back(mat);
+}
+----
+
+现在，我们来说说这些部分是如何拼合在一起的。
+
+=== 理解场景图与层次变换
+
+场景图是一种树状层次数据结构，用来组织 3D 场景的空间表示。它是计算机图形学与游戏引擎中的基础概念，是组织复杂场景的骨架。
+
+==== 场景图为何重要
+
+相比扁平的对象集合，场景图有几个关键优势：
+
+* *层次变换*：子节点继承父节点的变换，因此为复杂关系建模变得自然
+* *空间组织*：对象按逻辑关系组织，场景管理更容易
+* *动画支持*：层次结构对骨骼动画与复杂运动模式至关重要
+* *高效遍历*：可实现优化的渲染、剔除与拾取操作
+* *实例化支持*：同一个对象可以以不同变换多次出现
+
+看看下面这些实际例子：
+
+1. *带装备的角色*：角色移动时，所有挂载的装备（武器、护甲）都应随之移动。有了场景图，你只需移动角色节点，所有子节点会自动继承该变换。
+
+2. *带活动部件的载具*：载具的车轮可能独立旋转，同时整车在移动。场景图让这种运动的层次关系表达起来很自然。
+
+3. *关节动画*：带骨骼的角色需要关节相对其父关节运动。场景图直接对这种父子关系建模。
+
+==== 场景图中的变换
+
+场景图最强大的方面之一，是它处理变换的方式：
+
+* 每个节点都有一个相对于父节点的*局部变换*
+* *全局变换*由节点的局部变换与其父节点的全局变换组合计算得出
+* 这样就能直观地为复杂的层次运动建模
+
+变换流程通常是这样运作的：
+
+1. 每个节点保存自己的局部变换（平移、旋转、缩放）
+2. 渲染时，我们通过与父级变换相乘来计算全局变换
+3. 该全局变换用于把对象定位到世界空间
+
+下面是我们如何从 glTF 数据构建场景图：
+
+----
+// First pass: create all nodes
+for (size_t i = 0; i < gltfModel.nodes.size(); i++) {
+    const auto& node = gltfModel.nodes[i];
+    model.linearNodes[i] = new Node();
+    model.linearNodes[i]->index = static_cast<uint32_t>(i);
+    model.linearNodes[i]->name = node.name;
+
+    // Get transformation data
+    if (node.translation.size() == 3) {
+        model.linearNodes[i]->translation = glm::vec3(
+            node.translation[0], node.translation[1], node.translation[2]
+        );
+    }
+    // ... handle rotation and scale
+}
+
+// Second pass: establish parent-child relationships
+for (size_t i = 0; i < gltfModel.nodes.size(); i++) {
+    const auto& node = gltfModel.nodes[i];
+    for (int childIdx : node.children) {
+        model.linearNodes[childIdx]->parent = model.linearNodes[i];
+        model.linearNodes[i]->children.push_back(model.linearNodes[childIdx]);
+    }
+}
+----
+
+我们采用两遍处理，确保在尝试链接节点之前所有节点都已存在。
+
+=== 理解 3D 几何与网格数据
+
+3D 模型以网格表示，即由顶点、边和面构成的集合，定义了物体的形状。理解这些数据的组织方式对高效渲染至关重要。
+
+==== 3D 模型的基本构成
+
+3D 几何的基本组成部分是：
+
+* *顶点*：3D 空间中定义形状的点
+* *索引*：对顶点的引用，定义它们如何连成三角形
+* *属性*：与顶点关联的附加数据：
+  - *位置*：3D 坐标（x, y, z）
+  - *法线*：垂直于表面的方向向量（用于光照计算）
+  - *纹理坐标（UV）*：用于把纹理映射到表面的 2D 坐标
+  - *切线与副切线*：用于法线贴图的向量
+  - *颜色*：逐顶点颜色数据
+  - *蒙皮权重与索引*：用于骨骼动画
+
+现代 3D 图形使用三角形网格，因为：
+
+* 三角形总是共面的（三个点确定一个平面）
+* 三角形是能表示任意曲面的最简单多边形
+* 图形硬件针对三角形处理做了优化
+
+==== glTF 中的网格组织
+
+glTF 对网格数据的组织方式在存储与渲染两方面都很高效：
+
+* *网格*：构成一个逻辑对象的图元集合
+* *图元*：网格的各个独立部分，各自拥有材质
+* *属性*：位置、法线与纹理坐标等顶点数据
+* *索引*：定义三角形的顶点引用
+
+这种组织方式可以做到：
+
+* 通过数据共享高效使用内存
+* 单个网格内部可以有材质变化
+* 通过批处理优化渲染
+
+下面是我们如何提取网格数据：
+
+----
+// Load meshes
+for (size_t i = 0; i < gltfModel.nodes.size(); i++) {
+    const auto& node = gltfModel.nodes[i];
+    if (node.mesh >= 0) {
+        const auto& mesh = gltfModel.meshes[node.mesh];
+
+        // Process each primitive
+        for (const auto& primitive : mesh.primitives) {
+            Mesh newMesh;
+
+            // Set material
+            if (primitive.material >= 0) {
+                newMesh.materialIndex = primitive.material;
+            }
+
+            // Extract vertex positions, normals, and texture coordinates
+            // ... (code omitted for brevity)
+
+            // Extract indices that define triangles
+            // ... (code omitted for brevity)
+
+            // Assign the mesh to the node
+            model.linearNodes[i]->mesh = newMesh;
+        }
+    }
+}
+----
+
+=== 理解动画系统
+
+动画让静态的 3D 模型在我们构建的虚拟世界里变得鲜活起来。要做出引人入胜、富有动感的 3D 应用，一套健壮的动画系统必不可少。
+
+==== 3D 图形中的动画技术
+
+3D 图形中常用的动画技术有几种：
+
+* *关键帧动画*：在特定时间点定义特定姿态，并在其间插值
+* *骨骼动画*：用骨骼层级使网格形变
+* *变形目标动画*：在预设的网格形状之间插值
+* *程序化动画*：通过算法与物理生成动画
+* *粒子系统*：用简单规则驱动大量小元素的动画
+
+现代游戏通常组合使用这些技术，其中骨骼动画构成角色运动的主干。
+
+==== 动画的核心概念
+
+理解动画系统需要掌握几个核心概念：
+
+* *关键帧*：显式定义动画值的特定时间点
+* *插值*：计算关键帧之间的值，以产生平滑运动
+* *通道*：针对特定属性（如位置或旋转）进行动画
+* *混合*：以不同权重组合多段动画
+* *重定向*：把为某个模型创建的动画应用到另一个模型
+
+==== glTF 的动画系统
+
+glTF 使用灵活的动画系统，可以表示多种动画技术：
+
+* *动画*：通道与采样器的集合
+* *通道*：采样器与节点属性（平移、旋转、缩放）之间的链接
+* *采样器*：带时间戳、数值与插值方法的关键帧数据
+* *目标*：被动画的属性（平移、旋转、缩放，或变形目标的权重）
+
+glTF 支持三种插值方法：
+
+* *LINEAR*：速度恒定的平滑过渡
+* *STEP*：没有插值的突变
+* *CUBICSPLINE*：带控制点的平滑曲线，可实现加速与减速
+
+这套系统支持复杂动画，可以独立地驱动模型的特定部位，从而实现行走、面部表情与复杂交互等动作。
+
+下面是我们如何加载动画数据：
+
+----
+// Load animations
+for (const auto& anim : gltfModel.animations) {
+    Animation animation;
+    animation.name = anim.name;
+
+    // Load keyframe data
+    for (const auto& sampler : anim.samplers) {
+        AnimationSampler animSampler{};
+
+        // Set interpolation type (LINEAR, STEP, or CUBICSPLINE)
+        // ... (code omitted for brevity)
+
+        // Extract keyframe times and values
+        // ... (code omitted for brevity)
+
+        animation.samplers.push_back(animSampler);
+    }
+
+    // Connect samplers to node properties
+    for (const auto& channel : anim.channels) {
+        AnimationChannel animChannel{};
+
+        // Set target node and property (translation, rotation, or scale)
+        // ... (code omitted for brevity)
+
+        animation.channels.push_back(animChannel);
+    }
+
+    model.animations.push_back(animation);
+}
+----
+
+=== 与渲染管线集成
+
+模型数据已经加载好了，接下来讨论它如何与渲染管线的其余部分集成。
+
+==== 从资产加载到渲染
+
+从 glTF 文件到屏幕上的像素，这一旅程要经过几个阶段：
+
+1. *资产加载*：glTF 加载器填充我们的 Model、Node、Mesh 与 Material 结构
+2. *场景管理*：引擎维护场景中已加载模型的集合
+3. *更新循环*：每帧根据流逝的时间更新动画
+4. *剔除*：引擎判断哪些对象可能可见
+5. *渲染*：遍历场景图，用各自的材质渲染每个可见网格
+
+这条管线可以高效地渲染带动画模型的复杂场景。
+
+==== 渲染优化
+
+有几种优化可以提升模型渲染的性能：
+
+* *批处理*：把相似对象分组以减少绘制调用
+* *实例化*：以不同变换渲染同一网格的多个实例
+* *细节层次（LOD）*：距离较远时使用更简单的模型版本
+* *视锥剔除*：跳过渲染相机视野之外的对象
+* *遮挡剔除*：跳过渲染被其他对象遮挡的对象
+
+==== 内存管理考量
+
+加载模型时，尤其是大型模型，内存管理就变得至关重要：
+
+* *顶点数据*：存入 GPU 缓冲区以便高效渲染
+* *索引*：在可能时使用 16 位索引以节省内存
+* *纹理*：使用 KTX2 加 Basis Universal 压缩，大幅降低内存占用
+* *实例化*：以不同变换复用同一份模型数据
+
+===== 用 KTX2 与 Basis Universal 高效管理纹理内存
+
+在 3D 应用中，纹理常常占据 GPU 内存的大头。KTX2 加 Basis Universal 压缩带来几项内存优化收益：
+
+* *超压缩*：相比未压缩格式，Basis Universal 可将纹理体积缩小 4-10 倍
+* *GPU 原生格式*：纹理被转码为 GPU 可直接采样的格式，免去运行时解压
+* *Mipmap*：KTX2 支持 mipmap，不仅提升视觉质量，还能降低远处对象占用的内存
+* *格式选择*：转码器可以依据目标 GPU 的能力选择最优格式：
+  - 桌面 GPU（NVIDIA、AMD、Intel）用 BC7
+  - 移动 GPU（ARM、Qualcomm）用 ASTC
+  - 较旧的移动 GPU 用 ETC2
+
+===== 与 Vulkan 渲染管线集成
+
+要把 KTX2 纹理高效地集成到 Vulkan 中：
+
+1. *描述符集*：创建描述符集，把纹理图像视图与采样器绑定到着色器绑定点
+2. *管线布局*：定义包含这些描述符集的管线布局
+3. *着色器访问*：在着色器中通过相应的绑定点访问纹理
+
+下面是为 PBR 纹理设置描述符集的简化示例：
+
+----
+// Create descriptor set layout for PBR textures
+std::array<vk::DescriptorSetLayoutBinding, 5> bindings{
+    // Base color texture
+    vk::DescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment
+    },
+    // Metallic-roughness texture
+    vk::DescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment
+    },
+    // Normal map
+    vk::DescriptorSetLayoutBinding{
+        .binding = 2,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment
+    },
+    // Occlusion map
+    vk::DescriptorSetLayoutBinding{
+        .binding = 3,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment
+    },
+    // Emissive map
+    vk::DescriptorSetLayoutBinding{
+        .binding = 4,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment
+    }
+};
+
+vk::DescriptorSetLayoutCreateInfo layoutInfo{
+    .bindingCount = static_cast<uint32_t>(bindings.size()),
+    .pBindings = bindings.data()
+};
+
+vk::raii::DescriptorSetLayout descriptorSetLayout(device, layoutInfo);
+
+// For each material, create a descriptor set and update it with the material's textures
+for (const auto& material : model.materials) {
+    // Allocate descriptor set from the descriptor pool
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = descriptorPool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &*descriptorSetLayout
+    };
+
+    vk::raii::DescriptorSet descriptorSet = std::move(vk::raii::DescriptorSets(device, allocInfo).front());
+
+    // Update descriptor set with texture image views and samplers
+    std::vector<vk::WriteDescriptorSet> descriptorWrites;
+
+    if (material.baseColorTexture) {
+        vk::DescriptorImageInfo imageInfo{
+            .sampler = material.baseColorTexture->sampler,
+            .imageView = material.baseColorTexture->imageView,
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+        };
+
+        vk::WriteDescriptorSet write{
+            .dstSet = *descriptorSet,
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .pImageInfo = &imageInfo
+        };
+
+        descriptorWrites.push_back(write);
+    }
+
+    // Similar writes for other textures
+    // ...
+
+    device.updateDescriptorSets(descriptorWrites, {});
+
+    // Store the descriptor set with the material for later use during rendering
+    material.descriptorSet = *descriptorSet;
+}
+----
+
+===== 纹理内存管理的最佳实践
+
+要优化纹理内存占用：
+
+1. *纹理图集*：把多张小纹理合并成一张大纹理，以减少状态切换
+2. *mipmap 管理*：为所有纹理生成并使用 mipmap，以提升性能与质量
+3. *纹理流送*：对非常大的场景实现纹理流送，只在需要时加载更高分辨率的纹理
+4. *内存预算*：实现纹理预算系统，在内存紧张时降低纹理质量
+5. *格式选择*：根据纹理内容选择合适的格式：
+
+   - 带 alpha 的颜色纹理用 BC7/ASTC
+   - 不带 alpha 的颜色纹理用 BC1/ETC1
+   - 法线贴图用 BC5/ETC2
+   - 单通道纹理（粗糙度、金属度等）用 BC4/EAC
+
+=== 小结与下一步
+
+本章我们探讨了从 glTF 文件加载 3D 模型并组织进场景图的过程。我们涵盖了：
+
+* glTF 格式的结构与优势
+* 如何用 tinygltf 库高效解析
+* 现代渲染中使用的基于物理的材质系统
+* 场景图如何以层次结构组织对象
+* 3D 几何在网格中的表示
+* 让模型动起来的动画系统
+* 与渲染管线的集成
+
+我们的 glTF 加载器会创建一棵完整的场景图，包含：
+
+* 按层次组织的节点
+* 挂载到节点上的网格
+* 定义表面属性的材质
+* 可随时间改变节点属性的动画
+
+这种结构让我们可以：
+
+* 渲染复杂的 3D 场景
+* 为角色与物体添加动画
+* 施加沿层次传播的变换
+* 为性能优化渲染
+
+下一章，我们会探讨如何用基于物理的渲染技术来渲染这些模型，用真实的光照与材质让加载好的资产活起来。
+
+xref:Building_a_Simple_Engine/Loading_Models/03_model_system.adoc[上一页：实现模型加载系统] | xref:Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc[下一页：为 glTF 模型实现 PBR]

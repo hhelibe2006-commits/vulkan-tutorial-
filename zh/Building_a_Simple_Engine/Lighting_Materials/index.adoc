@@ -1,0 +1,15 @@
+:pp: {plus}{plus}
+
+= 光照与材质：基本光照模型与推送常量
+
+本章介绍 Vulkan 中基本光照模型的实现，以及用推送常量传递材质属性。在整个引擎实现中，我们使用 vk::raii 动态渲染和 C++20 模块，构建一个现代、高效且易维护的代码库。
+
+== 目录
+
+* xref:Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc[光照与材质入门]
+* xref:Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc[光照模型]
+* xref:Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc[推送常量]
+* xref:Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc[PBR 光照实现]
+* xref:Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc[与 Vulkan 集成]
+* xref:Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc[阴影：光线查询集成]
+* xref:Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc[结语]

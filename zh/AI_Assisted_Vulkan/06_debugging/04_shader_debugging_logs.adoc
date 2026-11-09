@@ -1,0 +1,87 @@
+:pp: {plus}{plus}
+
+= 着色器调试与日志解析
+
+== 简介
+
+Vulkan 会产生大量文本：2000 页的规范、动辄数万行的 API 转储、含数百个中间变量的着色器。在这一切里定位具体的 bug，很大程度上是个过滤问题，而这正是 AI 助手能帮上忙的地方——推理着色器逻辑，或者在庞大的 API 转储里扫描特定模式。
+
+== 编写日志诊断脚本
+
+你可以用一个很小的脚本把大量日志搜索自动化：抓取 API 转储，喂给 **Goose** 审阅。
+
+=== 第 1 步：捕获 API 转储
+
+启用 `VK_LAYER_LUNARG_api_dump` 层，把输出重定向到文件。
+
+[source,bash]
+----
+# Run your application with API dumping enabled
+VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_api_dump ./VulkanApp > api_dump.txt
+----
+
+=== 第 2 步：把审阅写成脚本
+
+创建 `diagnose_logs.sh`，把相关日志上下文和具体指令交给代理。
+
+[source,bash]
+----
+#!/bin/bash
+# diagnose_logs.sh
+
+# 1. Collect the last 5000 lines of the API dump
+LOG_CONTEXT=$(tail -n 5000 api_dump.txt)
+
+# 2. Command Goose to find synchronization hazards
+goose session --instruction "
+Analyze this Vulkan API dump:
+$LOG_CONTEXT
+
+Find any 'vkCmdDispatch' followed by a 'vkCmdDraw' where
+the output image of the dispatch is used as a texture
+in the draw call. Check if there is an intervening
+'vkCmdPipelineBarrier'. If not, propose the correct
+barrier parameters for 'VkImageMemoryBarrier2'.
+"
+----
+
+=== 第 3 步：查看结果
+
+在一个真实案例里，代理指出第 8452 行记录了一次向 bloom 着色器的派发，但最终合成绘制之前的那道屏障缺失了。这个 bug 只在 GPU 负载很高时才显现，这也是它很难靠手工翻日志发现的原因之一。这样把搜索自动化，就把缓慢的手工翻查变成了有针对性的模式匹配——不过在认定诊断已经完整之前，最好还是自己抽查一下被标记的那些行。
+
+== 模拟着色器逻辑
+
+着色器难调试，因为你没法像在 C{pp} 里那样下断点。一个变通办法是，把出错片元的实际输入值交给助手，让它把着色器逻辑推演一遍。
+
+=== 第 1 步：提取片元数据
+
+用 RenderDoc 找到出错的像素，取出它的输入变量（例如 `prevCoord`、`currentDepth`、`motionVector`）。
+
+=== 第 2 步：让它把逻辑推一遍
+
+把具体的取值连同你的 HLSL 或 Slang 源码一起提供。
+
+[source,text]
+----
+Goose, simulate our 'TemporalAA.hlsl' logic for this fragment.
+INPUTS:
+prevCoord: [0.45, 0.67]
+currentDepth: 0.892
+motionVector: [0.001, -0.002]
+
+Based on our 'historyRejection' threshold of 0.05,
+why is this pixel flickering?
+Is our motion vector scaling correctly for 4K resolution?
+----
+
+=== 第 3 步：结果
+
+在实际中，这类提示词能抓出诸如运动矢量缩放用错分辨率常数之类的错误——一个很小的算术错误，手工追起来很枯燥，但只要把实际数值摆在模型面前，它很快就能查出来。
+
+== 小结
+
+着色器推理与日志解析补全了本节的调试工具箱。有了 VUID 翻译、RenderDoc 状态审计和日志/着色器分析，你现在有三条互补的路径把 AI 引入调试会话——分别对应 VUID、GPU 状态和着色器/日志数据。
+
+接下来我们进入 MCP 工具部分，讲怎么构建自定义工具，让你的助手直接访问 Vulkan Registry 和硬件限制。
+
+下一节：xref:AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc[AI 辅助的跟踪分析：GFXReconstruct]

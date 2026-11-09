@@ -1,0 +1,36 @@
+{
+  "id": "b030",
+  "words": 5760,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc",
+      "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc",
+      "words": 1733,
+      "title": "Debug Drawers: Visualizing Physics and Skeleton"
+    },
+    {
+      "source": "en/Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc",
+      "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc",
+      "words": 1425,
+      "title": "Skinning Heatmaps: Visualizing Weight Painting"
+    },
+    {
+      "source": "en/Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc",
+      "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc",
+      "words": 969,
+      "title": "RenderDoc Analysis: Inspecting the Compute Skinning Output"
+    },
+    {
+      "source": "en/Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc",
+      "words": 752,
+      "title": "Debugging: Summary & Series Conclusion"
+    },
+    {
+      "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc",
+      "words": 881,
+      "title": "Morph Targets & Facial Animation"
+    }
+  ]
+}

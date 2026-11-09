@@ -1,0 +1,66 @@
+{
+  "id": "b107",
+  "words": 5119,
+  "files": [
+    {
+      "source": "en/Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc",
+      "target": "zh/Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc",
+      "words": 318,
+      "title": "Pipeline Barriers and Layout Transitions: The Core Loop"
+    },
+    {
+      "source": "en/Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc",
+      "target": "zh/Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc",
+      "words": 1082,
+      "title": "The Image Barrier: Implementing vk::ImageMemoryBarrier2"
+    },
+    {
+      "source": "en/Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc",
+      "target": "zh/Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc",
+      "words": 642,
+      "title": "Queue Family Ownership: The Handshake"
+    },
+    {
+      "source": "en/Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc",
+      "target": "zh/Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc",
+      "words": 606,
+      "title": "Global vs. Local Barriers: Precision and Performance"
+    },
+    {
+      "source": "en/Synchronization/Profiling_Optimization/01_introduction.adoc",
+      "target": "zh/Synchronization/Profiling_Optimization/01_introduction.adoc",
+      "words": 375,
+      "title": "Profiling, Batching, and Optimization: Squeezing the GPU"
+    },
+    {
+      "source": "en/Synchronization/Profiling_Optimization/02_barrier_batching.adoc",
+      "target": "zh/Synchronization/Profiling_Optimization/02_barrier_batching.adoc",
+      "words": 512,
+      "title": "Barrier Batching: Consolidating Your Synchronization"
+    },
+    {
+      "source": "en/Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc",
+      "target": "zh/Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc",
+      "words": 377,
+      "title": "Visualizing Stalls: Finding Your Pipeline Bubbles"
+    },
+    {
+      "source": "en/Synchronization/Synchronization_Validation/01_introduction.adoc",
+      "target": "zh/Synchronization/Synchronization_Validation/01_introduction.adoc",
+      "words": 371,
+      "title": "Debugging with Synchronization Validation: Finding Your Hazards"
+    },
+    {
+      "source": "en/Synchronization/Synchronization_Validation/02_validation_layer.adoc",
+      "target": "zh/Synchronization/Synchronization_Validation/02_validation_layer.adoc",
+      "words": 467,
+      "title": "The Validation Layer: Configuring Your Environment"
+    },
+    {
+      "source": "en/Synchronization/Synchronization_Validation/03_interpreting_vuids.adoc",
+      "target": "zh/Synchronization/Synchronization_Validation/03_interpreting_vuids.adoc",
+      "words": 369,
+      "title": "Interpreting VUIDs: Deciphering Your Hazard Errors"
+    }
+  ]
+}

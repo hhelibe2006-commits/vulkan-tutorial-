@@ -1,0 +1,42 @@
+{
+  "id": "b019",
+  "words": 5721,
+  "files": [
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc",
+      "words": 1203,
+      "title": "Goose: Autonomous Agent & Local Intelligence"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc",
+      "words": 666,
+      "title": "The Context Bridge: Model Context Protocol (MCP)"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc",
+      "words": 556,
+      "title": "Model Selection & Specialization: Introduction"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/02_base_models.adoc",
+      "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/02_base_models.adoc",
+      "words": 1419,
+      "title": "Selecting the Base Model"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/03_hardware_vram.adoc",
+      "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/03_hardware_vram.adoc",
+      "words": 745,
+      "title": "Hardware & VRAM Budgeting"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc",
+      "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc",
+      "words": 1132,
+      "title": "MCP & RAG Specialization"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "id": "b027",
+  "words": 4756,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc",
+      "words": 802,
+      "title": "Mastering Mixed Precision: FP16 and Int8"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc",
+      "words": 399,
+      "title": "Performance Auditing and Optimization"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc",
+      "words": 575,
+      "title": "Analyzing Instruction Throughput: Compute-Bound vs. Memory-Bound"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/03_divergence_audit.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/03_divergence_audit.adoc",
+      "words": 659,
+      "title": "The Divergence Audit: Identifying and Refactoring Branch Divergence"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc",
+      "words": 450,
+      "title": "Diagnostics and AI-Assisted Compute Refinement: Introduction"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc",
+      "words": 495,
+      "title": "Compute Validation and GPU-Assisted Debugging"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc",
+      "words": 801,
+      "title": "AI-Assisted Optimization and Refinement"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc",
+      "words": 575,
+      "title": "Mobile and Embedded Compute: Introduction"
+    }
+  ]
+}

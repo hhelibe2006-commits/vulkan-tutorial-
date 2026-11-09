@@ -1,0 +1,64 @@
+:pp: {plus}{plus}
+= 分支发散审计：识别并重构分支发散
+
+GPU 计算中最隐蔽的性能杀手之一是**分支发散（Branch Divergence）**。要理解其中的原因，我们需要记住：GPU 以调用组（波前或 warp）为单位工作，这些调用以锁步方式执行同一条指令。当你的代码里出现分支——比如 `if-else` 语句——而子组中一部分调用走 `if` 路径、另一部分走 `else` 路径时，硬件就被迫把这些路径**串行化**。
+
+硬件会先为所有相关调用执行 `if` 路径（同时掩蔽掉其他调用），再为剩下的调用执行 `else` 路径（掩蔽掉前一组）。在这段时间里，那些未激活调用的 ALU 基本上是闲置的，你的 GPU 吞吐量也就实实在在地减半了。
+
+== 识别发散
+
+**发散审计**是一个有条理的过程：找出这些"发散"分支出现在哪里，并重构代码以减小它们的影响。
+
+=== 基于工具识别
+在你的性能分析器里寻找 **Active Lane Ratio**（活跃通道占比）或 **Instruction Execution Efficiency**（指令执行效率）之类的指标。比值低说明你的子组中有很多通道因控制流发散而闲置。
+
+例如，在 NVIDIA Nsight 里，你可以查看 "Warp Execution Efficiency" 指标。如果它长期低于 50%，你很可能存在严重的发散问题。为移动端工作引入的移动分析器（Arm Performance Studio、Qualcomm Snapdragon Profiler）以 "warp/wave occupancy" 或 "thread divergence" 之类的名称暴露同样的信息——而且发散在移动端*格外*昂贵，因为被浪费的通道即使闲置也仍在耗电。设备侧的性能分析流程见 xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc[针对移动 GPU 的优化]。
+
+=== 在着色器内可视化
+你也可以用**子组操作**（第 4 章）在着色器里直接手动检查发散。通过 `WaveActiveBallot()`，你可以生成一个位掩码，标明哪些调用走了某条特定路径。
+
+[source,slang]
+----
+// Visualize divergence in your shader
+bool local_test = data[globalID.x] > threshold;
+
+// Ballot tells us exactly which lanes in the subgroup are 'true'
+uint4 lane_mask = WaveActiveBallot(local_test);
+
+// If only some lanes are true, we are divergent!
+uint active_lanes = countbits(lane_mask.x) + countbits(lane_mask.y) +
+                    countbits(lane_mask.z) + countbits(lane_mask.w);
+----
+
+== 重构策略
+
+一旦找出了发散分支，有几种重构方式。
+
+=== 策略 1：子组级分支
+如果一个分支对于子组中的所有调用都能得到相同的求值结果，硬件就能无惩罚地执行它。这通常称为"统一分支"（Uniform Branching）。
+
+[source,slang]
+----
+// Refactored, subgroup-aware branch
+bool local_test = data[globalID.x] > threshold;
+
+if (WaveActiveAllTrue(local_test)) {
+    // Fast path: everyone is doing the same work!
+    do_complex_work_fast();
+} else if (WaveActiveAnyTrue(local_test)) {
+    // Slow path: only some are doing work, but we only enter if necessary
+    do_complex_work_slow();
+}
+----
+
+=== 策略 2：用数据流替代控制流
+一种更高级的技术是**用数据流替代控制流**。与其用 `if` 在两种计算之间选择，不如把两种都算出来，再用一个数学技巧选出结果。这样执行管线能保持"饱和"，避免分支带来的串行化惩罚。
+
+`lerp()`、`clamp()` 和 `step()` 这类函数在这里最好用。很多情况下，多做几次算术运算比付出一次发散分支的代价更划算。
+
+=== 策略 3：工作排序
+如果你的发散源于处理不同类型的数据（例如在光线追踪器中，有些光线击中复杂材质，有些击中简单材质），你可以用一个**排序通道**把相似的工作负载聚在一起。只要保证子组中的所有调用都在处理同一类型的数据，你就能以一次排序的代价彻底消除发散。
+
+通过定期执行发散审计，你能找出计算内核里"隐藏"的开销，并把它们重构成对 SIMD 更友好的高效模式。这就是"只是能跑"的代码与真正驾驭 GPU 架构的代码之间的差别。
+
+xref:Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc[上一篇：分析指令吞吐量：计算受限与内存受限] | xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc[下一篇：诊断与 AI 辅助计算优化：简介]

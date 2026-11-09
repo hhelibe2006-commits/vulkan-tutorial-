@@ -1,0 +1,40 @@
+= VK_EXT_shader_tile_image——快速访问瓦片数据
+
+有些 GPU 暴露「瓦片」或「子通道」数据通路，让着色器可以读取片上颜色／深度，而无需往返内存。`VK_EXT_shader_tile_image` 是一种可移植的利用方式。
+
+在本示例中，我们把它当作可选优化：没有它管线依然正确，只有当设备声明支持时我们才走「快速路径」。
+
+== 它解决什么问题
+
+光照之后从刚写入的颜色中读取纹理可能很昂贵。借助瓦片图像访问，某些模式在支持的硬件上会变得更便宜、更确定。
+
+== 本示例中我们如何处理
+
+* 如果特性存在就启用，并暴露一个可在代码中查询的布尔值。
+* 渲染器仍然使用干净的 Synchronization 2 屏障，并在正式布局转换之前结束动态渲染。这样在不支持瓦片读取的设备上，代码依然易懂。
+
+== 使用建议
+
+把它当作优化来用。先写出在所有设备上都正确的代码，然后在可用时加入瓦片图像快速路径。
+
+== 代码里该看哪里
+
+* 特性检测与启用：
+** `renderer_core.cpp`
+* 动态渲染设置与附件转换（为清晰起见保持显式）：
+** `renderer_rendering.cpp`
+** `renderer_pipelines.cpp`
+
+== 后续工作想法
+
+如果你想更直接地演示瓦片图像的用法：
+
+* 增加一个小的「本地读取」后处理效果，从当前颜色附件读取，并与常规采样路径比较。
+* 增加设备能力打印（仅开发期），让学生能看到快速路径何时生效。
+* 增加一个微基准场景，在基于瓦片的 GPU 上比较带宽。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc[VK_KHR_dynamic_rendering_local_read——将颜色数据保留在瓦片内存中]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc[本引擎中的 Synchronization 2 与帧节奏控制]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]

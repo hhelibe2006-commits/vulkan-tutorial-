@@ -1,0 +1,826 @@
+:pp: {plus}{plus}
+
+== GUI：配置 Dear ImGui
+
+== 配置 Dear ImGui
+
+本节我们将在 Vulkan 应用中配置 Dear ImGui。Dear ImGui（也简称为 ImGui）是一个无冗余的 C++ 图形用户界面库。它输出经过优化的顶点缓冲区，可以由你的 3D 管线应用直接渲染。它格外适合与 Vulkan 这类图形 API 集成。
+
+=== 把 ImGui 加入项目
+
+首先，我们需要把 ImGui 加入项目。有几种做法：
+
+1. *Git 子模块*：把 ImGui 作为 Git 子模块加入项目
+2. *包管理器*：使用 vcpkg 或 Conan 之类的包管理器
+3. *手动集成*：直接下载并包含 ImGui 源文件
+
+本教程为简单起见采用手动集成的方式：
+
+[source,bash]
+----
+# Clone ImGui repository
+git clone https://github.com/ocornut/imgui.git external/imgui
+
+# Copy necessary files to your project
+cp external/imgui/imgui.h include/
+cp external/imgui/imgui.cpp src/
+cp external/imgui/imgui_draw.cpp src/
+cp external/imgui/imgui_widgets.cpp src/
+cp external/imgui/imgui_tables.cpp src/
+cp external/imgui/imgui_demo.cpp src/
+----
+
+
+接下来，更新你的 CMakeLists.txt，加入这些文件：
+
+[source,cmake]
+----
+# ImGui files
+set(IMGUI_SOURCES
+    src/imgui.cpp
+    src/imgui_draw.cpp
+    src/imgui_widgets.cpp
+    src/imgui_tables.cpp
+    src/imgui_demo.cpp
+)
+
+# Our custom ImGui Vulkan integration
+set(IMGUI_VULKAN_SOURCES
+    src/imgui_vulkan_util.cpp
+)
+
+add_executable(VulkanApp
+    src/main.cpp
+    ${IMGUI_SOURCES}
+    ${IMGUI_VULKAN_SOURCES}
+)
+
+target_include_directories(VulkanApp PRIVATE include)
+----
+
+=== 创建 ImGui 集成
+
+我们来实现 ImGuiVulkanUtil 类，负责处理 ImGui 与 Vulkan 之间的集成。
+
+ImGuiVulkanUtil 类是 ImGui 的立即模式 GUI 系统与 Vulkan 的显式图形 API 之间的桥梁。这一集成需要仔细管理 GPU 资源、同步与渲染状态，才能在我们的 3D 图形旁高效显示用户界面元素。我们把类的架构拆成若干逻辑组件，看看每一部分如何为整体集成做出贡献。
+
+=== ImGuiVulkanUtil 架构：GPU 资源管理基础
+
+首先，我们建立用于在 GPU 上渲染 ImGui 动态生成的 UI 几何体的核心 Vulkan 资源。
+
+[source,cpp]
+----
+// ImGuiVulkanUtil.h
+#pragma once
+
+#include <vulkan/vulkan_raii.hpp>
+#include <imgui.h>
+
+class ImGuiVulkanUtil {
+private:
+    // Core GPU rendering resources for UI display
+    // These objects form the foundation of our ImGui-to-Vulkan rendering pipeline
+    vk::raii::Sampler sampler{nullptr};                    // Texture sampling configuration for font rendering
+    Buffer vertexBuffer;                                    // Dynamic vertex buffer for UI geometry
+    Buffer indexBuffer;                                     // Dynamic index buffer for UI triangle connectivity
+    uint32_t vertexCount = 0;                              // Current vertex count for draw commands
+    uint32_t indexCount = 0;                               // Current index count for draw commands
+    Image fontImage;                                        // GPU texture containing ImGui font atlas
+    ImageView fontImageView;                                // Shader-accessible view of font texture
+----
+
+这套 GPU 资源基础反映了 ImGui 的动态渲染模型：UI 几何体每帧都根据当前界面布局重新生成。顶点缓冲区与索引缓冲区使用主机可见内存，以便 CPU 高效更新；而字体纹理一旦加载就保持不变。这种混合做法在动态 UI 更新的需求与字体数据驻留 GPU 的性能优势之间取得平衡。
+
+缓冲区尺寸策略必须适应 ImGui 可变的几何体输出——它会随 UI 复杂度剧烈变化。与静态 3D 模型不同，ImGui 每帧生成的几何体数量都不相同，因此我们的缓冲区要么动态调整大小，要么预先分配足够容量以应对最坏情况。
+
+=== ImGuiVulkanUtil 架构：Vulkan 管线基础设施
+
+接下来，我们建立 Vulkan 管线对象，它们定义了 UI 几何体如何被 GPU 处理与渲染。
+
+[source,cpp]
+----
+    // Vulkan pipeline infrastructure for UI rendering
+    // These objects define the complete GPU processing pipeline for ImGui elements
+    vk::raii::PipelineCache pipelineCache{nullptr};        // Pipeline compilation cache for faster startup
+    vk::raii::PipelineLayout pipelineLayout{nullptr};      // Resource binding layout (textures, uniforms)
+    vk::raii::Pipeline pipeline{nullptr};                  // Complete graphics pipeline for UI rendering
+    vk::raii::DescriptorPool descriptorPool{nullptr};      // Pool for allocating descriptor sets
+    vk::raii::DescriptorSetLayout descriptorSetLayout{nullptr}; // Layout defining shader resource bindings
+    vk::raii::DescriptorSet descriptorSet{nullptr};        // Actual resource bindings for font texture
+----
+
+这套管线基础设施创建了一条为 UI 渲染专门优化的图形管线，它与典型的 3D 渲染管线差别很大。UI 渲染通常需要 alpha 混合来实现透明效果，工作在 2D 屏幕空间而不是 3D 世界空间，并使用更简单的着色模型——专注于纹理采样，而不是复杂的光照计算。
+
+[NOTE]
+====
+飞行帧安全性：如果你的渲染器使用多个飞行帧，且帧与帧之间不让 GPU 停顿，那么你必须为每个飞行帧复制 ImGui 的动态缓冲区（顶点/索引）。共用单个顶点/索引缓冲区会有风险：CPU 可能覆盖 GPU 上一帧仍在使用中的数据。上面展示的简单单缓冲区成员只是为了概念清晰；在生产环境中，应保存按最大飞行帧数确定大小的缓冲区/内存向量，并针对当前帧索引更新与绑定这些缓冲区。
+====
+
+描述符系统管理 CPU 侧资源与 GPU 着色器之间的连接。对 UI 渲染而言，这主要是把字体图集纹理绑定到片元着色器；不过更复杂的 UI 系统还可能包含用于图标、背景或其他视觉元素的额外纹理。
+
+=== ImGuiVulkanUtil 架构：设备上下文与系统集成
+
+然后，我们持有 Vulkan 设备上下文的引用，并管理与更大范围图形系统的集成。
+
+[source,cpp]
+----
+    // Vulkan device context and system integration
+    // These references connect our UI system to the broader Vulkan application context
+    vk::raii::Device* device = nullptr;                    // Primary Vulkan device for resource creation
+    vk::raii::PhysicalDevice* physicalDevice = nullptr;    // GPU hardware info for capability queries
+    vk::raii::Queue* graphicsQueue = nullptr;              // Command submission queue for UI rendering
+    uint32_t graphicsQueueFamily = 0;                      // Queue family index for validation
+----
+
+设备上下文集成体现了 Vulkan 资源管理的显式特性：每个操作都需要明确的设备与队列引用。与维护全局状态的高层图形 API 不同，Vulkan 要求显式指定由哪个 GPU 设备和命令队列处理每个操作。
+
+队列族索引用于校验与优化，确保 UI 渲染操作使用兼容的队列类型。虽然 UI 渲染通常与 3D 渲染共用同一个图形队列，但有些应用可能从为不同渲染职责分配专用队列中获益。
+
+=== ImGuiVulkanUtil 架构：UI 状态与渲染配置
+
+之后，我们管理 UI 专属状态，包括样式、渲染参数与动态更新跟踪。
+
+[source,cpp]
+----
+    // UI state management and rendering configuration
+    // These members control the visual appearance and dynamic behavior of the UI system
+    ImGuiStyle vulkanStyle;                                 // Custom visual styling for Vulkan applications
+
+    // Push constants for efficient per-frame parameter updates
+    // This structure enables fast updates of transformation and styling data
+    struct PushConstBlock {
+        glm::vec2 scale;                                    // UI scaling factors for different screen sizes
+        glm::vec2 translate;                                // Translation offset for UI positioning
+    } pushConstBlock;
+
+    // Dynamic state tracking for performance optimization
+    bool needsUpdateBuffers = false;                        // Flag indicating buffer resize requirements
+
+    // Modern Vulkan rendering configuration
+    vk::PipelineRenderingCreateInfo renderingInfo{};        // Dynamic rendering setup parameters
+    vk::Format colorFormat = vk::Format::eB8G8R8A8Unorm;   // Target framebuffer format
+----
+
+样式与配置管理既体现了 ImGui 在视觉呈现上的灵活性，又保持了与 Vulkan 显式渲染模型的兼容。推送常量为更新逐帧参数（例如屏幕分辨率变化或 UI 缩放系数）提供了一种高效机制，无需更新描述符集。
+
+动态状态跟踪在 UI 布局于帧间保持稳定时避免不必要的 GPU 资源更新，从而优化性能。对于 UI 复杂的应用，这一优化尤其重要——否则缓冲区更新可能影响帧率。
+
+=== ImGuiVulkanUtil 架构：公共接口与生命周期管理
+
+最后，我们定义外部接口，应用借此把 ImGui 渲染集成进自己的 Vulkan 渲染管线。
+
+[source,cpp]
+----
+public:
+    // Lifecycle management for proper resource initialization and cleanup
+    ImGuiVulkanUtil(vk::raii::Device& device, vk::raii::PhysicalDevice& physicalDevice,
+                   vk::raii::Queue& graphicsQueue, uint32_t graphicsQueueFamily);
+    ~ImGuiVulkanUtil();
+
+    // Core functionality methods for ImGui integration
+    void init(float width, float height);                   // Initialize ImGui context and configure display
+    void initResources();                                    // Create all Vulkan resources for rendering
+    void setStyle(uint32_t index);                          // Apply visual styling themes
+    void updateTexture(ImTextureData* tex);                 // Dynamically update/create textures (v1.92+)
+
+    // Frame-by-frame rendering operations
+    bool newFrame();                                         // Begin new ImGui frame and generate geometry
+    void updateBuffers();                                    // Upload updated geometry to GPU buffers
+    void drawFrame(vk::raii::CommandBuffer& commandBuffer); // Record rendering commands to command buffer
+
+    // Input event handling for interactive UI elements
+    void handleKey(int key, int scancode, int action, int mods); // Process keyboard input events
+    void handleMousePos(float x, float y);                  // Process mouse movement events (v1.87+)
+    void handleMouseButton(int button, bool pressed);       // Process mouse button events (v1.87+)
+    bool getWantKeyCapture();                               // Query if ImGui wants keyboard focus
+    void charPressed(uint32_t key);                         // Handle character input for text widgets
+};
+----
+
+公共接口的设计在易集成性与性能考量之间取得平衡，把一次性的初始化操作与逐帧渲染任务分开。初始化方法负责开销较大的资源创建——这类工作应在应用启动时只做一次；而逐帧方法专注于高效更新与渲染。
+
+输入处理接口使 ImGui 能与现有输入系统正确集成：ImGui 捕获相关事件，同时把其他事件透传给主应用。这种协作式做法确保 UI 元素能响应用户交互，又不干扰 3D 场景控制或其他输入处理。
+
+=== 实现 ImGuiVulkanUtil 类
+
+现在我们来实现 ImGuiVulkanUtil 类中面向 Vulkan 实现的方法。
+
+==== 构造函数与析构函数
+
+先来实现构造函数与析构函数：
+
+[source,cpp]
+----
+ImGuiVulkanUtil::ImGuiVulkanUtil(vk::raii::Device& device, vk::raii::PhysicalDevice& physicalDevice,
+                               vk::raii::Queue& graphicsQueue, uint32_t graphicsQueueFamily)
+    : device(&device), physicalDevice(&physicalDevice),
+      graphicsQueue(&graphicsQueue), graphicsQueueFamily(graphicsQueueFamily),
+      // Initialize buffers directly
+      vertexBuffer(*device, 1,
+                 vk::BufferUsageFlagBits::eVertexBuffer,
+                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
+      indexBuffer(*device, 1,
+                vk::BufferUsageFlagBits::eIndexBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent) {
+
+    // Set up dynamic rendering info
+    renderingInfo.colorAttachmentCount = 1;
+    vk::Format formats[] = { colorFormat };
+    renderingInfo.pColorAttachmentFormats = &colorFormat;
+}
+
+ImGuiVulkanUtil::~ImGuiVulkanUtil() {
+    // Wait for device to finish operations before destroying resources
+    // NOTE: waitIdle() is acceptable in destructors/cleanup code but should NEVER be used
+    // in the main rendering loop as it causes severe performance issues. For frame
+    // synchronization, use fences and semaphores instead.
+    if (device) {
+        device->waitIdle();
+    }
+
+    // All resources are automatically cleaned up by their destructors
+    // No manual cleanup needed
+
+    // ImGui context is destroyed separately
+}
+----
+
+==== 初始化
+
+接下来实现初始化方法：
+
+[source,cpp]
+----
+void ImGuiVulkanUtil::init(float width, float height) {
+    // Initialize ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+
+    // Configure ImGui
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable keyboard controls
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;      // Enable docking
+
+    // Inform ImGui that we support the new texture update protocol (v1.92+)
+    // This enables support for dynamic font textures and multiple texture atlases
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+
+    // Set display size
+    io.DisplaySize = ImVec2(width, height);
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+
+    // Set up style
+    vulkanStyle = ImGui::GetStyle();
+    vulkanStyle.Colors[ImGuiCol_TitleBg] = ImVec4(1.0f, 0.0f, 0.0f, 0.6f);
+    vulkanStyle.Colors[ImGuiCol_TitleBgActive] = ImVec4(1.0f, 0.0f, 0.0f, 0.8f);
+    vulkanStyle.Colors[ImGuiCol_MenuBarBg] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
+    vulkanStyle.Colors[ImGuiCol_Header] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
+    vulkanStyle.Colors[ImGuiCol_CheckMark] = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+    // Apply default style
+    setStyle(0);
+}
+
+void ImGuiVulkanUtil::setStyle(uint32_t index) {
+    ImGuiStyle& style = ImGui::GetStyle();
+
+    switch (index) {
+        case 0:
+            // Custom Vulkan style
+            style = vulkanStyle;
+            break;
+        case 1:
+            // Classic style
+            ImGui::StyleColorsClassic();
+            break;
+        case 2:
+            // Dark style
+            ImGui::StyleColorsDark();
+            break;
+        case 3:
+            // Light style
+            ImGui::StyleColorsLight();
+            break;
+    }
+}
+----
+
+==== 资源初始化
+
+现在来实现初始化 ImGui 渲染所需全部 Vulkan 资源的方法。这个过程比较复杂，由若干不同步骤组成，它们共同创建文本与 UI 渲染所需的 GPU 资源。
+
+=== 资源初始化：核心 Vulkan 资源
+
+现在来实现 `initResources` 方法，初始化 ImGui 渲染所需的通用 Vulkan 资源。我们先创建采样器、描述符池与描述符集布局。
+
+[source,cpp]
+----
+void ImGuiVulkanUtil::initResources() {
+    // Configure texture sampling parameters for optimal text rendering
+    // These settings directly impact text quality and performance
+    vk::SamplerCreateInfo samplerInfo{};
+    samplerInfo.magFilter = vk::Filter::eLinear;                    // Smooth scaling when magnified
+    samplerInfo.minFilter = vk::Filter::eLinear;                    // Smooth scaling when minified
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;        // Smooth transitions between mip levels
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;  // Prevent texture wrapping
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;  // Clean edge handling
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;  // 3D consistency
+    samplerInfo.borderColor = vk::BorderColor::eFloatOpaqueWhite;   // White border for clamped areas
+
+    sampler = device->createSampler(samplerInfo);                   // Create the GPU sampler object
+
+    // Create descriptor pool for shader resource binding
+    // Descriptors provide the interface between shaders and GPU resources
+    vk::DescriptorPoolSize poolSize{vk::DescriptorType::eCombinedImageSampler, 1};
+
+    vk::DescriptorPoolCreateInfo poolInfo{};
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;     // Allow individual descriptor set freeing
+    poolInfo.maxSets = 2;                                                      // Maximum number of descriptor sets
+    poolInfo.poolSizeCount = 1;                                                // Number of pool size specifications
+    poolInfo.pPoolSizes = &poolSize;                                           // Pool size configuration
+
+    descriptorPool = device->createDescriptorPool(poolInfo);                   // Create descriptor pool
+
+    // Create descriptor set layout defining shader resource interface
+    // This layout must match the binding declarations in the ImGui shaders
+    vk::DescriptorSetLayoutBinding binding{};
+    binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;        // Combined texture and sampler
+    binding.descriptorCount = 1;                                               // Single texture binding
+    binding.stageFlags = vk::ShaderStageFlagBits::eFragment;                   // Used in fragment shader
+    binding.binding = 0;                                                       // Shader binding point 0
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.bindingCount = 1;                                               // Number of bindings in layout
+    layoutInfo.pBindings = &binding;                                           // Binding configuration array
+
+    descriptorSetLayout = device->createDescriptorSetLayout(layoutInfo);       // Create layout object
+
+    // Allocate descriptor set from pool using the defined layout
+    // This creates the actual binding that connects GPU resources to shaders
+    vk::DescriptorSetAllocateInfo allocInfo{};
+    allocInfo.descriptorPool = *descriptorPool;                                // Source pool for allocation
+    allocInfo.descriptorSetCount = 1;                                          // Number of sets to allocate
+    vk::DescriptorSetLayout layouts[] = {*descriptorSetLayout};                // Layout template array
+    allocInfo.pSetLayouts = layouts;                                           // Layout configuration
+
+    descriptorSet = std::move(device->allocateDescriptorSets(allocInfo).front()); // Allocate and store set
+
+    // Update descriptor set with actual font texture and sampler resources
+    // This final step connects the physical GPU resources to the shader binding points
+    vk::DescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;           // Expected image layout
+    imageInfo.imageView = fontImageView.getHandle();                           // Font texture view
+    imageInfo.sampler = *sampler;                                              // Texture sampler
+
+    vk::WriteDescriptorSet writeSet{};
+    writeSet.dstSet = *descriptorSet;                                          // Target descriptor set
+    writeSet.descriptorCount = 1;                                              // Number of resources to bind
+    writeSet.descriptorType = vk::DescriptorType::eCombinedImageSampler;       // Resource type
+    writeSet.pImageInfo = &imageInfo;                                          // Image resource information
+    writeSet.dstBinding = 0;                                                   // Binding point in shader
+
+    device->updateDescriptorSets(1, &writeSet, 0, nullptr);                   // Execute the binding update
+
+    // Create pipeline cache
+    vk::PipelineCacheCreateInfo pipelineCacheInfo{};
+    pipelineCache = device->createPipelineCache(pipelineCacheInfo);
+
+    // Create pipeline layout
+    vk::PushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(PushConstBlock);
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.setLayoutCount = 1;
+    vk::DescriptorSetLayout setLayouts[] = {*descriptorSetLayout};
+    pipelineLayoutInfo.pSetLayouts = setLayouts;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    pipelineLayout = device->createPipelineLayout(pipelineLayoutInfo);
+
+    // Create the graphics pipeline with dynamic rendering
+    // ... (shader loading, pipeline state setup, etc.)
+
+    // For brevity, we're omitting the full pipeline creation code here
+    // In a real implementation, you would:
+    // 1. Load the vertex and fragment shaders
+    // 2. Set up all the pipeline state (vertex input, input assembly, rasterization, etc.)
+    // 3. Include the renderingInfo in the pipeline creation to enable dynamic rendering
+}
+----
+
+==== 动态纹理处理
+
+现代 Dear ImGui（v1.92+）支持动态纹理更新。我们不再只做一次静态上传，而是实现一套协议：渲染器后端按 ImGui 的请求更新纹理。我们实现 `updateTexture` 方法，负责创建纹理并把纹理数据上传到 GPU。若 ImGui 指示某个纹理需要更新，就会在渲染阶段调用这个方法。
+
+[source,cpp]
+----
+void ImGuiVulkanUtil::updateTexture(ImTextureData* tex) {
+    if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates) {
+        int texWidth = tex->Width;
+        int texHeight = tex->Height;
+        unsigned char* fontData = (unsigned char*)tex->Pixels;
+
+        if (!fontData) return;
+
+        vk::DeviceSize uploadSize = texWidth * texHeight * tex->BytesPerPixel;
+        vk::Format format = (tex->BytesPerPixel == 4) ? vk::Format::eR8G8B8A8Unorm : vk::Format::eR8Unorm;
+
+        if (tex->Status == ImTextureStatus_WantCreate) {
+            // Create optimized GPU image for texture storage
+            vk::Extent3D extent{static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1};
+            fontImage = Image(*device, extent, format,
+                            vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                            vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+            fontImageView = ImageView(*device, fontImage.getHandle(), format,
+                                   vk::ImageAspectFlagBits::eColor);
+        }
+
+        // Create staging buffer for efficient CPU-to-GPU data transfer
+        Buffer stagingBuffer(*device, uploadSize, vk::BufferUsageFlagBits::eTransferSrc,
+                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        // Copy data to staging buffer
+        void* data = stagingBuffer.map();
+        memcpy(data, fontData, uploadSize);
+        stagingBuffer.unmap();
+
+        // Transition image layout and copy data
+        transitionImageLayout(fontImage.getHandle(), format,
+                             vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+        copyBufferToImage(stagingBuffer.getHandle(), fontImage.getHandle(),
+                         static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+        transitionImageLayout(fontImage.getHandle(), format,
+                             vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        // Store descriptor set handle as the ImTextureID
+        // In this implementation, we use a single descriptor set for the font atlas
+        tex->SetTexID((ImTextureID)(intptr_t)(VkDescriptorSet)*descriptorSet);
+        tex->SetStatus(ImTextureStatus_OK);
+    }
+}
+----
+
+==== 帧管理与渲染
+
+最后实现帧管理与渲染相关的方法：
+
+[source,cpp]
+----
+bool ImGuiVulkanUtil::newFrame() {
+    // Start a new ImGui frame
+    ImGui::NewFrame();
+
+    // Create your UI elements here
+    // For example:
+    ImGui::Begin("Vulkan ImGui Demo");
+    ImGui::Text("Hello, Vulkan!");
+    if (ImGui::Button("Click me!")) {
+        // Handle button click
+    }
+    ImGui::End();
+
+    // End the frame
+    ImGui::EndFrame();
+
+    // Render to generate draw data
+    ImGui::Render();
+
+    // Check if buffers need updating
+    ImDrawData* drawData = ImGui::GetDrawData();
+    if (drawData && drawData->CmdListsCount > 0) {
+        if (drawData->TotalVtxCount > vertexCount || drawData->TotalIdxCount > indexCount) {
+            needsUpdateBuffers = true;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void ImGuiVulkanUtil::updateBuffers() {
+    ImDrawData* drawData = ImGui::GetDrawData();
+    if (!drawData || drawData->CmdListsCount == 0) {
+        return;
+    }
+
+    // Calculate required buffer sizes
+    vk::DeviceSize vertexBufferSize = drawData->TotalVtxCount * sizeof(ImDrawVert);
+    vk::DeviceSize indexBufferSize = drawData->TotalIdxCount * sizeof(ImDrawIdx);
+
+    // Resize buffers if needed
+    if (drawData->TotalVtxCount > vertexCount) {
+        // Recreate vertex buffer with new size
+        vertexBuffer = Buffer(*device, vertexBufferSize,
+                            vk::BufferUsageFlagBits::eVertexBuffer,
+                            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        vertexCount = drawData->TotalVtxCount;
+    }
+
+    if (drawData->TotalIdxCount > indexCount) {
+        // Recreate index buffer with new size
+        indexBuffer = Buffer(*device, indexBufferSize,
+                           vk::BufferUsageFlagBits::eIndexBuffer,
+                           vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        indexCount = drawData->TotalIdxCount;
+    }
+
+    // Upload data to buffers
+    ImDrawVert* vtxDst = static_cast<ImDrawVert*>(vertexBuffer.map());
+    ImDrawIdx* idxDst = static_cast<ImDrawIdx*>(indexBuffer.map());
+
+    for (int n = 0; n < drawData->CmdListsCount; n++) {
+        const ImDrawList* cmdList = drawData->CmdLists[n];
+        memcpy(vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof(ImDrawVert));
+        memcpy(idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof(ImDrawIdx));
+        vtxDst += cmdList->VtxBuffer.Size;
+        idxDst += cmdList->IdxBuffer.Size;
+    }
+
+    vertexBuffer.unmap();
+    indexBuffer.unmap();
+}
+----
+
+==== 开始渲染作用域
+
+在发出任何 UI 绘制命令之前，我们先开启一个以当前帧缓冲区为目标的动态渲染作用域。它取代了 vkCmdBeginRenderPass/EndRenderPass，并让 UI 通道保持轻量。
+
+[source,cpp]
+----
+void ImGuiVulkanUtil::drawFrame(vk::raii::CommandBuffer& commandBuffer) {
+    ImDrawData* drawData = ImGui::GetDrawData();
+    if (!drawData || drawData->CmdListsCount == 0) {
+        return;
+    }
+
+    // Process dynamic texture updates (v1.92+ RendererHasTextures protocol)
+    // This handles font atlas regeneration and any user-provided textures
+    if (drawData->Textures) {
+        for (int n = 0; n < drawData->Textures->Size; n++) {
+            ImTextureData* tex = (*drawData->Textures)[n];
+            if (tex->Status != ImTextureStatus_OK) {
+                updateTexture(tex);
+            }
+        }
+    }
+
+    // Begin dynamic rendering
+    vk::RenderingAttachmentInfo colorAttachment{};
+    // Note: In a real implementation, you would set imageView, imageLayout,
+    // loadOp, storeOp, and clearValue based on your swapchain image
+
+    vk::RenderingInfo renderingInfo{};
+    renderingInfo.renderArea = vk::Rect2D{{0, 0}, {static_cast<uint32_t>(drawData->DisplaySize.x),
+                                                   static_cast<uint32_t>(drawData->DisplaySize.y)}};
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    commandBuffer.beginRendering(renderingInfo);
+----
+
+此时命令只影响 UI 叠加层。接下来我们绑定那些在每次绘制之间不变的状态。
+
+==== 绑定管线并设置视口
+
+[source,cpp]
+----
+    // Bind the pipeline used for ImGui
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+
+    // Configure viewport for UI pixel coordinates
+    vk::Viewport viewport{};
+    viewport.width = drawData->DisplaySize.x;
+    viewport.height = drawData->DisplaySize.y;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    commandBuffer.setViewport(0, viewport);
+----
+
+这条管线的混合与光栅化状态是为 UI 定制的。视口把 ImGui 的坐标系映射到帧缓冲区。
+
+==== 推送逐帧常量
+
+[source,cpp]
+----
+    // Convert from ImGui coordinates into NDC via a simple scale/translate
+    pushConstBlock.scale = glm::vec2(2.0f / drawData->DisplaySize.x, 2.0f / drawData->DisplaySize.y);
+    pushConstBlock.translate = glm::vec2(-1.0f);
+    commandBuffer.pushConstants(*pipelineLayout, vk::ShaderStageFlagBits::eVertex,
+                              0, sizeof(PushConstBlock), &pushConstBlock);
+----
+
+这样着色器保持简单，也避免了逐顶点的坐标变换工作。
+
+==== 绑定几何缓冲区
+
+[source,cpp]
+----
+    // We already filled these buffers this frame
+    vk::Buffer vertexBuffers[] = { vertexBuffer.getHandle() };
+    vk::DeviceSize offsets[] = { 0 };
+    commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+    commandBuffer.bindIndexBuffer(indexBuffer.getHandle(), 0, vk::IndexType::eUint16);
+----
+
+==== 遍历命令链表、设置剪刀矩形并绘制
+
+[source,cpp]
+----
+    int vertexOffset = 0;
+    int indexOffset = 0;
+
+    for (int i = 0; i < drawData->CmdListsCount; i++) {
+        const ImDrawList* cmdList = drawData->CmdLists[i];
+
+        for (int j = 0; j < cmdList->CmdBuffer.Size; j++) {
+            const ImDrawCmd* pcmd = &cmdList->CmdBuffer[j];
+
+            // Clip per draw call
+            vk::Rect2D scissor{};
+            scissor.offset.x = std::max(static_cast<int32_t>(pcmd->ClipRect.x), 0);
+            scissor.offset.y = std::max(static_cast<int32_t>(pcmd->ClipRect.y), 0);
+            scissor.extent.width = static_cast<uint32_t>(pcmd->ClipRect.z - pcmd->ClipRect.x);
+            scissor.extent.height = static_cast<uint32_t>(pcmd->ClipRect.w - pcmd->ClipRect.y);
+            commandBuffer.setScissor(0, scissor);
+
+            // Bind font (and any UI) textures for this draw
+            // The TexID now stores the actual descriptor set handle (VkDescriptorSet)
+            VkDescriptorSet texHandle = (VkDescriptorSet)pcmd->GetTexID();
+            if (texHandle) {
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                               *pipelineLayout, 0, {vk::DescriptorSet(texHandle)}, {});
+            } else {
+                // Fallback to default font if no specific texture is bound
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                               *pipelineLayout, 0, {*descriptorSet}, {});
+            }
+
+            // Issue indexed draw for this UI batch
+            commandBuffer.drawIndexed(pcmd->ElemCount, 1, indexOffset, vertexOffset, 0);
+            indexOffset += pcmd->ElemCount;
+        }
+
+        vertexOffset += cmdList->VtxBuffer.Size;
+    }
+----
+
+每个 ImDrawCmd 都提供一个剪刀矩形，无需额外的通道就能高效裁剪控件。
+
+==== 结束渲染作用域
+
+[source,cpp]
+----
+    // Close the rendering scope for the UI overlay
+    commandBuffer.endRendering();
+}
+----
+
+=== 输入处理
+
+我们用 ImGui v1.87 引入的现代事件式 API 来实现输入处理方法。它取代了直接修改状态的旧做法（如 `io.KeysDown[]` 或 `io.MousePos`），改用健壮的事件队列，能正确处理输入时刻与多设备。
+
+[source,cpp]
+----
+void ImGuiVulkanUtil::handleKey(int key, int scancode, int action, int mods) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Map the platform-specific key action to a boolean state
+    // In GLFW: GLFW_RELEASE = 0, GLFW_PRESS = 1, GLFW_REPEAT = 2
+    bool pressed = (action != 0);
+
+    // Modern ImGui (v1.87+) uses AddKeyEvent to queue input events.
+    // This handles key states, modifiers, and repeat logic internally.
+    // Most backends can cast native key codes directly to ImGuiKey.
+    io.AddKeyEvent((ImGuiKey)key, pressed);
+}
+
+void ImGuiVulkanUtil::handleMousePos(float x, float y) {
+    ImGuiIO& io = ImGui::GetIO();
+    // Modern event API for mouse position
+    io.AddMousePosEvent(x, y);
+}
+
+void ImGuiVulkanUtil::handleMouseButton(int button, bool pressed) {
+    ImGuiIO& io = ImGui::GetIO();
+    // Modern event API for mouse buttons (0: Left, 1: Right, 2: Middle)
+    io.AddMouseButtonEvent(button, pressed);
+}
+
+bool ImGuiVulkanUtil::getWantKeyCapture() {
+    return ImGui::GetIO().WantCaptureKeyboard;
+}
+
+void ImGuiVulkanUtil::charPressed(uint32_t key) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddInputCharacter(key);
+}
+----
+
+=== 使用 ImGuiVulkanUtil 类
+
+ImGuiVulkanUtil 类已经实现好了，下面看看如何在 Vulkan 应用中使用它：
+
+[source,cpp]
+----
+// In your application class
+ImGuiVulkanUtil imGui;
+
+// During initialization
+void initImGui() {
+    // Initialize ImGui directly
+    imGui = ImGuiVulkanUtil(
+        device,
+        physicalDevice,
+        graphicsQueue,
+        graphicsQueueFamily
+    );
+
+    imGui.init(swapChainExtent.width, swapChainExtent.height);
+    imGui.initResources(); // No renderPass needed with dynamic rendering
+}
+
+// In your render loop
+void drawFrame() {
+    // ... existing frame preparation code ...
+
+    // Update ImGui
+    if (imGui.newFrame()) {
+        imGui.updateBuffers();
+    }
+
+    // Begin command buffer recording
+    // Note: With dynamic rendering, we don't need to begin a render pass
+    // The ImGui drawFrame method will handle dynamic rendering internally
+
+    // Render scene using dynamic rendering
+    // ...
+
+    // Render ImGui (in multi-frame renderers, pass the current frame index to bind per-frame buffers)
+    imGui.drawFrame(commandBuffer);
+
+    // ... submit command buffer ...
+}
+
+// Input handling
+// This example shows how to handle input with GLFW, but you can adapt this
+// to work with any windowing library's input system
+
+// Example key callback function for GLFW
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    // First check if ImGui wants to capture this input
+    imGui.handleKey(key, scancode, action, mods);
+
+    // If ImGui doesn't want to capture the keyboard, process for your application
+    if (!imGui.getWantKeyCapture()) {
+        // Process key for your application
+    }
+}
+
+// Example character input callback for GLFW
+void charCallback(GLFWwindow* window, unsigned int codepoint) {
+    imGui.charPressed(codepoint);
+}
+
+// With other windowing libraries, you would implement similar callback functions
+// using their equivalent APIs and event systems
+
+// Cleanup
+void cleanup() {
+    // ... existing cleanup code ...
+
+    // ImGui will be automatically cleaned up when the application exits
+    // No manual cleanup needed
+}
+----
+
+=== 测试集成
+
+要验证 ImGui 集成是否正常工作，可以使用 ImGui 的演示窗口，它展示了 ImGui 的全部特性：
+
+[source,cpp]
+----
+// In your ImGuiVulkanUtil::newFrame method
+bool ImGuiVulkanUtil::newFrame() {
+    ImGui::NewFrame();
+
+    // Show the demo window
+    ImGui::ShowDemoWindow();
+
+    ImGui::EndFrame();
+    ImGui::Render();
+
+    // Check if buffers need updating
+    // ...
+}
+----
+
+有了这套实现，你就有了一份面向 ImGui 的 Vulkan 实现，可以按自己的具体需求定制渲染过程。
+
+下一节我们将探讨如何同时为 GUI 与 3D 场景处理输入。
+
+xref:Building_a_Simple_Engine/GUI/01_introduction.adoc[上一篇：GUI：简介] | xref:Building_a_Simple_Engine/GUI/03_input_handling.adoc[下一篇：GUI：输入处理]

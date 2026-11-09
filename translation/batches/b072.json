@@ -1,0 +1,18 @@
+{
+  "id": "b072",
+  "words": 5885,
+  "files": [
+    {
+      "source": "en/ML_Inference/Desktop_Applications/02_image_classification.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/02_image_classification.adoc",
+      "words": 4348,
+      "title": "Image Classification: From MNIST to CNNs"
+    },
+    {
+      "source": "en/ML_Inference/Desktop_Applications/03_practical_implementation.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/03_practical_implementation.adoc",
+      "words": 1537,
+      "title": "CPU Baseline Implementation"
+    }
+  ]
+}

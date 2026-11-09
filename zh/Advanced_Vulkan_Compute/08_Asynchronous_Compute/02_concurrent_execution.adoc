@@ -1,0 +1,64 @@
+:pp: {plus}{plus}
+= 并发执行与 Synchronization 2
+
+要真正实现图形与计算之间的并行，我们得先谈谈 Vulkan 的时间线。在标准的单队列设置里，一切都是顺序发生的——你派发计算、等它结束，然后开始图形工作。这种方式直白但低效。通过使用多个队列，我们可以把工作提交到一个专用的**计算队列**，让 GPU 把它与主**图形队列**并行执行。
+
+然而难点不只是提交工作，而在于确保它在需要的地方保持同步。如果我们的计算派发生成了一张图形趟次需要的纹理，那么在计算完成之前，不能让图形开始读取它。但我们*可以*让图形去做其它所有事——比如清空缓冲区、处理顶点，甚至光栅化其它无关的对象。
+
+这正是 **Synchronization 2**（`VK_KHR_synchronization2`）大显身手的地方。旧的 Vulkan 同步机制虽然强大，但出了名的复杂、难读。它依赖管线段与访问类型的位掩码，其中常常含有冗余。Synchronization 2 把这些位掩码归并成更合乎逻辑的结构，从而简化了它们；更重要的是，它引入了更健壮的方式来表达跨队列的**依赖链**。
+
+== 异步计算 vs. 并发执行
+必须区分单队列上的「重叠」工作与独立硬件队列上的「异步」工作。
+
+在单个队列上，GPU 仍然可以重叠工作——例如，上一次绘制的片元着色器还在收尾时，它就可以启动新的顶点着色器。这是**并发执行**。但它依然遵循单一命令流。
+
+**异步计算**则使用独立的硬件引擎（ACE）来喂给计算单元（CU/SM）。这意味着计算引擎是从与图形引擎完全不同的内存流中取命令的。真正的并行就发生在这里，它让 GPU 即使图形引擎受限于 ROP（光栅输出处理器）或固定功能几何硬件等因素时，也能让 ALU（算术逻辑单元）保持饱和。
+
+== 队列所有权转移：握手
+多队列 Vulkan 中最隐晦却最关键的部分之一，是**队列所有权转移**。大多数 Vulkan 资源（如 `VkBuffer` 或 `VkImage`）创建时默认的共享模式是 `VK_SHARING_MODE_EXCLUSIVE`。这意味着同一时刻它们只归一个队列族所有。
+
+要把一个资源从计算队列移到图形队列，你必须执行一次由两部分组成的「握手」：
+
+1.  **释放**：在**源**队列上的一次屏障，用来「释放」所有权。
+2.  **获取**：在**目标**队列上的一次屏障，用来「获取」所有权。
+
+省略任一部分，都会导致**未定义行为**和潜在的数据损坏。Synchronization 2 把这一点显式化：屏障结构体里包含 `srcQueueFamilyIndex` 与 `dstQueueFamilyIndex`。
+
+[source,cpp]
+----
+// ON THE COMPUTE QUEUE (Source)
+vk::ImageMemoryBarrier2 releaseBarrier {
+    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+    .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+    .dstStageMask = vk::PipelineStageFlagBits2::eNone, // We don't care about the destination stage yet
+    .dstAccessMask = vk::AccessFlagBits2::eNone,      // Or the access mask
+    .oldLayout = vk::ImageLayout::eGeneral,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = computeQueueFamilyIndex,
+    .dstQueueFamilyIndex = graphicsQueueFamilyIndex,
+    .image = *sharedImage // Extract handle from vk::raii::Image
+};
+// ... (subresourceRange setup)
+
+// ON THE GRAPHICS QUEUE (Destination)
+vk::ImageMemoryBarrier2 acquireBarrier {
+    .srcStageMask = vk::PipelineStageFlagBits2::eNone, // We don't care about the source stage here
+    .srcAccessMask = vk::AccessFlagBits2::eNone,      // Or the access mask
+    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+    .oldLayout = vk::ImageLayout::eGeneral,
+    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    .srcQueueFamilyIndex = computeQueueFamilyIndex,
+    .dstQueueFamilyIndex = graphicsQueueFamilyIndex,
+    .image = *sharedImage // Extract handle from vk::raii::Image
+};
+// ... (subresourceRange setup)
+----
+
+注意两个屏障里的 `oldLayout` 与 `newLayout` 必须**完全一致**。这是一项关键要求。「释放」屏障确保内存是**可用的**（已写出到内存或 L2 缓存），而「获取」屏障确保它是**可见的**（使目标引擎上的读取缓存失效）。
+
+真正的「魔法」发生在使用**基于信号量的同步**（用 `VkSemaphore` 对象在队列之间协调工作）时。我们用一个「发信号」信号量提交计算工作负载，用「等待」信号量提交图形工作负载。GPU 负责内部调度，只有当图形队列到达需要计算结果的特定管线阶段时，才会让它停顿。这使 GPU 的硬件调度器能在图形趟次的几何密集部分让计算单元保持忙碌，实际上「隐藏」了计算工作的成本。
+
+不过要记住，并非所有硬件都生而平等。有些移动 GPU 的计算与图形使用统一硬件，那里的「并发」可能只是调度器把任务交错执行。而高端桌面 GPU 往往有专门的计算通路，可以与图形引擎完全并行运行。性能分析是你唯一的办法，用来确认你的编排是否真的带来了预期的性能提升。
+
+xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc[上一节：异步计算编排] | xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc[下一节：时间线信号量：统一的同步]

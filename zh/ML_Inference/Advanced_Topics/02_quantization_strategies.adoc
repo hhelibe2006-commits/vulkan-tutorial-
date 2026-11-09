@@ -1,0 +1,446 @@
+= 量化策略：精通比特预算
+:pp: ++
+:stem: latexmath
+
+标准 ResNet-50 模型在 FP32 下大约占用 100MB 内存，并消耗 20-30ms 的 GPU 时间。对高端台式机来说，这没什么问题。但对电池供电的 VR 头显或手机来说，这就是一场灾难。
+
+**量化**是降低模型权重与激活值精度的过程。从 32 位浮点数转向 8 位（甚至 4 位）整数后，在具备专用整数单元的硬件上，我们可以获得**4 倍体积缩减**和最高 **10 倍加速**。
+
+本章我们会超越基础，深入量化的严谨数学，学习如何在缩小模型的同时不摧毁它的「智能」。
+
+== 量化的成熟：从浮点到比特
+
+你已经构建好推理引擎，在 FP32 下验证了它的正确性，也优化了自己的循环。但这时你看了看二进制体积：单个 ResNet-50 模型就有 100MB。你又看了看移动设备上的帧时间：100ms。再看看电量消耗：大得惊人。
+
+**量化**是降低模型权重与激活值精度的过程。从 32 位浮点数转向 8 位（甚至 4 位）整数后，我们能达成三个关键的生产目标：
+1.  **4 倍内存缩减**：100MB 的模型变成 25MB。
+2.  **4 倍带宽节省**：「内存墙」被推远了，因为每次运算搬运的字节更少。
+3.  **10 倍加速**：专用硬件（例如 DP4A 或 Tensor Core）处理多个整数的时间，只相当于处理一个浮点数的时间。
+
+本章中，我们从「理解量化」走向「执行量化」。我们会同时探讨**务实路线**（使用 ONNX Runtime 的工具链）与**教学路线**（在 Vulkan 中实现自定义整数着色器）。
+
+== 直觉：信号与噪声
+
+量化为什么有效？当我们丢掉 75% 的数值精度时，神经网络为什么没有停止工作？
+
+神经网络天生**对噪声鲁棒**。训练期间，我们使用 Dropout 和权重衰减（Weight Decay）等技巧，刻意「扰乱」数据。网络学会寻找高层模式（信号），并忽略细枝末节（噪声）。量化本质上就是加入一种非常特定的「舍入噪声」。只要这种噪声小于区分「狗」与「猫」所需的信号，网络就能完美工作。
+
+可以把它想成一张数码照片。未经压缩的 RAW 文件（FP32）包含数百万种你根本看不出来的颜色。JPEG（INT8）削减了这些细节，但在人眼看来，图像一模一样。
+
+== 数学基础：从浮点到整数
+
+量化是一个映射函数 latexmath:[f(x)]，它把连续的无限实数范围压缩成一个小而离散的整数集合。
+
+.量化映射：FP32 到 INT8
+image::images/ML_Inference/Advanced_Topics/quantization_mapping.svg[展示从连续浮点范围映射到离散整数点的示意图, 600]
+
+=== 1. 对称量化（速度之王）
+
+这是最简单、最快的量化形式。我们假设数据以零为中心，把范围 latexmath:[[-max, max]] 映射到整数范围 latexmath:[[-127, 127]]（针对有符号 8 位）。
+
+[latexmath]
+++++
+\text{Scale} (S) = \frac{\max(|x|)}{127}
+++++
+[latexmath]
+++++
+x_{int} = \text{clamp}(\text{round}(x_{float} / S), -127, 127)
+++++
+
+*   **优点**：数学运算极快。因为没有「偏移量」，硬件可以执行纯整数点积（latexmath:[A \times B]）。
+*   **缺点**：如果你的数据严重偏斜（例如所有值都落在 10 到 20 之间），对称量化就很浪费。你只会用到可用整数范围中很小的一条缝。
+
+=== 2. 非对称量化（精度之王）
+
+当你的数据有偏移、或大部分为正时（例如 ReLU 激活），就该用它。我们把范围 latexmath:[[min, max]] 映射到无符号整数范围 latexmath:[[0, 255]]。
+
+[latexmath]
+++++
+S = \frac{max - min}{255}
+++++
+[latexmath]
+++++
+Z = \text{round}\left(-\frac{min}{S}\right)
+++++
+[latexmath]
+++++
+x_{int} = \text{clamp}(\text{round}(x_{float} / S + Z), 0, 255)
+++++
+
+其中 latexmath:[Z] 是**零点**（Zero-Point）。它保证浮点值 `0.0` 能精确映射到某个整数。这一点至关重要，因为神经网络用「零」表示缺失数据或填充的边缘。如果 `0.0` 变成了 `0.3`，网络就会在本该「寂静」的地方看到「信号」。
+
+== 定点运算：在 8 位里做数学
+
+秘密在这里：一旦拿到整数，你**绝不会**把它们转回浮点数再做数学。你在整数域完成运算，只在层的最后做一次「重缩放」。这就是我们在整数优化硬件上获得 latexmath:[10\times] 加速的方式。
+
+设想一次矩阵乘法 latexmath:[Y = W \times X]。
+在量化空间里，它变成：
+
+[latexmath]
+++++
+Y_{float} = (S_w \cdot W_{int}) \times (S_x \cdot (X_{int} - Z_x))
+++++
+[latexmath]
+++++
+Y_{float} = (S_w \cdot S_x) \cdot \sum (W_{int} \cdot (X_{int} - Z_x))
+++++
+
+=== 整数重缩放技巧
+在你的 Vulkan 着色器中，latexmath:[\sum (W \cdot X)] 使用 32 位整数累加器来完成，以防溢出。要得到供下一层使用的最终 INT8 结果，我们必须把这个 32 位和重新缩放回去。
+
+从数学上，我们要计算：
+[latexmath]
+++++
+Output_{int} = \text{round}\left( \text{Sum}_{int32} \cdot \frac{S_{in} \cdot S_{w}}{S_{out}} \right)
+++++
+
+由于浮点乘法很慢，我们预先算出常量 latexmath:[M = \frac{S_{in} S_{w}}{S_{out}}]，并把它表示成一个**定点乘数**（一个较大的整数）加一次**位移**。在你的着色器里，「重缩放」就变成一次整数乘法和一次右移（latexmath:[>>]），这比任何浮点运算都快得多。
+
+== ONNX Runtime 量化工作流（务实路线）
+
+如果你在 Vulkan 应用中使用 ONNX Runtime（正如「第三方库」一章所讲），就不必自己写这些数学。你可以使用 **ONNX Runtime 量化工具链**。
+
+=== 第 1 步：选择策略
+
+你必须在**动态**量化与**静态**量化之间做出选择。
+
+1.  **动态量化**：
+    *   **做法**：权重离线量化。激活值由引擎*在运行时*量化。
+    *   **优点**：不需要数据集，易于使用。
+    *   **最适合**：LSTM、Transformer 以及受限于 CPU 的推理。
+2.  **静态量化（PTQ）**：
+    *   **做法**：权重和激活值都离线量化。
+    *   **优点**：能达到最快的性能。允许 GPU 使用专用的 INT8 指令。
+    *   **要求**：需要一个小型**校准数据集**（100-500 张图像）来「学习」激活值的范围。
+
+=== 第 2 步：实现校准数据读取器
+
+要做静态量化，工具需要知道「正常」数据长什么样，才能找到最优的缩放因子。你通过 `CalibrationDataReader` 提供这些信息。
+
+[source,python]
+----
+import numpy as np
+import onnxruntime
+from onnxruntime.quantization import CalibrationDataReader
+
+class ImageNetDataReader(CalibrationDataReader):
+    def __init__(self, calibration_image_folder, input_name):
+        self.image_folder = calibration_image_folder
+        self.input_name = input_name
+        self.data_iter = None
+        self.preprocessed_data = []
+        self.preprocess_images()
+
+    def preprocess_images(self):
+        # Load 100-200 images for a good statistical sample.
+        # CRITICAL: This MUST match your C++ preprocessing (Mean/StdDev) exactly!
+        for img_path in list_images(self.image_folder)[:100]:
+            img = load_image(img_path)
+            img = resize_aspect_aware(img, (224, 224))
+            # ImageNet Normalization
+            img = (img / 255.0 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+            img = img.transpose(2, 0, 1) # HWC to NCHW
+            img = np.expand_dims(img, axis=0).astype(np.float32)
+            self.preprocessed_data.append({self.input_name: img})
+
+    def get_next(self):
+        if self.data_iter is None:
+            self.data_iter = iter(self.preprocessed_data)
+        return next(self.data_iter, None)
+----
+
+=== 第 3 步：量化脚本
+
+读取器就绪后，就可以运行量化流程。这个脚本会生成一个 `.quant.onnx` 文件，体积只有原模型的四分之一。
+
+[source,python]
+----
+from onnxruntime.quantization import quantize_static, QuantType, QuantFormat
+
+model_fp32 = "models/mobilenetv2.onnx"
+model_int8 = "models/mobilenetv2.quant.onnx"
+
+# Create our data reader
+dr = ImageNetDataReader("data/calibration_images", "input")
+
+# Run the quantization
+quantize_static(
+    model_fp32,
+    model_int8,
+    dr,
+    quant_format=QuantFormat.QDQ, # Quantize-Dequantize format (modern ORT standard)
+    per_channel=True,             # High precision for depthwise convs
+    weight_type=QuantType.QInt8,
+    activation_type=QuantType.QInt8,
+    nodes_to_exclude=[]           # Add names of sensitive layers here if needed
+)
+print(f"Quantized model saved to {model_int8}")
+----
+
+=== 第 4 步：在 C++ 中加载并启用加速
+
+在你的 Vulkan C++ 应用里加载量化模型，与加载 FP32 模型完全一样。不过，要想真正拿到加速，你必须确保 `SessionOptions` 配置为使用支持 INT8 硬件指令的提供程序。
+
+[source,cpp]
+----
+Ort::SessionOptions sessionOptions;
+
+// 1. Enable Graph Optimizations
+sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+// 2. Append the WebGPU or DirectML provider
+// These providers will detect the INT8 nodes and map them to DP4A/Tensor Core instructions
+sessionOptions.AppendExecutionProvider("webgpu");
+
+// 3. Load the quantized model
+Ort::Session session(env, L"models/mobilenetv2.quant.onnx", sessionOptions);
+----
+
+**怎么判断它是否生效？**
+如果你查看 ONNX Runtime 日志（把级别设为 `ORT_LOGGING_LEVEL_VERBOSE`），应该能看到诸如 `Placing node ... on DML_Execution_Provider` 的消息。如果你看到节点仍然留在 `CPU_Execution_Provider` 上，就说明你的硬件不支持所需的 INT8 运算，或者驱动程序已经过时。
+
+== 过渡：混合精度推理
+
+量化并不是非黑即白。有时，把*整个*模型都量化会导致精度损失过大。专业引擎使用**混合精度**。
+
+*   **敏感层**：靠前的层（直接看到原始像素）或靠后的层（输出概率）通常保持 **FP16** 或 **FP32**，以保住精度。
+*   **瓶颈层**：网络中间那 80%（昂贵的卷积）被量化成 **INT8**。
+
+=== 排除脆弱节点
+在 `quantize_static` 调用中，使用 `nodes_to_exclude` 参数。你可以用 **Netron** 这类工具找到节点名称。
+
+[source,python]
+----
+# Example: Keep the final classifier head in FP32
+quantize_static(..., nodes_to_exclude=['Classifier_Head_FC'])
+----
+
+如果你的模型精度从 95% 掉到 70%，试试排除最后一层——这通常能找回 90% 的损失精度，而性能几乎不受影响。
+
+== 调试量化模型：追捕误差
+
+量化模型失败时不会崩溃；它只是给出错误答案。这就是「静默精度 bug」。
+
+1.  **余弦相似度**：逐层比较 FP32 模型与 INT8 模型的激活值。
+    *   latexmath:[Similarity = 1.0]：量化完美。
+    *   latexmath:[Similarity < 0.8]：失真严重。这一层就是排除的候选对象。
+2.  **敏感度分析**：使用 `onnxruntime.quantization.api.quantize` 的敏感度分析工具，自动找出哪些层对精度损失贡献最大。
+3.  **可视化截断**：如果你的校准直方图显示有 10% 的数据被「截断」（被压到 127），说明缩放因子太小了。换一种**校准方法**（例如用 `Entropy` 或 `Percentile` 而不是 `MinMax`）。
+
+== 硬件兼容性：INT8 为何不总是更快
+
+在发布量化模型之前，先确认用户硬件的能力。
+
+*   **现代 GPU（NVIDIA Turing+、AMD RDNA3+、Intel Xe）**：具备专用 INT8 单元。量化能带来 latexmath:[4\times \text{--} 10\times] 的提升。
+*   **较旧的 GPU**：可能缺少专用的整数运算单元。在这些芯片上，GPU 只能用 FP32「模拟」INT8；由于打包与解包的开销，实际可能**更慢**。
+*   **专业做法**：同时发布 FP32 与 INT8 两个模型。在运行时用 Vulkan 查询 `VkPhysicalDeviceFeatures`。如果支持 `shaderInt8`，就加载量化模型；否则回退到浮点版本。
+
+== 校准：寻找截断阈值
+
+你不能直接拿权重的绝对 latexmath:[min/max] 来算缩放。如果 99.9% 的权重都落在 -1 到 1 之间，却有一个离群值在 50，那么你的缩放 latexmath:[S] 会非常大，那重要的 99.9% 就会彻底失去精度。
+
+=== KL 散度策略
+
+专业引擎使用 **KL 散度**（Kullback–Leibler）来寻找最优截断阈值。
+
+1.  **采集**：让 100-500 张真实图像跑过模型，记录每一层激活值的分布（直方图）。
+2.  **搜索**：尝试不同的截断值（例如先把范围截到 2.0，再试 2.5，再试 3.0）。
+3.  **比较**：把截断后的数据量化，再反量化。把这个「失真」的分布与原始 FP32 分布作比较。
+4.  **选取**：选出使**信息损失**最小的阈值。通常，丢掉 0.1% 的离群值，能让其余 99.9% 的精度提升 10 倍。
+
+== PTQ 与 QAT：部署时的选择
+
+决定量化之后，你还必须在两套工作流之间选择：
+
+1.  **训练后量化（PTQ）**：
+    *   **流程**：拿一个现成的 FP32 模型，做校准。
+    *   **优点**：快（几分钟），易用，不需要重新训练。
+    *   **缺点**：对于「敏感」模型（例如目标检测器）可能造成明显的精度损失。
+
+2.  **量化感知训练（QAT）**：
+    *   **流程**：在 PyTorch 图里注入「伪量化」节点，然后继续训练若干个 epoch。网络会学着调整权重，使其对舍入误差鲁棒。
+    *   **优点**：精度高（常常与 FP32 完全一致）。
+    *   **缺点**：慢（需要训练环境、GPU 时间和有标注的数据集）。
+
+**专家建议**：从 PTQ 开始。只有当精度下降超过 1% 时，才值得投入时间做 QAT。
+
+== 粒度：逐张量与逐通道
+
+「缩放」latexmath:[S] 是量化中最宝贵的数字。你怎么算它，决定了你的精度。
+
+1.  **逐张量（全局）**：
+    *   你为一层中整个权重缓冲区只算一个缩放 latexmath:[S]。
+    *   **优点**：实现最简单。内存开销极小（每层一个 float）。
+    *   **缺点**：如果一个输出滤波器的权重范围是 [-10, 10]，另一个是 [ -0.1, 0.1]，全局缩放会偏向那个大的滤波器。小的滤波器会被压成零，彻底失去特征检测能力。
+2.  **逐通道（标准做法）**：
+    *   你为每个输出滤波器（通道）分别算一个独有的缩放 latexmath:[S_c]。
+    *   **优点**：保留每个特征各自的动态范围。对于 MobileNetV2 这类使用深度卷积的现代架构，这是**必须的**。
+    *   **缺点**：着色器数学稍微复杂一点（你需要用索引去取缩放缓冲区）。
+
+== 硬件加速：DP4A 与 dotProduct 扩展
+
+INT8 为什么真的更快？这不只是数字更小，关键在于**向量吞吐量**。
+
+现代 GPU 具备专为「水平」数学设计的指令。在标准的乘加运算中，一个线程做一次运算。而在 **DP4A**（Dot Product 4-way Accumulate）下，一个线程可以在单个时钟周期内处理四对 8 位整数。
+
+=== 指令：`dotProduct4x8bitPackedEXT`
+
+这条指令接收两个 32 位寄存器，把每个都当作四个 8 位整数，逐一相乘，再把结果累加到累加器中。
+
+[source,glsl]
+----
+// Logic of the instruction
+int dotProduct4x8bitPackedEXT(uint a, uint b, int acc) {
+    int res = acc;
+    res += int8_t(a & 0xFF) * int8_t(b & 0xFF);
+    res += int8_t((a >> 8) & 0xFF) * int8_t((b >> 8) & 0xFF);
+    res += int8_t((a >> 16) & 0xFF) * int8_t((b >> 16) & 0xFF);
+    res += int8_t((a >> 24) & 0xFF) * int8_t((b >> 24) & 0xFF);
+    return res;
+}
+----
+
+借助它，你的计算着色器就从「一次一个」的计算器变成「批处理器」，算术吞吐量可能瞬间提升 latexmath:[4\times]。
+
+== 进阶：4 位量化（INT4）与分组统计
+
+在大语言模型（LLM）时代，有时连 8 位都太大了。现在我们正看到向 **INT4** 的转变。
+
+*   **分组量化**：不再每个通道一个缩放，而是每 32 或 64 个权重用一个缩放。这应对了超大模型中权重的「局部性」。
+*   **存储**：两个 4 位权重被打包进一个字节。
+*   **数学**：由于大多数 GPU 还没有原生 4 位数学单元，我们采用**加载时反量化**（De-quantize on Load）。
+    *   GPU 从 VRAM 读取 4 位权重（节省带宽）。
+    *   着色器立刻把它转成 `float16` 或 `int8`。
+    *   数学按常规继续。
+*   **好处**：在 LLM 中你几乎总是「受内存限制」。相比 FP32，把权重体积缩小 latexmath:[8\times] 就能带来 latexmath:[8\times] 的加速，即使数学本身并没有变快。
+
+== 下一个前沿：权重稀疏化
+
+量化降低权重的**精度**。**稀疏化**降低权重的**数量**。
+
+神经网络常常是「过参数化」的。许多权重非常接近零，对输出毫无影响。
+
+1.  **非结构化稀疏**：你把一个个小权重设为零。
+    *   **问题**：GPU 讨厌「随机」的零。它会造成分支发散和非合并的内存访问。
+2.  **结构化稀疏（2:4）**：NVIDIA Ampere 架构的 GPU 引入了对 **2:4 稀疏**的硬件支持。
+    *   **规则**：每 4 个权重组成的一组中，至少要有 2 个为零。
+    *   **好处**：GPU 硬件会「跳过」那些零乘法，在任何量化收益之上再提供 latexmath:[2\times] 的吞吐提升。
+
+把 **INT8 量化**与 **2:4 稀疏**结合起来，相比朴素的 FP32 实现，你可以获得 latexmath:[20\times] 的加速。
+
+== 动手实践：实现你的第一个量化层（教学路线）
+
+让我们从零构建一条**对称逐通道量化卷积**管线。当你想完全掌控自己的 Vulkan 推理引擎时，走的就是这条路。
+
+=== 阶段 1：离线权重准备（C++）
+
+在应用启动之前，你必须转换 `float32` 权重。我们会算出缩放因子，并把权重打包进一个字节数组。
+
+[source,cpp]
+----
+struct QuantizedLayer {
+    std::vector<int8_t> weights; // INT8 weights
+    std::vector<float> rescaleFactors; // Pre-calculated (S_in * S_w) / S_out
+    int32_t bias_scale; // Usually quantized to 32-bit
+};
+
+QuantizedLayer quantizeWeights(const float* fp32Weights, uint32_t outC, uint32_t inC, uint32_t kSize, float inputScale, float outputScale) {
+    QuantizedLayer layer;
+    uint32_t filterSize = inC * kSize * kSize;
+    layer.weights.resize(outC * filterSize);
+    layer.rescaleFactors.resize(outC);
+
+    for (uint32_t oc = 0; oc < outC; ++oc) {
+        // 1. Find max for this channel
+        float maxW = 0.0f;
+        for (uint32_t i = 0; i < filterSize; ++i) {
+            maxW = std::max(maxW, std::abs(fp32Weights[oc * filterSize + i]));
+        }
+
+        // 2. Calculate Weight Scale
+        float weightScale = maxW / 127.0f;
+
+        // 3. Pre-calculate the Rescale Factor for the shader
+        // This moves the floating point division out of the hot loop
+        layer.rescaleFactors[oc] = (inputScale * weightScale) / outputScale;
+
+        // 4. Quantize Weights
+        for (uint32_t i = 0; i < filterSize; ++i) {
+            float v = fp32Weights[oc * filterSize + i] / weightScale;
+            layer.weights[oc * filterSize + i] = static_cast<int8_t>(std::clamp(std::round(v), -127.0f, 127.0f));
+        }
+    }
+    return layer;
+}
+----
+
+=== 阶段 2：Vulkan 管线配置
+
+量化着色器需要特定的缓冲区布局。你搬运的不再是 `float` 数组，而是 `uint8_t`（打包）数组。
+
+1.  **缓冲区存储**：使用 `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT`。
+2.  **描述符集**：
+    *   `Binding 0`：输入激活值（INT8）
+    *   `Binding 1`：权重（INT8）
+    *   `Binding 2`：重缩放因子（FP32 —— 每个通道一个）
+    *   `Binding 3`：输出激活值（INT8）
+
+=== 阶段 3：优化后的 INT8 着色器
+
+我们会使用 `dotProduct4x8bitPackedEXT` 指令。这需要 `GL_EXT_shader_dot_product` 扩展。
+
+[source,glsl]
+----
+#version 450
+#extension GL_EXT_shader_dot_product : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) buffer Input  { uint  inData[]; };
+layout(std430, set = 0, binding = 1) buffer Weight { uint  wData[];  };
+layout(std430, set = 0, binding = 2) buffer Factors { float rescale[]; };
+layout(std430, set = 0, binding = 3) buffer Output { uint  outData[]; };
+
+void main() {
+    uint outC = gl_GlobalInvocationID.z;
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+
+    // 1. Initialize 32-bit Accumulator
+    int sum = 0;
+
+    // 2. The Vectorized Hot Loop
+    // We process 4 channels at a time using a single instruction
+    for(uint i = 0; i < (inputChannels / 4); ++i) {
+        uint a = inData[idx_in + i];
+        uint b = wData[idx_w + i];
+        sum = dotProduct4x8bitPackedEXT(a, b, sum);
+    }
+
+    // 3. The Fixed-Point Rescale
+    // We bring the high-precision sum back to the 8-bit range of the next layer
+    float result = float(sum) * rescale[outC];
+
+    // 4. Re-pack into the output buffer
+    // Note: In a real shader, you would collect 4 results and write one 'uint'
+    store_packed_result(pos, outC, int8_t(clamp(round(result), -128, 127)));
+}
+----
+
+=== 实现清单：那些「坑」
+
+1.  **对齐**：要使用 `dp4a`，你的输入通道数**必须**是 4 的倍数。如果不是，你必须用零填充张量。
+2.  **零点**：在这个例子中，我们用的是**对称**量化（零点 = 0）。如果改用**非对称**量化（ReLU 需要），数学就变成 latexmath:[\sum (W \cdot (X - Z))]。这需要在循环中多做一次减法，可能降低性能。
+3.  **中间溢出**：确保你的 `sum` 不超过 latexmath:[2^{31}-1]。对于大多数 8 位模型，最多 16,384 个通道都是安全的。
+
+== 小结：量化路线图
+
+量化是 ML 部署的「超能力」。它让你能在原本不可能运行的硬件上跑模型。
+
+1.  **务实路线**：使用 **ONNX Runtime 量化工具链**。实现一个 `CalibrationDataReader` 来采集激活范围，运行 `quantize_static`，并在应用里加载 `.quant.onnx` 文件。数学、硬件映射和优化都由它替你处理。
+2.  **教学路线**：用 `dotProduct4x8bitPackedEXT` 构建自定义 **INT8 着色器**。掌握**定点重缩放**技巧，让数学尽可能久地留在整数域。
+3.  **精修**：用**混合精度**保护脆弱的层，用**余弦相似度**调试精度下降。
+
+无论你选择库还是着色器，现在你都已具备缩小模型、压满芯片的能力。下一章，我们会看看如何把这些量化模型拿到 NVIDIA、AMD 和 Intel 的具体矩阵硬件上做调优。
+
+xref:ML_Inference/Advanced_Topics/01_introduction.adoc[上一篇：高级主题：通往生产之路] | xref:ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc[下一篇：厂商专属优化：榨干最后一滴性能]

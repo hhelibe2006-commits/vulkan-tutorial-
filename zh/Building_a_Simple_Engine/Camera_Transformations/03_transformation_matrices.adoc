@@ -1,0 +1,176 @@
+:pp: {plus}{plus}
+
+= 相机与变换：变换矩阵
+
+== 变换矩阵
+
+本节将深入探讨 3D 图形中使用的变换矩阵，以及它们在我们的渲染管线中如何应用。
+
+=== 模型-视图-投影（MVP）管线
+
+把顶点从对象空间变换到屏幕空间需要一连串矩阵乘法，这一过程通常称为 MVP 管线：
+
+[source,cpp]
+----
+// The complete transformation pipeline
+glm::mat4 MVP = projectionMatrix * viewMatrix * modelMatrix;
+----
+
+下面我们逐一详细考察这些矩阵。
+
+=== 模型矩阵
+
+模型矩阵把顶点从对象空间变换到世界空间。它为物体在世界中定位、旋转并缩放。
+
+[source,cpp]
+----
+glm::mat4 createModelMatrix(
+    const glm::vec3& position,
+    const glm::vec3& rotation,
+    const glm::vec3& scale
+) {
+    // Start with identity matrix
+    glm::mat4 model = glm::mat4(1.0f);
+
+    // Apply transformations in order: scale, rotate, translate
+    model = glm::translate(model, position);
+
+    // Apply rotations around each axis
+    model = glm::rotate(model, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+    model = glm::rotate(model, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::rotate(model, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    // Apply scaling
+    model = glm::scale(model, scale);
+
+    return model;
+}
+----
+
+=== 视图矩阵
+
+视图矩阵把顶点从世界空间变换到视图空间（相机空间）。它表示相机的位置与朝向。
+
+[source,cpp]
+----
+glm::mat4 createViewMatrix(
+    const glm::vec3& cameraPosition,
+    const glm::vec3& cameraTarget,
+    const glm::vec3& upVector
+) {
+    return glm::lookAt(cameraPosition, cameraTarget, upVector);
+}
+----
+
+`lookAt` 函数创建的视图矩阵把相机放在 `cameraPosition`，看向 `cameraTarget`，并由 `upVector` 定义上方向。
+
+=== 投影矩阵
+
+投影矩阵把顶点从视图空间变换到裁剪空间。它定义 3D 坐标如何投影到 2D 屏幕上。
+
+==== 透视投影
+
+透视投影模拟物体越远看起来越小的效果，这也是人眼感知世界的自然方式。
+
+[source,cpp]
+----
+glm::mat4 createPerspectiveMatrix(
+    float fovY,
+    float aspectRatio,
+    float nearPlane,
+    float farPlane
+) {
+    return glm::perspective(glm::radians(fovY), aspectRatio, nearPlane, farPlane);
+}
+----
+
+参数：
+
+* `fovY`：视野角度，单位为度（垂直方向）
+* `aspectRatio`：视口宽度除以高度
+* `nearPlane`：到近裁剪平面的距离
+* `farPlane`：到远裁剪平面的距离
+
+==== 正交投影
+
+正交投影没有透视畸变，因此适合 2D 渲染或技术图纸。
+
+[source,cpp]
+----
+glm::mat4 createOrthographicMatrix(
+    float left,
+    float right,
+    float bottom,
+    float top,
+    float nearPlane,
+    float farPlane
+) {
+    return glm::ortho(left, right, bottom, top, nearPlane, farPlane);
+}
+----
+
+=== 法线矩阵
+
+对物体施加非均匀缩放时，若仍用模型矩阵变换法线，法线就会出错。法线矩阵解决了这个问题：
+
+[source,cpp]
+----
+glm::mat3 createNormalMatrix(const glm::mat4& modelMatrix) {
+    // The normal matrix is the transpose of the inverse of the upper-left 3x3 part of the model matrix
+    return glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+}
+----
+
+=== 在着色器中应用变换
+
+在 Vulkan 中，我们通常把这些矩阵作为统一变量传给着色器：
+
+[source,glsl]
+----
+// Vertex shader
+#version 450
+
+layout(binding = 0) uniform UniformBufferObject {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec2 inTexCoord;
+
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec2 fragTexCoord;
+
+void main() {
+    // Apply MVP transformation
+    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
+
+    // Transform normal using normal matrix
+    mat3 normalMatrix = transpose(inverse(mat3(ubo.model)));
+    fragNormal = normalMatrix * inNormal;
+
+    fragTexCoord = inTexCoord;
+}
+----
+
+=== 层次化变换
+
+对于复杂物体或具有父子关系的场景，我们使用层次化变换：
+
+[source,cpp]
+----
+// Parent transformation
+glm::mat4 parentModel = createModelMatrix(parentPosition, parentRotation, parentScale);
+
+// Child transformation relative to parent
+glm::mat4 localModel = createModelMatrix(childLocalPosition, childLocalRotation, childLocalScale);
+
+// Combined transformation
+glm::mat4 childWorldModel = parentModel * localModel;
+----
+
+下一节，我们将实现一套相机系统，用这些变换概念来在 3D 场景中漫游。
+
+xref:Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc[上一篇：相机与变换：数学基础] | xref:Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc[下一篇：相机与变换：相机实现]

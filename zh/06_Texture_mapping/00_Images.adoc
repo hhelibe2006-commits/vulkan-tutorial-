@@ -1,0 +1,537 @@
+:pp: {plus}{plus}
+
+= 图像
+
+== 简介
+
+到目前为止，几何体一直使用逐顶点颜色着色，这种方式相当有限。
+在本部分教程中，我们将实现纹理映射，让几何体看起来更有意思。
+这也让我们能够在后续章节中加载并绘制基本的 3D 模型。
+
+为应用添加纹理会涉及以下步骤：
+
+* 创建一个由设备内存支撑的图像对象
+* 用图像文件中的像素填充它
+* 创建一个图像采样器
+* 添加一个组合图像采样器描述符，从纹理中采样颜色
+
+我们以前已经使用过图像对象，但那些都是由交换链扩展自动创建的。
+这一次我们必须自己创建一个。
+创建图像并填充数据与创建顶点缓冲区类似，但由于 GPU 处理图像的方式，会多一些复杂性。
+我们先创建一个暂存资源并填入像素数据，然后把它复制到最终用于渲染的图像对象中。
+虽然为此创建一个暂存图像也是可行的，但 Vulkan 也允许直接从缓冲区把像素复制到图像。这种方式代码更简洁、限制更少，而且通常 https://developer.nvidia.com/vulkan-memory-management[更快]。
+为此，我们先创建一个主机可访问的缓冲区并填入像素值，然后创建一个图像，把像素复制过去。
+创建图像与创建缓冲区并没有太大区别。
+它同样涉及查询内存需求、分配设备内存并绑定，就像我们之前看到的那样。
+
+不过，处理图像时还有一点额外的事情需要留意。
+图像可以有不同的_布局_，它们会影响像素在内存中的组织方式。
+例如，由于图形硬件的工作方式，简单地按行存储像素未必能带来最佳性能。
+对图像执行任何操作时，都必须确保它处于对该操作最优的布局。
+在指定渲染通道时，我们其实已经见过其中一些布局：
+
+* `vk::ImageLayout::ePresentSrcKHR`：最适合呈现
+* `vk::ImageLayout::eColorAttachmentOptimal`：最适合作为附件，用于写入片元着色器输出的颜色
+* `vk::ImageLayout::eTransferSrcOptimal`：最适合作为传输操作中的源，例如 `vk::raii::CommandBuffer::copyImageToBuffer`
+* `vk::ImageLayout::eTransferDstOptimal`：最适合作为传输操作中的目标，例如 `vk::raii::CommandBuffer::copyBufferToImage`
+* `vk::ImageLayout::eShaderReadOnlyOptimal`：最适合在着色器中采样
+
+转换图像布局最常见的方式之一是_管线屏障_。
+管线屏障主要用于同步对资源的访问，比如确保图像在被读取之前已经写入，但它们也可以用来转换布局。
+本章中我们会看到管线屏障如何用于这个目的。
+在使用 `vk::SharingMode::eExclusive` 时，屏障还可以用来转移队列族所有权。
+
+== 加载图像
+
+像这样包含图像库：
+
+[,c++]
+----
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+----
+
+默认情况下，这个头文件只声明函数的原型。
+需要有一个代码文件在包含该头文件之前定义 `STB_IMAGE_IMPLEMENTATION`，以包含函数体，否则我们会遇到链接错误。
+
+[,c++]
+----
+void initVulkan()
+{
+    ...
+    createCommandPool();
+    createTextureImage();
+    createVertexBuffer();
+    ...
+}
+
+...
+
+void createTextureImage()
+{
+}
+----
+
+新建 `createTextureImage` 函数，在其中加载图像并上传到 Vulkan 图像对象中。
+我们会用到命令缓冲区，所以它应该在 `createCommandPool` 之后调用。
+
+在 `shaders` 目录旁边新建一个 `textures` 目录，用来存放纹理图像。
+我们将从该目录加载名为 `texture.jpg` 的图像。
+我选用的是下面这张 https://pixabay.com/en/statue-sculpture-fig-historically-1275469/[CC0 许可的图像]，并调整到 512 x 512 像素，但你也可以随意选择任何图像。
+该库支持大多数常见的图像文件格式，比如 JPEG、PNG、BMP 和 GIF。
+
+image::/images/texture.jpg[]
+
+用这个库加载图像非常简单：
+
+[,c++]
+----
+void createTextureImage()
+{
+    int            texWidth, texHeight, texChannels;
+    stbi_uc       *pixels    = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels)
+    {
+        throw std::runtime_error("failed to load texture image!");
+    }
+}
+----
+
+`stbi_load` 函数接受文件路径和要加载的通道数作为参数。
+`STBI_rgb_alpha` 值会强制图像带上 alpha 通道加载，即使它本来没有，这样将来与其他纹理保持一致会比较方便。
+中间三个参数是输出参数，分别返回图像的宽度、高度和实际通道数。
+返回的指针指向像素值数组的第一个元素。
+像素按行排列，在 `STBI_rgb_alpha` 的情况下每个像素 4 字节，总共 `texWidth * texHeight * 4` 个值。
+
+== 暂存缓冲区
+
+接下来需要把图像上传到 GPU，以便着色器读取时获得最佳访问性能。为此，我们要在主机可见内存中创建一个缓冲区，把它映射出来以便复制像素。这个缓冲区将作为把数据复制到 GPU 的来源。
+
+NOTE: 图像应始终驻留在 GPU 内存中。把它们留在仅主机可见的内存里，会迫使 GPU 每帧都通过 PCI 接口读取数据，而这条通路的带宽远小于 GPU 自身的内存。这会造成很大的性能影响。暂存就是把图像数据送入 GPU 内存的过程。它并非总是必需，因为某些设备可能提供同时属于主机可见和设备本地的内存类型。在这类配置上可以跳过暂存。
+
+该缓冲区应位于主机可见内存（`eHostVisible`）中，这样我们才能映射它。它还应当是主机一致的（`eHostCoherent`），以确保写入其中的数据立即可用（而不是被以某种方式缓存）。此外它应当能用作传输源（'eTransferSrc'），以便之后复制到图像中：
+自动推导出的返回类型分别是 `vk::raii::Buffer` 和 `vk::raii::DeviceMemory`。
+
+[,c++]
+----
+auto [stagingBuffer, stagingBufferMemory] =
+    createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+----
+
+然后就可以把从图像加载库得到的像素值直接复制到缓冲区：
+
+[,c++]
+----
+void* data = stagingBufferMemory.mapMemory(0, imageSize);
+memcpy(data, pixels, imageSize);
+stagingBufferMemory.unmapMemory();
+----
+
+记得现在清理原始的像素数组：
+
+[,c++]
+----
+stbi_image_free(pixels);
+----
+
+== 纹理图像
+
+虽然我们也可以设置着色器去访问缓冲区中的像素值，但在 Vulkan 中为此使用图像对象更好。
+首先，图像对象允许我们使用二维坐标，因此取颜色更方便、更快速。
+图像对象中的像素称为纹素（texel），从现在起我们就用这个名称。
+添加以下新的类成员：
+
+[,c++]
+----
+vk::raii::Image        textureImage       = nullptr;
+vk::raii::DeviceMemory textureImageMemory = nullptr;
+----
+
+图像的参数用 `vk::ImageCreateInfo` 结构体指定：
+
+[,c++]
+----
+vk::ImageCreateInfo imageInfo{.imageType   = vk::ImageType::e2D,
+                              .format      = format,
+                              .extent      = {width, height, 1},
+                              .mipLevels   = 1,
+                              .arrayLayers = 1,
+                              .samples     = vk::SampleCountFlagBits::e1,
+                              .tiling      = tiling,
+                              .usage       = usage,
+                              .sharingMode = vk::SharingMode::eExclusive};
+----
+
+`imageType` 字段指定图像类型，告诉 Vulkan 图像中的纹素将使用哪种坐标系来寻址。
+可以创建 1D、2D 和 3D 图像。
+一维图像可用于存储数据数组或渐变，二维图像主要用于纹理，三维图像则可用于存储体素体积等。
+`extent` 字段指定图像的尺寸，基本上就是每个轴上有多少个纹素。
+正因如此，`depth` 必须是 `1` 而不是 `0`。
+我们的纹理不是数组，暂时也不使用 mipmap 生成。
+
+Vulkan 支持多种图像格式，但我们应当让纹素使用与缓冲区中像素相同的格式，否则复制操作会失败。
+
+`tiling` 指定纹素在内存中的排布方式。Vulkan 支持两种根本不同的模式：
+
+* `vk::ImageTiling::eOptimal`：纹素按实现相关的排布方式排列。这样内存访问更高效。
+* `vk::ImageTiling::eLinear`：纹素按行主序排列在内存中，每行可能带有一些填充。
+
+NOTE: 线性平铺图像的用途非常有限。例如它们可能只适用于二维图像，不能用于深度/模板，不能有多个 mip 层级或层。GPU 访问也比最优平铺图像慢得多。因此它们的用例非常少。
+
+因此，我们将使用 `vk::ImageTiling::eOptimal`，以便着色器高效访问。
+
+图像的 `initialLayout` 只有两种可能的值：
+
+* `vk::ImageLayout::eUndefined`：GPU 无法使用，并且第一次转换会丢弃纹素。
+* `vk::ImageLayout::ePreinitialized`：GPU 无法使用，但第一次转换会保留纹素。
+
+需要在第一次转换时保留纹素的情况非常少见。
+不过有一个例子：你想把线性平铺图像用作暂存图像。
+这种情况下，你会希望先把纹素数据上传到它里面，然后在不丢失数据的前提下把图像转换为传输源。
+
+然而在我们的场景中，是先把图像转换为传输目标，再从缓冲区对象把纹素数据复制进去，所以我们不需要这个特性，可以放心使用 `vk::ImageLayout::eUndefined`。
+
+`usage` 字段的语义与创建缓冲区时相同。
+该图像将作为缓冲区复制的目标，所以应设置为传输目标。
+我们还想从着色器中访问图像来为网格着色，因此 usage 中应包含 `vk::ImageUsageFlagBits::eSampled`。
+
+这个图像只会由一个队列族使用：即支持图形（因而也支持）传输操作的那个队列族。
+
+`samples` 标志与多重采样有关。
+它只对将用作附件的图像才有意义，所以保持一个采样即可。
+
+[,c++]
+----
+image = vk::raii::Image(device, imageInfo);
+----
+
+图像通过 `vk::raii::Image` 构造函数创建，它的参数没有什么特别需要注意的地方。
+显卡有可能不支持 `vk::Format::eR8G8B8A8Srgb,` 格式。
+你应当准备一份可接受的备选格式列表，并选用其中受支持的最佳格式。
+不过这个特定格式的支持非常普遍，所以我们跳过这一步。
+使用不同格式还会带来烦人的转换。
+我们会在深度缓冲区那一章回到这一点，并实现这样一套机制。
+
+[,c++]
+----
+vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+vk::MemoryAllocateInfo allocInfo{.allocationSize  = memRequirements.size,
+                                 .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
+imageMemory = vk::raii::DeviceMemory(device, allocInfo);
+image.bindMemory(imageMemory, 0);
+----
+
+为图像分配内存与为缓冲区分配内存完全一样。
+使用默认的 `vk::raii::DeviceMemory` 构造函数，并在 `image` 上调用 `bindMemory`。
+
+这个函数已经变得相当长了，而且后续章节还需要创建更多图像，所以我们应该像处理缓冲区那样，把图像创建抽象成 `createImage` 函数。
+创建该函数，并把图像对象创建和内存分配移进去：
+
+[,c++]
+----
+std::pair<vk::raii::Image, vk::raii::DeviceMemory> createImage(
+  uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties )
+{
+  vk::ImageCreateInfo imageInfo{.imageType   = vk::ImageType::e2D,
+                                .format      = format,
+                                .extent      = {width, height, 1},
+                                .mipLevels   = 1,
+                                .arrayLayers = 1,
+                                .samples     = vk::SampleCountFlagBits::e1,
+                                .tiling      = tiling,
+                                .usage       = usage,
+                                .sharingMode = vk::SharingMode::eExclusive};
+
+  vk::raii::Image image = vk::raii::Image(device, imageInfo);
+
+  vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+  vk::MemoryAllocateInfo allocInfo{.allocationSize  = memRequirements.size,
+                                   .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
+  vk::raii::DeviceMemory imageMemory = vk::raii::DeviceMemory(device, allocInfo);
+  image.bindMemory(imageMemory, 0);
+
+  return {std::move(image), std::move(imageMemory)};
+}
+----
+
+我把宽度、高度、格式、平铺模式、usage 和内存属性都做成了参数，因为在本教程中我们会创建的各种图像之间，这些都会变化。
+
+现在 `createTextureImage` 函数可以简化为：
+
+[,c++]
+----
+void createTextureImage()
+{
+  int            texWidth, texHeight, texChannels;
+  stbi_uc       *pixels    = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+  if (!pixels)
+  {
+    throw std::runtime_error("failed to load texture image!");
+  }
+
+  auto [stagingBuffer, stagingBufferMemory] =
+      createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+  void *data = stagingBufferMemory.mapMemory(0, imageSize);
+  memcpy(data, pixels, imageSize);
+  stagingBufferMemory.unmapMemory();
+
+  stbi_image_free(pixels);
+
+  std::tie(textureImage, textureImageMemory) = createImage(texWidth,
+                                                           texHeight,
+                                                           vk::Format::eR8G8B8A8Srgb,
+                                                           vk::ImageTiling::eOptimal,
+                                                           vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                                                           vk::MemoryPropertyFlagBits::eDeviceLocal);
+}
+----
+
+== 布局转换
+
+如前所述，Vulkan 中的图像可以处于不同的布局，这些布局影响像素数据在内存中的组织方式。这些布局针对特定操作做了优化——有些布局更适合着色器读取，有些更适合作为渲染目标，还有些则更适合作为传输操作的源或目标。
+
+布局转换是 Vulkan 设计中的一个关键方面，它让你能显式控制这些内存组织方式。与某些由驱动自动处理这些转换的图形 API 不同，Vulkan 要求你显式管理它们。这种方式能带来更好的性能优化空间，因为你可以精确地在需要时安排转换，并高效地批量执行操作。
+
+对于纹理图像，我们需要执行几次转换：
+1. 从初始的未定义布局转换到适合接收数据的布局（传输目标）
+2. 从传输目标转换到适合着色器读取的布局，这样片元着色器就能从中采样
+
+这些转换通过管线屏障完成，它不仅改变图像布局，还确保访问该图像的操作之间有正确的同步。缺少正确的同步，我们可能会陷入竞态：着色器在复制操作完成之前就试图读取纹理。
+
+接下来要写的函数又涉及录制并执行命令缓冲区，所以现在正是把这段逻辑抽成一两个辅助函数的好时机：
+
+[,c++]
+----
+vk::raii::CommandBuffer beginSingleTimeCommands()
+{
+  vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+  vk::raii::CommandBuffer       commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+
+  vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+  commandBuffer.begin(beginInfo);
+
+  return std::move(commandBuffer);
+}
+
+void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer)
+{
+  commandBuffer.end();
+
+  vk::SubmitInfo submitInfo{.commandBufferCount = 1, .pCommandBuffers = &*commandBuffer};
+  queue.submit(submitInfo, nullptr);
+  queue.waitIdle();
+}
+----
+
+这些函数的代码基于 `copyBuffer` 中已有的代码。
+现在可以把该函数简化为：
+
+[,c++]
+----
+void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer, vk::DeviceSize size)
+{
+  vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
+  commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy{.size = size});
+  endSingleTimeCommands(std::move(commandCopyBuffer));
+}
+----
+
+如果我们处理的仍是缓冲区，现在就可以写一个函数来录制并执行 `copyBufferToImage` 完成任务，但该命令要求图像先处于正确的布局。
+新建一个函数来处理布局转换：
+
+[,c++]
+----
+void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+{
+}
+----
+
+执行布局转换最常见的方式之一是使用_图像内存屏障_。
+这类管线屏障通常用于同步对资源的访问，比如确保对缓冲区的写入在读取之前完成，但它也可以用来转换图像布局，并在使用 `vk::SharingMode::eExclusive` 时转移队列族所有权。
+缓冲区有与之对应的_缓冲区内存屏障_。
+
+[,c++]
+----
+vk::ImageMemoryBarrier barrier{.oldLayout           = oldLayout,
+                               .newLayout           = newLayout,
+                               .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+                               .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+                               .image               = image,
+                               .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1}};
+----
+
+`oldLayout` 和 `newLayout` 指定布局转换。
+如果你不关心图像已有的内容，可以把 `oldLayout` 设为 `vk::ImageLayout::eUndefined`。
+
+如果你要用屏障转移队列族所有权，那么 `srcQueueFamilyIndex` 和 `dstQueueFamilyIndex` 字段应当是队列族的索引。
+如果你不想这么做，就必须把它们设为 `vk::QueueFamilyIgnored`（不是默认值！）。
+
+`image` 和 `subresourceRange` 指定受影响的图像以及图像的具体部分。
+我们的图像不是数组，也没有 mip 层级，所以只指定了一个层级和一个层。
+
+屏障主要用于同步，所以你必须指定哪些涉及该资源的操作必须在屏障之前发生，以及哪些涉及该资源的操作必须等待屏障。
+正确的取值取决于旧布局和新布局，所以我们先弄清楚要用哪些转换，再回到这一点。
+
+[,c++]
+----
+commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, {}, barrier);
+----
+
+所有类型的管线屏障都用同一个函数提交。
+第一个参数指定应当在屏障之前发生的操作位于哪个管线阶段。
+第二个参数指定操作将等待屏障的管线阶段。
+屏障前后允许指定的管线阶段，取决于你在屏障前后如何使用该资源。
+允许的取值列在规范的 https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-access-types-supported[这张表] 中。
+例如，如果你要在屏障之后读取 uniform，就应指定 `vk::AccessFlagBits::eUniformRead` 用途，并把最早读取该 uniform 的着色器作为管线阶段，例如 `vk::PipelineStageFlagBits::eFragmentShader`。
+对这种用途指定一个非着色器管线阶段没有意义，而且当你指定的管线阶段与用途类型不匹配时，验证层会给出警告。
+
+第三个参数是 `{}` 或 `vk::DependencyFlagBits::eByRegion`。
+后者会把屏障变成按区域生效的条件。
+也就是说，例如实现可以提前开始读取资源中到目前为止已经写入的那些部分。
+
+最后三个参数分别引用三种可用类型的管线屏障数组：内存屏障、缓冲区内存屏障，以及像我们这里使用的图像内存屏障。
+
+== 从缓冲区复制到图像
+
+在回到 `createTextureImage` 之前，我们还要再写一个辅助函数：`copyBufferToImage`：
+
+[,c++]
+----
+void copyBufferToImage(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Buffer &buffer, vk::raii::Image &image, uint32_t width, uint32_t height)
+{
+}
+----
+
+与缓冲区之间的复制一样，你需要指定缓冲区的哪一部分将被复制到图像的哪一部分。
+这通过 `vk::BufferImageCopy` 结构体完成：
+
+[,c++]
+----
+vk::BufferImageCopy region{.bufferOffset      = 0,
+                           .bufferRowLength   = 0,
+                           .bufferImageHeight = 0,
+                           .imageSubresource  = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
+                           .imageOffset       = {0, 0, 0},
+                           .imageExtent       = {width, height, 1}};
+----
+
+这些字段大多不言自明。
+`bufferOffset` 指定缓冲区中像素值起始处的字节偏移。
+`bufferRowLength` 和 `bufferImageHeight` 字段指定像素在内存中的排布方式。
+例如，图像各行之间可能存在一些填充字节。
+两者都指定为 `0` 表示像素只是紧密排列，就像我们的情况一样。
+`imageSubresource`、`imageOffset` 和 `imageExtent` 字段指明要把像素复制到图像的哪一部分。
+
+缓冲区到图像的复制操作通过 `vk::raii::CommandBuffer::copyBufferToImage` 函数入队：
+
+[,c++]
+----
+commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+----
+
+第三个参数指明图像当前使用的布局。
+这里我假设图像已经转换到最适合复制像素进去的布局。
+现在我们只把一整块像素复制到整个图像，但也可以指定一个 `vk::BufferImageCopy` 数组，在一次操作中从这个缓冲区到图像执行许多不同的复制。
+
+== 准备纹理图像
+
+现在我们已经有了完成纹理图像设置所需的全部工具，所以回到 `createTextureImage` 函数。
+我们在那里做的最后一件事是创建纹理图像。
+下一步是把暂存缓冲区复制到纹理图像。
+这包括两步：
+
+* 把纹理图像转换到 `vk::ImageLayout::eTransferDstOptimal`
+* 执行缓冲区到图像的复制操作
+
+用我们刚创建的函数很容易做到：
+
+[,c++]
+----
+vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+copyBufferToImage(commandBuffer, stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+----
+
+图像创建时采用的是 `vk::ImageLayout::eUndefined` 布局，所以在转换 `textureImage` 时应把它指定为旧布局。
+记住我们可以这样做，是因为在执行复制操作之前我们并不关心它的内容。
+
+为了能在着色器中开始从纹理图像采样，我们还需要最后一次转换，为着色器访问做好准备。
+最后，可以结束这个一次性命令缓冲区。
+
+[,c++]
+----
+transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+endSingleTimeCommands(std::move(commandBuffer));
+----
+
+== 转换屏障掩码
+
+如果现在启用验证层运行应用，你会看到它抱怨 `transitionImageLayout` 中的访问掩码和管线阶段无效。
+我们还需要根据转换所涉及的布局来设置它们。
+
+有两个转换需要处理：
+
+* 未定义 → 传输目标：传输写入不需要等待任何东西
+* 传输目标 → 着色器读取：着色器读取应当等待传输写入，具体是片元着色器中的着色器读取，因为纹理正是在那里使用
+
+这些规则用下面的访问掩码和管线阶段来指定：
+
+[,c++]
+----
+vk::PipelineStageFlags sourceStage;
+vk::PipelineStageFlags destinationStage;
+
+if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+{
+  barrier.srcAccessMask = {};
+  barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+  sourceStage      = vk::PipelineStageFlagBits::eTopOfPipe;
+  destinationStage = vk::PipelineStageFlagBits::eTransfer;
+}
+else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+{
+  barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+  barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+  sourceStage      = vk::PipelineStageFlagBits::eTransfer;
+  destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+}
+else
+{
+  throw std::invalid_argument("unsupported layout transition!");
+}
+commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+----
+
+从前面提到的那张表可以看到，传输写入必须发生在管线的传输阶段。
+由于这些写入不必等待任何东西，你可以为屏障前的操作指定空的访问掩码，以及尽可能早的管线阶段 `vk::PipelineStageFlagBits::eTopOfPipe`。
+需要注意的是，`vk::PipelineStageFlagBits::eTransfer` 并不是图形管线和计算管线中_真正_的阶段。
+它更像是传输发生的一个伪阶段。
+更多信息以及其他伪阶段的例子请参阅 https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VkPipelineStageFlagBits[文档]。
+
+图像会在同一个管线阶段被写入，随后由片元着色器读取，所以我们把着色器读取访问指定在片元着色器管线阶段。
+
+如果以后还需要更多转换，我们会扩展这个函数。
+应用现在应该能成功运行了，虽然视觉上当然还没有任何变化。
+
+需要注意的一点是，提交命令缓冲区会在开始时产生隐式的 `vk::AccessFlagBits::eHostWrite` 同步。
+由于 `transitionImageLayout` 函数执行的命令缓冲区只包含一条命令，如果你在布局转换中需要 `vk::AccessFlagBits::eHostWrite` 依赖，就可以利用这种隐式同步，把 `srcAccessMask` 设为 `0`。
+要不要显式写出来由你决定，但我个人不喜欢依赖这类类似 OpenGL 的「隐藏」操作。
+
+实际上有一种特殊的图像布局 `vk::ImageLayout::eGeneral`，它支持所有操作。
+但除非使用某些扩展（本教程中没有使用），否则使用通用布局可能带来性能损失，因为在某些 GPU 上它可能会禁用一些优化。
+它在一些特殊情况下是必需的，比如把图像同时用作输入和输出，或者在图像离开预初始化布局之后读取它。
+
+图像现在包含纹理了，但我们还需要一种从图形管线访问它的方式。
+我们将在 xref:./01_Image_view_and_sampler.adoc[下一章] 中处理这件事。
+
+link:/attachments/24_texture_image.cpp[C{pp} 代码] /
+link:/attachments/22_shader_ubo.slang[slang 着色器] /
+link:/attachments/22_shader_ubo.vert[GLSL 顶点着色器] /
+link:/attachments/22_shader_ubo.frag[GLSL 片元着色器]

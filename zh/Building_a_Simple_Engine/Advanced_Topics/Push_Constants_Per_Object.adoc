@@ -1,0 +1,39 @@
+= 推送常量——逐对象的材质属性
+
+推送常量是一小段数据，你可以把它发送给着色器，而无需创建或更新缓冲区。它们非常适合作为逐绘制的材质参数。
+
+在本引擎中，我们把推送常量用于*每次绘制调用都会变化的值*（材质因子和「有没有纹理？」标志）。变化不那么频繁的内容（相机数据、光源列表、大数组）仍留在 UBO/SSBO 中。
+
+== 我们如何使用
+
+我们把常用的 PBR 控制项（基础颜色因子、金属度／粗糙度、纹理存在标志、自发光强度、透射、IOR）打包进一个推送常量块，并在每次绘制前更新它。
+
+== 代码里该看哪里
+
+* C++ 推送常量结构与更新调用：
+** `renderer.h`（`MaterialProperties`）
+** `renderer_rendering.cpp`（在此推送逐绘制的材质属性）
+* 着色器中的推送常量块：
+** `shaders/pbr.slang`（`[[vk::push_constant]]` 块）
+* 着色器使用的 PBR 辅助函数：
+** `shaders/pbr_utils.slang`
+** `shaders/lighting_utils.slang`
+
+== 指导原则
+
+* 保持块尽量小（Vulkan 保证至少 128 字节）。本示例绰绰有余。
+* 每次绘制调用都会变化的值用推送常量。更大、更少变化的数据用 UBO/SSBO。
+
+== 后续工作想法
+
+如果你想扩展这个模式：
+
+* 把「很少变化的逐材质数据」拆到 GPU 材质缓冲区中，推送常量只用来传逐绘制索引。
+* 增加第二个推送常量块，用于逐绘制的调试可视化（仅开发期），避免它进入热点的 UBO 路径。
+* 增加材质覆盖系统（对整个场景强制粗糙度／金属度），在上面叠加一个全局 UBO。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc[光线查询渲染]

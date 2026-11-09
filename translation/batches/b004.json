@@ -1,0 +1,24 @@
+{
+  "id": "b004",
+  "words": 5032,
+  "files": [
+    {
+      "source": "en/03_Drawing_a_triangle/00_Setup/02_Validation_layers.adoc",
+      "target": "zh/03_Drawing_a_triangle/00_Setup/02_Validation_layers.adoc",
+      "words": 2412,
+      "title": "Validation layers"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/00_Setup/03_Physical_devices_and_queue_families.adoc",
+      "target": "zh/03_Drawing_a_triangle/00_Setup/03_Physical_devices_and_queue_families.adoc",
+      "words": 1274,
+      "title": "Physical devices and queue families"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc",
+      "target": "zh/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc",
+      "words": 1346,
+      "title": "Logical device and queues"
+    }
+  ]
+}

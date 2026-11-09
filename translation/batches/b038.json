@@ -1,0 +1,48 @@
+{
+  "id": "b038",
+  "words": 4654,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc",
+      "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc",
+      "words": 1050,
+      "title": "glTF Viewer Audit: Establishing Ground Truth"
+    },
+    {
+      "source": "en/Advanced_glTF/Tooling_Production_Pipeline/05_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/05_conclusion.adoc",
+      "words": 557,
+      "title": "Tooling: Summary & What's Next"
+    },
+    {
+      "source": "en/Advanced_glTF/appendix_types.adoc",
+      "target": "zh/Advanced_glTF/appendix_types.adoc",
+      "words": 951,
+      "title": "Appendix: Common Types Reference"
+    },
+    {
+      "source": "en/Advanced_glTF/introduction.adoc",
+      "target": "zh/Advanced_glTF/introduction.adoc",
+      "words": 1096,
+      "title": "Advanced glTF: High-Performance Character Pipelines"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc",
+      "words": 124,
+      "title": "Advanced Topics (Simple Engine)"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Culling.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Culling.adoc",
+      "words": 322,
+      "title": "Frustum Culling and Distance‑based LOD"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc",
+      "words": 554,
+      "title": "Descriptor Indexing and Stable Descriptor Updates"
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+:pp: {plus}{plus}
+
+= 子系统：音频基础
+:doctype: book
+:sectnums:
+:sectnumlevels: 4
+:toc: left
+:icons: font
+:source-highlighter: highlightjs
+:source-language: c++
+
+== 音频系统基础
+
+在深入探讨 Vulkan 如何增强音频处理之前，我们先为引擎实现一个基础音频系统，打好根基。这样我们就有了一个框架，之后可以用 Vulkan 的计算能力对它进行扩展。
+
+=== 音频系统架构
+
+典型的游戏音频系统由几个关键组件构成：
+
+* *音频引擎*：负责音频播放、混音与效果处理的核心组件。
+* *声音资源*：加载到内存中并做好播放准备的音频文件。
+* *音频通道*：音频流经的逻辑通路，通常按类型分组（例如音乐、音效、对话）。
+* *空间音频*：在 3D 空间中相对于听者定位声音的系统。
+* *效果处理*：对音频流施加混响、回声或均衡等效果。
+
+下面我们实现一个覆盖这些基础的简单音频系统，采用与引擎设计一致的现代 C++ 做法。
+
+=== 基础音频系统实现
+
+我们先定义音频系统的核心类：
+
+[source,cpp]
+----
+// Audio.h
+#pragma once
+
+#include <string>
+#include <unordered_map>
+#include <memory>
+#include <vector>
+#include <glm/glm.hpp>
+
+namespace Engine {
+namespace Audio {
+
+class AudioClip {
+public:
+    AudioClip(const std::string& filename);
+    ~AudioClip();
+
+    // Get raw audio data
+    const float* GetData() const { return m_Data.data(); }
+    size_t GetSampleCount() const { return m_Data.size(); }
+    int GetChannelCount() const { return m_ChannelCount; }
+    int GetSampleRate() const { return m_SampleRate; }
+
+private:
+    std::vector<float> m_Data;
+    int m_ChannelCount;
+    int m_SampleRate;
+};
+
+class AudioSource {
+public:
+    AudioSource();
+    ~AudioSource();
+
+    void SetClip(std::shared_ptr<AudioClip> clip) { m_Clip = clip; }
+    void SetPosition(const glm::vec3& position) { m_Position = position; }
+    void SetVolume(float volume) { m_Volume = volume; }
+    void SetLooping(bool looping) { m_Looping = looping; }
+
+    void Play();
+    void Stop();
+    void Pause();
+
+    bool IsPlaying() const { return m_IsPlaying; }
+
+    const glm::vec3& GetPosition() const { return m_Position; }
+    float GetVolume() const { return m_Volume; }
+
+private:
+    std::shared_ptr<AudioClip> m_Clip;
+    glm::vec3 m_Position = glm::vec3(0.0f);
+    float m_Volume = 1.0f;
+    bool m_Looping = false;
+    bool m_IsPlaying = false;
+
+    // Implementation-specific playback state
+    size_t m_CurrentSample = 0;
+};
+
+class AudioListener {
+public:
+    void SetPosition(const glm::vec3& position) { m_Position = position; }
+    void SetOrientation(const glm::vec3& forward, const glm::vec3& up) {
+        m_Forward = forward;
+        m_Up = up;
+    }
+
+    const glm::vec3& GetPosition() const { return m_Position; }
+    const glm::vec3& GetForward() const { return m_Forward; }
+    const glm::vec3& GetUp() const { return m_Up; }
+
+private:
+    glm::vec3 m_Position = glm::vec3(0.0f);
+    glm::vec3 m_Forward = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 m_Up = glm::vec3(0.0f, 1.0f, 0.0f);
+};
+
+class AudioSystem {
+public:
+    AudioSystem();
+    ~AudioSystem();
+
+    void Initialize();
+    void Shutdown();
+
+    // Update audio system (call once per frame)
+    void Update(float deltaTime);
+
+    // Resource management
+    std::shared_ptr<AudioClip> LoadClip(const std::string& name, const std::string& filename);
+    std::shared_ptr<AudioClip> GetClip(const std::string& name);
+
+    // Source management
+    std::shared_ptr<AudioSource> CreateSource();
+    void DestroySource(std::shared_ptr<AudioSource> source);
+
+    // Listener (typically attached to camera)
+    AudioListener& GetListener() { return m_Listener; }
+
+private:
+    std::unordered_map<std::string, std::shared_ptr<AudioClip>> m_Clips;
+    std::vector<std::shared_ptr<AudioSource>> m_Sources;
+    AudioListener m_Listener;
+
+    // Implementation-specific audio backend state
+    void* m_AudioBackend = nullptr;
+};
+
+} // namespace Audio
+} // namespace Engine
+----
+
+这套基础结构为加载并播放带空间定位的音频文件提供了根基。在实际实现中，你会集成 OpenAL、FMOD 或 Wwise 这样的音频库来处理底层的音频播放。
+
+=== 与引擎集成
+
+要把音频系统与引擎的其余部分集成，我们把它加入引擎的主类：
+
+[source,cpp]
+----
+// Engine.h
+#include "Audio.h"
+
+namespace Engine {
+
+class Engine {
+public:
+    // ... existing engine code ...
+
+    Audio::AudioSystem& GetAudioSystem() { return m_AudioSystem; }
+
+private:
+    // ... existing engine members ...
+
+    Audio::AudioSystem m_AudioSystem;
+};
+
+} // namespace Engine
+----
+
+并在引擎启动时初始化它：
+
+[source,cpp]
+----
+// Engine.cpp
+void Engine::Initialize() {
+    // ... existing initialization code ...
+
+    m_AudioSystem.Initialize();
+}
+
+void Engine::Shutdown() {
+    m_AudioSystem.Shutdown();
+
+    // ... existing shutdown code ...
+}
+----
+
+=== 基本用法示例
+
+下面是在游戏中使用这个音频系统的示例：
+
+[source,cpp]
+----
+// Game code
+void Game::LoadResources() {
+    // Load audio clips
+    auto explosionSound = m_Engine.GetAudioSystem().LoadClip("explosion", "sounds/explosion.wav");
+    auto backgroundMusic = m_Engine.GetAudioSystem().LoadClip("music", "sounds/background.ogg");
+
+    // Create and configure audio sources
+    m_MusicSource = m_Engine.GetAudioSystem().CreateSource();
+    m_MusicSource->SetClip(backgroundMusic);
+    m_MusicSource->SetLooping(true);
+    m_MusicSource->SetVolume(0.5f);
+    m_MusicSource->Play();
+}
+
+void Game::OnExplosion(const glm::vec3& position) {
+    // Create a temporary source for the explosion sound
+    auto source = m_Engine.GetAudioSystem().CreateSource();
+    source->SetClip(m_Engine.GetAudioSystem().GetClip("explosion"));
+    source->SetPosition(position);
+    source->Play();
+
+    // In a real implementation, you'd need to manage the lifetime of this source
+}
+
+void Game::Update(float deltaTime) {
+    // Update listener position and orientation based on camera
+    auto& listener = m_Engine.GetAudioSystem().GetListener();
+    listener.SetPosition(m_Camera.GetPosition());
+    listener.SetOrientation(m_Camera.GetForward(), m_Camera.GetUp());
+
+    // Update audio system
+    m_Engine.GetAudioSystem().Update(deltaTime);
+}
+----
+
+=== 基础音频系统的局限
+
+虽然这个基础音频系统提供了在游戏中播放声音所需的基本功能，但它存在几项局限：
+
+1. *空间音频能力有限*：基于距离的基础衰减无法准确模拟声音在 3D 空间中的传播。
+2. *消耗大量 CPU*：效果处理与 3D 音频计算会占用大量 CPU 资源。
+3. *可扩展性有限*：处理成百上千个声源可能成为性能瓶颈。
+
+下一节将探讨 Vulkan 计算着色器如何通过把音频处理卸载到 GPU 来解决这些局限，特别是借助头部相关传输函数（HRTF）实现更真实的空间音频。
+
+xref:Building_a_Simple_Engine/Subsystems/01_introduction.adoc[上一页：子系统：简介] | xref:Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc[下一页：子系统：用 Vulkan 做音频处理]

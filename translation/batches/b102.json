@@ -1,0 +1,66 @@
+{
+  "id": "b102",
+  "words": 3970,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc",
+      "words": 315,
+      "title": "Storing the Plenoptic Function"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/02_4d_lightfield_representation.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/02_4d_lightfield_representation.adoc",
+      "words": 461,
+      "title": "4D LightField Representation"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc",
+      "words": 484,
+      "title": "High-Density View Arrays"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/04_incorporating_into_the_engine.adoc",
+      "words": 285,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc",
+      "words": 231,
+      "title": "Generating Views from Sparse Data"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/02_synthesis_shaders.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/02_synthesis_shaders.adoc",
+      "words": 592,
+      "title": "Plenoptic Synthesis Shaders"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc",
+      "words": 551,
+      "title": "Ray Traced Synthesis & Microlens Arrays"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc",
+      "words": 316,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc",
+      "words": 166,
+      "title": "Scene Understanding: Data Ingestion and Semantic Labels"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc",
+      "words": 569,
+      "title": "Environmental Ingestion: Scanning the Digital Twin"
+    }
+  ]
+}

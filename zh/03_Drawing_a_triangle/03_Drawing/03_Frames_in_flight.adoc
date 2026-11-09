@@ -1,0 +1,171 @@
+:pp: {plus}{plus}
+
+= 飞行帧
+
+目前我们的渲染循环有一个明显的缺陷。
+我们必须等上一帧完成才能开始渲染下一帧，这会让主机不必要地空转。
+
+// insert diagram showing our current render loop and the 'multi frame in flight' render loop
+
+解决办法是允许同时有多个帧处于 _飞行中_，也就是说，让一帧的渲染不干扰下一帧的录制。
+具体怎么做？
+渲染期间被访问和修改的任何资源都必须复制一份。
+因此，我们需要多个命令缓冲区、信号量和栅栏。
+后面的章节里我们还会为其他资源引入多个实例，到时你会再次看到这个概念。
+
+首先在程序顶部加一个常量，定义要并发处理多少帧：
+
+[,c++]
+----
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+----
+
+选择 2 是因为我们不希望 CPU 领先 GPU _太多_。
+有两个飞行帧时，CPU 和 GPU 可以同时处理各自的任务。
+如果 CPU 提前完成，它会等到 GPU 渲染完毕再提交更多工作。
+若有三帧或更多飞行帧，CPU 就可能跑到 GPU 前面，增加数帧的延迟。
+通常我们并不想要额外延迟。
+但把飞行帧数量的控制权交给应用，正是 Vulkan 显式风格的又一例证。
+
+每一帧都应该有自己的命令缓冲区、信号量集合和栅栏。
+把它们改名，然后改成存放这些对象的 ``std::vector``。之前名为 `drawFence` 的单个栅栏在这里变成 `inFlightFences`，而不是简单地加个 `s`，因为现在每个飞行帧各有一个栅栏：
+
+[,c++]
+----
+std::vector<vk::raii::CommandBuffer> commandBuffers;
+
+...
+
+std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+std::vector<vk::raii::Fence> inFlightFences;
+----
+
+接下来需要创建多个命令缓冲区。
+把 `createCommandBuffer` 改名为 `createCommandBuffers`。
+然后把这个命令缓冲区向量的大小设为 `MAX_FRAMES_IN_FLIGHT`，修改 `vk::CommandBufferAllocateInfo` 让它包含同样多的命令缓冲区，最后把目标改成我们的命令缓冲区向量：
+
+[,c++]
+----
+void createCommandBuffers()
+{
+		vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
+    commandBuffers = vk::raii::CommandBuffers( device, allocInfo );
+}
+----
+
+`createSyncObjects` 函数应改成创建所有这些对象：
+
+[,c++]
+----
+void createSyncObjects()
+{
+		assert(presentCompleteSemaphores.empty() && renderFinishedSemaphores.empty() && inFlightFences.empty());
+
+		for (size_t i = 0; i < swapChainImages.size(); i++)
+		{
+			renderFinishedSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());
+		}
+
+		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+		{
+			presentCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());
+			inFlightFences.emplace_back(device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+		}
+}
+----
+
+注意 `renderFinishedSemaphores` 的大小由 `swapChainImages.size()` 决定，而不是像 `presentCompleteSemaphores` 和 `inFlightFences` 那样取 `MAX_FRAMES_IN_FLIGHT`。
+这看起来和本章其他地方反复使用的「每个飞行帧复制一份」原则不一致，但这是有意为之。
+
+我们的每个同步对象都有*两*端：一端负责发出信号，一端负责等待。
+对 `presentCompleteSemaphores` 和 `inFlightFences` 来说，两端都由我们自己的 `frameIndex` 驱动，所以按 `MAX_FRAMES_IN_FLIGHT` 设置大小并用 `frameIndex` 索引是正确且足够的。
+
+`renderFinishedSemaphores` 则不同：图形队列完成对某张交换链图像的渲染时它被发信号，呈现引擎在呈现同一张图像之前等待它。
+呈现引擎并不知道我们的 `frameIndex`——它只知道 `vk::raii::SwapchainKHR::acquireNextImage` 交给我们的 `imageIndex`，而我们必须用这个索引来查出应该给哪一个 `renderFinishedSemaphores` 条目发信号、呈现时又该等待哪一个。
+因为交换链的图像数量可以（而且视呈现模式而定，往往确实如此）多于 `MAX_FRAMES_IN_FLIGHT`，又因为无法保证连续的 `acquireNextImage` 调用会以与 `frameIndex` 相同的循环模式返回图像索引，所以一个按 `frameIndex` 设定大小并索引的信号量，可能在呈现引擎还在等待上一帧时就被新的一帧再次发信号。
+按交换链图像的实际数量来设定 `renderFinishedSemaphores` 的大小则完全避开了这个问题：每张图像始终对应一个信号量，因此无论驱动以什么方式发放图像，仅凭图像索引就能保证发信号与等待正确配对。
+
+要在每一帧使用正确的对象，就需要跟踪当前帧。
+我们用一个帧索引来做这件事：
+
+[,c++]
+----
+uint32_t frameIndex = 0;
+----
+
+`commandBuffer` 现在也是一个向量，所以 `recordCommandBuffer` 不能再直接使用它——在函数开头为当前帧的缓冲区加一个局部引用：
+
+[,c++]
+----
+void recordCommandBuffer(uint32_t imageIndex)
+{
+    auto &commandBuffer = commandBuffers[frameIndex];
+    ...
+}
+----
+
+现在可以修改 `drawFrame`，让它使用正确的对象：
+
+[,c++]
+----
+void drawFrame() {
+		auto fenceResult = device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
+		if (fenceResult != vk::Result::eSuccess)
+		{
+			throw std::runtime_error("failed to wait for fence!");
+		}	
+		device.resetFences(*inFlightFences[frameIndex]);
+
+		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[frameIndex], nullptr);
+
+		commandBuffers[frameIndex].reset();
+		recordCommandBuffer(imageIndex);
+
+		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+		const vk::SubmitInfo   submitInfo{.waitSemaphoreCount   = 1,
+		                                  .pWaitSemaphores      = &*presentCompleteSemaphores[frameIndex],
+		                                  .pWaitDstStageMask    = &waitDestinationStageMask,
+		                                  .commandBufferCount   = 1,
+		                                  .pCommandBuffers      = &*commandBuffers[frameIndex],
+		                                  .signalSemaphoreCount = 1,
+		                                  .pSignalSemaphores    = &*renderFinishedSemaphores[imageIndex]};
+		queue.submit(submitInfo, *inFlightFences[frameIndex]);
+}
+----
+
+当然，别忘了每次都要推进到下一帧：
+
+[,c++]
+----
+void drawFrame() {
+    ...
+
+    frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+----
+
+借助取模（%）运算符，我们确保帧索引每入队 `MAX_FRAMES_IN_FLIGHT` 帧后就回绕。
+
+////
+Possibly use swapchain-image-count for renderFinished semaphores, as it can't
+be known with a fence whether the semaphore is ready for re-use.
+////
+
+现在我们已经实现了所有必要的同步，确保入队的工作不超过 `MAX_FRAMES_IN_FLIGHT` 帧，并且这些帧不会互相践踏。
+注意，代码的其他部分（例如最后的清理）依赖 `vk::raii::Device::waitIdle` 这类更粗糙的同步是没有问题的。
+你应该根据性能需求决定采用哪种方式。
+
+另外，我们也可以用时间线信号量代替这里介绍的二进制信号量。
+想看时间线信号量的用法示例，请参阅 xref:../../11_Compute_Shader.adoc[计算着色器] 一章。
+注意，时间线信号量在处理该示例中的计算队列与图形队列时特别有用。
+这里这种简单二进制信号量的做法可以看作更传统的同步方式。
+
+想通过示例进一步了解同步，请看看 Khronos 的 https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples#swapchain-image-acquire-and-present[这份详尽综述]。
+
+在 xref:../03_Drawing_a_triangle/04_Swap_chain_recreation.adoc[交换链重建] 一章中，我们还会处理一个规范 Vulkan 程序所需的小问题。
+
+link:/attachments/16_frames_in_flight.cpp[C{pp} 代码] /
+link:/attachments/09_shader_base.slang[Slang 着色器] /
+link:/attachments/09_shader_base.vert[GLSL 顶点着色器] /
+link:/attachments/09_shader_base.frag[GLSL 片元着色器]

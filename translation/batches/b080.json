@@ -1,0 +1,12 @@
+{
+  "id": "b080",
+  "words": 7036,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc",
+      "words": 7036,
+      "title": "Neural Networks Fundamentals"
+    }
+  ]
+}

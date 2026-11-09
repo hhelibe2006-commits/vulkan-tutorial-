@@ -1,0 +1,47 @@
+:pp: {plus}{plus}
+
+= 多绘制间接（MDI）：连接计算与图形
+
+== 弥合鸿沟
+
+整章下来，我们关注的都是如何让计算着色器更加自主。但大多数图形应用的最终目标毕竟是……图形。我们需要一种方式，把基于计算所做的剔除或分析结果变成绘制调用。
+
+**多绘制间接（MDI）**是计算管线与图形管线之间终极的桥梁。它允许单条 Vulkan 命令执行任意数量的绘制调用，而每个绘制调用的参数都来自 GPU 侧的缓冲区。
+
+== 工作原理：MDI 管线
+
+1.  **剔除阶段（计算）**：一个计算着色器分析你的场景（例如数百万个对象），决定哪些可见。它把每个可见对象的 `vertexCount`、`instanceCount` 等写进一个大型**间接缓冲区**。
+2.  **计数缓冲区**：该计算着色器还维护一个原子计数器，记录有多少对象可见，并把这个计数写进另一个**绘制计数缓冲区**。
+3.  **绘制（图形）**：CPU 调用 `vkCmdDrawIndexedIndirectCount`。这一条命令就告诉 GPU 去读取它自己的计数与参数并绘制对象。
+
+[source,cpp]
+----
+// The layout of the data in the MDI buffer (matching vk::DrawIndexedIndirectCommand)
+struct IndirectDrawCommand {
+    uint32_t indexCount;
+    uint32_t instanceCount;
+    uint32_t firstIndex;
+    int32_t  vertexOffset;
+    uint32_t firstInstance;
+};
+----
+
+== 为什么 MDI 对 GPU 驱动渲染必不可少
+
+如果没有 MDI，CPU 就必须把可见数量从 GPU 回读出来，然后为每个可见对象录制一次单独的 `vkCmdDraw`。对于一个有一万个可见对象的场景，这意味着每帧一万次 CPU 调用和一万条命令录制。
+
+有了 MDI，这一万个对象只用**一条命令**就能渲染。现代引擎之所以能支撑庞大的「剔除优先」架构，靠的就是这一点。
+
+== MDI 的最佳实践
+
+*   **最大绘制数量**：始终在 `vkCmdDrawIndexedIndirectCount` 调用中指定一个合理的最大绘制数量，以防出错时 GPU 过度读取缓冲区。
+*   **缓冲区对齐**：确保你的间接缓冲区遵循硬件要求的正确对齐与步长。
+*   **与 BDA 结合**：使用**缓冲区设备地址**（第 7 章的内容）把对象专属数据（如材质和变换）传给着色器，绕过传统的描述符集。
+
+== 结语：未来属于 GPU 驱动
+
+掌握了**间接派发**、**GPU 侧命令生成**和**多绘制间接**之后，你已经从传统的「CPU 主导」管线迈向了现代的「GPU 驱动」架构。你的应用现在扩展性更好、延迟更低、效率更高。
+
+下一章我们将看到，如何用**异步计算编排**把这些沉重的计算工作负载与图形渲染协调起来。
+
+xref:Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc[上一节：GPU 侧命令生成：自主执行] | xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc[下一节：异步计算编排]

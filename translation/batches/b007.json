@@ -1,0 +1,30 @@
+{
+  "id": "b007",
+  "words": 5427,
+  "files": [
+    {
+      "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/04_Conclusion.adoc",
+      "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/04_Conclusion.adoc",
+      "words": 578,
+      "title": "Conclusion"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/03_Drawing/00_Dynamic_rendering.adoc",
+      "target": "zh/03_Drawing_a_triangle/03_Drawing/00_Dynamic_rendering.adoc",
+      "words": 376,
+      "title": "Dynamic Rendering"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc",
+      "target": "zh/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc",
+      "words": 1682,
+      "title": "Command Buffers"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/03_Drawing/02_Rendering_and_presentation.adoc",
+      "target": "zh/03_Drawing_a_triangle/03_Drawing/02_Rendering_and_presentation.adoc",
+      "words": 2791,
+      "title": "Rendering and presentation"
+    }
+  ]
+}

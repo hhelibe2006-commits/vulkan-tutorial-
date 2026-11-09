@@ -1,0 +1,46 @@
+:pp: {plus}{plus}
+
+= AI 辅助的 Vulkan 开发
+
+== 引言
+
+假设你的验证层在某个自定义帧图里抛出了 `VUID-VkImageMemoryBarrier-oldLayout-01197` 错误。没有帮手的话，你就得翻 Vulkan 规范、手工追踪图像布局转换，并顺着纹理的生命周期一路回溯到所有碰过它的文件。
+
+一个索引了你的引擎和当前 Vulkan 注册表的 AI 助手，可以把其中很多环节抄近路：它能指出不匹配的地方，找到缺失的屏障——即使它藏在不相关的文件里——有时还能给出比你正要写的更干净的同步模式。它既不神奇，也不总是正确，但用得好的话，能省掉大量繁琐的查找工作，让你把时间花在真正的设计问题上。
+
+本系列讲的是有意识地使用这种能力，并清楚它在哪些地方有用、哪些地方没用。
+
+== 为什么这件事对 Vulkan 尤其值得做
+
+Vulkan 天生冗长。初学它时的很多困难，来自样板代码和显式状态跟踪，而不是底层的图形学概念，而这恰恰是 LLM 通常处理得还不错的一类工作，原因有几点：
+
+1.  **Vulkan 的严格性对模型有利。** 结构体、位掩码和枚举给 LLM 留下的合法答案空间，比动态类型语言窄得多。这并不能消除幻觉，但让幻觉更容易被发现。
+2.  **规范是机器可读的。** 借助模型上下文协议（MCP），你可以让助手直接访问 `vk.xml`，这样它就能查阅某个扩展或结构体，而不是根据可能落后一两个版本的训练数据去猜。
+3.  **具备视觉能力的模型能看截图。** 你可以把一帧抓图交给多模态模型，问它阴影痤疮、z-fighting 或纹理渗色的问题，这是追查成因的一个合理起点。
+
+这些都不能取代对 API 究竟在做什么的理解。它只是一种方式，让你少花时间在查找和样板上，多花时间在真正需要判断的部分。
+
+== 读者是谁？
+
+本系列面向已经学完核心 xref:00_Introduction.adoc[Vulkan 教程] 的 **中级 Vulkan 开发者**。你应当已经熟悉管线、描述符集，以及队列与呈现那套常见的坑。如果你想实际看看 AI 工具在 C{pp} 图形工作流里适合放在哪里、不适合放在哪里，那这套系列就是为你写的。
+
+== 工具集
+
+本系列使用两类模型：推理能力强的云端模型，用于结构规划和数学密集的问题；以及通过 Ollama 运行的本地模型，用于快速、私密的日常补全和聊天。用哪一类取决于任务、你的硬件，以及你对把代码送出本机的容忍度；后面的章节会细讲这些取舍，而不是把任何一类当作默认选择。另一块是 **上下文桥**（MCP 与 RAG），它让助手能访问你引擎实际的编码约定和当前的 Vulkan API 表面，而不是只依赖模型在训练时恰好见过的东西。
+
+== 路线图：我们要构建什么
+
+在这个教程中，我们会一步一步搭建起一套 AI 辅助的开发环境：
+
+1.  **xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[环境搭建]：** 为你的 IDE（CLion、Android Studio、Visual Studio 或 Xcode）配置 AI 辅助，并设置第一个代理。
+2.  **xref:AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc[模型选择与特化：简介]：** VRAM 预算、量化，以及挑选一个真正适合任务需要的模型。
+3.  **xref:AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc[多模态 AI：视觉推理能力]：** 把抓帧交给具备视觉能力的模型来诊断视觉 bug。
+4.  **xref:AI_Assisted_Vulkan/05_workflow/01_introduction.adoc[工作流：从系统设计到实现]：** 在 AI 参与的循环中，从高层规划推进到着色器实现。
+5.  **xref:AI_Assisted_Vulkan/06_debugging/01_introduction.adoc[借助 AI 与 RenderDoc 的专业级调试]：** 用 AI 处理验证层错误和 RenderDoc 抓帧。
+6.  **xref:AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc[高级 MCP 工具与自动化]：** 构建自定义工具，让你的 AI 能直接查询硬件限制和 Vulkan 注册表。
+7.  **xref:AI_Assisted_Vulkan/08_deployment/01_introduction.adoc[桌面、移动与嵌入式部署]：** 理顺通往 Android、iOS 和桌面的路径。
+8.  **xref:AI_Assisted_Vulkan/10_final_project.adoc[最终项目：AI 辅助图形实验室]：** 一个双滤波模糊实现，用到本系列讲过的各种工具。
+
+读完时，你应该能用当下的 AI 模型更快地构建复杂图形系统，同时不至于搞不清代码到底在做什么。
+
+开始吧：xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[环境搭建]

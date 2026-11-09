@@ -1,0 +1,174 @@
+= 模型优化技术：超越代码
+:pp: ++
+:stem: latexmath
+
+你已经优化了内核，量化到 INT8，也管理好了内存堆。但推理依然太慢。问题不在你的实现——而在**模型本身**。
+
+你从「模型动物园」下载的模型，训练目标只有一个：**精度**。它们往往塞满了冗余运算和架构上的「死重」，这些对最终预测毫无贡献。本章我们将学习如何用**算子融合**、**知识蒸馏**和 **Winograd 变换**等技术来「重写」神经网络。
+
+== 务实之路：库级别的图优化
+
+如果你用的是 ONNX Runtime，这些「重写」大部分会自动完成。但作为专业人士，你必须知道如何控制并验证这些变换。
+
+=== 1. 图优化级别
+ONNX Runtime 有三个优化级别：
+
+*   **基础（Basic）**：常量折叠、移除冗余节点。
+*   **扩展（Extended）**：融合简单的操作序列（例如 `Conv + ReLU` -> `FusedConv`）。
+*   **全部（All）**：复杂的厂商专属融合（例如为 Transformer 融合整个注意力块）。
+
+[source,cpp]
+----
+Ort::SessionOptions options;
+// Level ORT_ENABLE_ALL is recommended for production.
+options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+// You can also 'Export' the optimized model to see what it did!
+options.SetOptimizedModelFilePath(L"models/optimized_model.onnx");
+----
+
+=== 2. ONNX 简化器
+有时 PyTorch 导出的图太杂乱，ONNX Runtime 的内部优化器会被搞糊涂。
+
+*   **工具**：`onnx-simplifier`（Python）。
+*   **命令**：`python -m onnxsim model.onnx model_sim.onnx`
+*   **为什么用**：它会预先计算模型里每一个常量子表达式，通常能把节点数减少 30-50%。
+
+== 策略 1：算子融合（带宽救星）
+
+在高性能 ML 中，我们把神经网络视为一张**计算图**。每个节点是一个运算（例如卷积），每条边是一个张量。优化就是**图重写**的过程——用数学证明一串五个运算可以被单个运算替代，而结果完全相同。
+
+在一个朴素实现里，每一层都是一个独立的 Vulkan 内核。**卷积 latexmath:[\to] BatchNorm latexmath:[\to] ReLU**。
+这迫使 GPU 把卷积的输出写入 VRAM，再读回来做 BatchNorm，然后再写一遍，再读回来做 ReLU。由于我们通常受内存带宽限制，这简直是一场灾难。
+
+**解决方案**：把它们融合起来。我们把 BatchNorm 和偏置的参数「折」进卷积的权重里。
+
+=== 折叠的数学
+给定卷积结果 latexmath:[z = W \ast x + b]，BatchNorm 执行：
+[latexmath]
+++++
+y = \gamma \left( \frac{z - \mu}{\sqrt{\sigma^2 + \epsilon}} \right) + \beta
+++++
+
+代入 latexmath:[z]，我们可以推导出新的「融合」权重 latexmath:[W_{fused}] 和融合偏置 latexmath:[b_{fused}]：
+[latexmath]
+++++
+W_{fused} = W \cdot \frac{\gamma}{\sqrt{\sigma^2 + \epsilon}}
+++++
+[latexmath]
+++++
+b_{fused} = (b - \mu) \cdot \frac{\gamma}{\sqrt{\sigma^2 + \epsilon}} + \beta
+++++
+
+**结果**：你从三次内核启动、六次 VRAM 访问，降到**一次内核启动、两次 VRAM 访问**。这「免费」带来了 latexmath:[3\times] 的加速，精度零损失。这种折叠应当在「导出时」做一次，这样着色器看到的就只是一个标准卷积。
+
+== 策略 2：结构化剪枝（剪掉赘肉）
+
+剪枝是从网络中移除「不重要」权重的过程，目的是减小模型的体积与复杂度。虽然**非结构化剪枝**（随机置零）在研究领域很流行，但只有**结构化剪枝**能在通用硬件上带来加速。
+
+我们不剪单个权重，而是移除**整组滤波器**（矩阵中的行）或**整个通道**。
+
+=== 敏感度分析：「追捕死重」
+你怎么知道哪些滤波器「重要」？
+
+1.  **校准**：在验证数据集上跑一遍你的模型。
+2.  **计算能量**：对层中的每一个滤波器，计算其激活值绝对值之和（latexmath:[L1] 范数）。
+3.  **分布的「长尾」**：把所有滤波器的能量画出来。你通常会看到少数「巨星」对每张图像都有响应，以及一条很长的「尾巴」，那些滤波器几乎从不响应。
+4.  **剪枝**：物理上移除能量最低的 20% 滤波器，以及下一层中与它们对应的输入。
+
+**回报**：如果你剪掉一层中 50% 的滤波器，矩阵的宽度和高度都会减半。它是真正变小了，并且在**任何**硬件上都跑得快 latexmath:[2\times]，因为你只做了一半的计算。
+
+== 策略 3：知识蒸馏（老师与学生）
+
+有时一个模型（比如 ResNet-152）实在太大了，无论你怎么优化都无法实时运行。这种情况下，我们就用**知识蒸馏**。
+
+1.  **老师**：一个庞大、缓慢但精度极高的模型（「黄金标准」）。
+2.  **学生**：一个小巧、快速的模型（例如 MobileNetV2）。
+
+训练时，我们不仅教学生预测正确的标签（狗/猫），还教它模仿老师的**软概率**。我们用一个**温度**参数 latexmath:[\tau] 把概率「平滑」化，这样学生就能看到那些「细微差别」（例如老师为什么觉得这只狗有 10% 像猫）。
+
+[latexmath]
+++++
+\mathcal{L}_{distill} = \tau^2 \cdot KL\left( \text{Softmax}\left(\frac{Z_{teacher}}{\tau}\right), \text{Softmax}\left(\frac{Z_{student}}{\tau}\right) \right)
+++++
+
+**结果**：学生模型能达到比单独训练更高的精度，因为它「继承」了老师的深层特征表示。它学会了找出同样的模式，但参数少了 100 倍。
+
+== 策略 4：Winograd 变换（代数技巧）
+
+对于最常见的卷积——**3x3 卷积核**——我们可以使用 **Winograd latexmath:[F(2,3)] 变换**。NVIDIA cuDNN 和 ARM Compute Library 这类高端库正是靠它达到破纪录的速度。
+
+.Winograd 变换管线
+image::images/ML_Inference/Advanced_Topics/winograd_flow.svg[展示数据流经 Winograd 变换与逐元素乘法的示意图, 800]
+
+*   **传统卷积**：每个输出像素需要 9 次乘法。
+*   **Winograd 卷积**：把输入和权重变换到「Winograd 空间」，做一次逐元素乘法，再变换回来。
+
+[latexmath]
+++++
+Y = A^T [ (GgG^T) \odot (B^T x B) ] A
+++++
+
+其中 latexmath:[G]、latexmath:[B]、latexmath:[A] 是固定的变换矩阵。对于 latexmath:[F(2,3)]（用 3x3 滤波器从 4x4 输入块生成 2x2 输出块），变换矩阵为：
+
+[latexmath]
+++++
+B^T = \begin{bmatrix} 1 & 0 & -1 & 0 \\ 0 & 1 & 1 & 0 \\ 0 & -1 & 1 & 0 \\ 0 & 1 & 0 & -1 \end{bmatrix} , \quad G = \begin{bmatrix} 1 & 0 & 0 \\ 1/2 & 1/2 & 1/2 \\ 1/2 & -1/2 & 1/2 \\ 0 & 0 & 1 \end{bmatrix} , \quad A^T = \begin{bmatrix} 1 & 1 & 1 & 0 \\ 0 & 1 & -1 & -1 \end{bmatrix}
+++++
+
+=== 为什么用 Winograd？
+Winograd 的原理是把计算开销从**乘法**（昂贵且耗电）转移到**加法**（便宜）上。它把乘法次数从 9 次减少到 4 次，理论加速比为 latexmath:[2.25\times]。
+
+=== 动手实践：Winograd 变换（C++）
+要在着色器里使用 Winograd，你必须先离线变换你的**权重**。BatchNorm 折叠改变的是数值，而 Winograd 权重变换改变的是**维度**。
+
+[source,cpp]
+----
+// Transforming a 3x3 filter 'g' into a 4x4 Winograd filter 'GgG^T'
+void transformWeightToWinograd(const float* g, float* out4x4) {
+    const float G[4][3] = {
+        { 1.0f,  0.0f,  0.0f},
+        { 0.5f,  0.5f,  0.5f},
+        { 0.5f, -0.5f,  0.5f},
+        { 0.0f,  0.0f,  1.0f}
+    };
+    // 1. Perform G * g
+    // 2. Perform (G * g) * G^T
+    // Result is a 4x4 matrix ready for Hadamard product in the shader.
+}
+----
+
+== 策略 5：动态形状优化
+
+在很多真实应用中，你并不知道输入尺寸。用户可能上传一张竖图，也可能上传一张横图。标准引擎往往把每张图像都「填充」成大正方形（例如 1024x1024），这极其浪费。
+
+*   **问题**：如果你在 1024x1024 的填充缓冲区里渲染一张 224x224 的图像，你就在「零」像素上浪费了 latexmath:[20\times] 的算力。
+*   **解决方案**：**分桶（Bucketing）**。
+    1.  定义 3-4 种标准宽高比（例如 1:1、16:9、9:16）。
+    2.  预编译 3-4 条独立的 Vulkan 计算管线，每条针对其中一种分桶调优。
+    3.  运行时，选出对用户图像「最贴合」的那个分桶。
+
+== 策略 6：GAP + FC 融合（分类器头部）
+
+在分类器的最后几层，你会有一个**全局平均池化（GAP）**，后面接一个**全连接（FC）**层。
+
+*   **GAP**：把一个 latexmath:[7 \times 7 \times 1024] 的张量平均成一个 latexmath:[1 \times 1 \times 1024] 的向量。
+*   **FC**：用该向量乘以一个 latexmath:[1024 \times 1000] 的权重矩阵。
+
+我们可以把它们**融合**成一个内核，而不是两个内核。FC 内核的线程在加载权重的同时，也在**共享内存**中完成 latexmath:[7 \times 7] 空间块的求平均。这样就完全不需要把中间那个 1024 元素的向量存进 VRAM。
+
+== 小结：优化路线图
+
+模型优化就是**重写图**，让它贴合芯片。
+
+1.  **务实之路**：使用 `onnx-simplifier`，并设置 `ORT_ENABLE_ALL`。
+2.  **融合**：在导出时把 BatchNorm 和偏置折进卷积。
+3.  **剪枝**：做敏感度分析，移除从不响应的滤波器。
+4.  **蒸馏**：如果你的「小」模型精度不够，就用蒸馏。
+5.  **变换**：如果受计算能力限制，就为 3x3 卷积核实现 Winograd。
+
+现在你已经掌握了 ML 推理的高级主题。你能做量化、针对特定厂商调优、管理复杂的内存池，还能重写网络架构。
+
+在最后一节，我们会把这些技能全部用上，投向最具挑战的环境：**嵌入式应用**。
+
+xref:ML_Inference/Advanced_Topics/04_memory_management.adoc[上一篇：高级内存管理：突破内存墙] | xref:ML_Inference/Embedded_Applications/01_introduction.adoc[下一篇：嵌入式应用：边缘侧的 AI]

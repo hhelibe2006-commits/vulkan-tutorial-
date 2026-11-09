@@ -1,0 +1,18 @@
+{
+  "id": "b058",
+  "words": 5666,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc",
+      "words": 2342,
+      "title": "Loading Models: Implementing PBR for glTF Models"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc",
+      "words": 3324,
+      "title": "Loading Models: Managing Multiple Objects"
+    }
+  ]
+}

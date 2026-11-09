@@ -1,0 +1,172 @@
+:pp: {plus}{plus}
+
+= 窗口表面
+
+由于 Vulkan 是与平台无关的 API，它并未设计成直接与窗口系统交互。为了在 Vulkan 与窗口系统之间建立连接，把渲染结果呈现到屏幕上，我们需要使用 WSI（Window System Integration，窗口系统集成）扩展。本章我们讨论第一个扩展，也就是 `VK_KHR_surface`。它暴露一个 `VkSurfaceKHR` 对象，表示一种抽象的「表面」类型，用于把渲染好的图像呈现到其上。我们程序中的表面将由已经用 GLFW 打开的窗口支撑。
+
+`VK_KHR_surface` 扩展是实例级扩展，而实际上我们已经启用了它，因为它包含在 `glfwGetRequiredInstanceExtensions` 返回的列表中。该列表还包含一些我们将在接下来几章中用到的其他 WSI 扩展。
+
+窗口表面需要在创建实例之后立即创建，因为它实际上会影响物理设备的选择。我们之所以推迟到现在，是因为窗口表面属于渲染目标与呈现这一更大的主题，若在此处展开讲解会让基础设置部分变得臃肿。还要注意，如果你只需要离屏渲染，那么窗口表面在 Vulkan 中就是完全可以省略的组件。Vulkan 允许你在不使用诸如创建不可见窗口（OpenGL 必须如此）这类取巧手段的情况下完成离屏渲染。Vulkan 还允许你从一块不参与呈现的 GPU 上远程渲染，或通过互联网远程渲染，甚至在没有渲染或呈现目标的情况下运行 AI 计算加速。
+
+虽然这里演示的是 GLFW，但 Vulkan 渲染到表面的概念对任何其他窗口 API 来说都是重复出现的同一目标。这个概念也适用于移动端，以及直接访问窗口管理器的场景。话虽如此，我们目前还是先专注于 GLFW，看看它在本教程中具体是如何工作的。
+
+== 创建窗口表面
+
+先在调试回调下方添加一个 `surface` 类成员。
+
+[,c++]
+----
+vk::raii::SurfaceKHR surface = nullptr;
+----
+
+`VkSurfaceKHR` 对象及其用法虽然与平台无关，但它的创建过程并非如此，因为创建依赖于窗口系统的细节。例如在 Windows 上它需要 `HWND` 和 `HMODULE` 句柄。因此，该扩展还有一个平台相关的补充版本，在 Windows 上称为 `VK_KHR_win32_surface`，它同样会被自动包含在 `glfwGetRequiredInstanceExtensions` 返回的列表中。
+
+我会演示如何用这个平台相关扩展在 Windows 上创建表面，但本教程不会真正使用它。既然用了 GLFW 这样的库，再去写平台相关代码就没有任何意义了。GLFW 实际上提供了 `glfwCreateWindowSurface`，由它为我们处理平台差异。不过在开始依赖它之前，先看看它在幕后做了什么，还是很有好处的。
+
+要访问原生平台函数，需要更新顶部的 include：
+
+[,c++]
+----
+#define VK_USE_PLATFORM_WIN32_KHR
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+----
+
+由于窗口表面是 Vulkan 对象，它对应一个需要填写的 `vk::Win32SurfaceCreateInfoKHR` 结构体。该结构体有两个重要参数：`hwnd` 和 `hinstance`，分别是窗口和进程的句柄。
+
+[,c++]
+----
+vk::Win32SurfaceCreateInfoKHR createInfo{.hinstance = GetModuleHandle(nullptr),
+                                         .hwnd      = glfwGetWin32Window(window)};
+----
+
+`glfwGetWin32Window` 函数用于从 GLFW 窗口对象中取得原始的 `HWND`。`GetModuleHandle` 调用则返回当前进程的 `HINSTANCE` 句柄。
+
+之后就可以用 `vk::raii::Instance::createWin32SurfaceKHR` 创建表面，该函数的参数包括表面创建细节和自定义分配器。严格来说，这是一个 WSI 扩展函数，但它实在太常用了，标准 Vulkan 加载器直接包含了它，因此与其他扩展不同，你不需要显式加载它。
+
+[,c++]
+----
+surface = instance.createWin32SurfaceKHR(createInfo);
+----
+
+其他平台的过程类似。比如在 Linux 上使用 X11 时，`vk::raii::Instance::createXcbSurfaceKHR` 以 XCB 连接和窗口作为创建细节；如果你运行在 Wayland 下，则改用 `vk::raii::Instance::createWaylandSurfaceKHR`，它接收 `wl_display` 和 `wl_surface`。
+
+`glfwCreateWindowSurface` 函数做的正是这件事，只是每个平台有各自的实现。现在把它集成到我们的程序中。添加一个 `createSurface` 函数，在 `initVulkan` 中紧跟实例创建和 `setupDebugMessenger` 之后调用。
+
+[,c++]
+----
+void initVulkan() {
+    createInstance();
+    setupDebugMessenger();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+}
+
+void createSurface() {
+
+}
+----
+
+GLFW 的调用接收简单参数而不是结构体，因此这个函数的实现非常直接：
+
+[,c++]
+----
+void createSurface() {
+    VkSurfaceKHR       _surface;
+    if (glfwCreateWindowSurface(*instance, window, nullptr, &_surface) != 0) {
+        throw std::runtime_error("failed to create window surface!");
+    }
+    surface = vk::raii::SurfaceKHR(instance, _surface);
+}
+----
+
+不过正如你在上面看到的，GLFW 只处理 Vulkan C API。`VkSurfaceKHR` 对象是 C API 对象。所幸它可以原生地提升为 C++ 封装类型，我们这里就是这么做的。
+
+参数分别是 `VkInstance`、GLFW 窗口指针、自定义分配器，以及指向 `VkSurfaceKHR` 变量的指针。它只是原样转交相关平台调用返回的 `VkResult`。GLFW 没有提供专门销毁表面的函数，但只要把它包装进我们的 RAII `SurfaceKHR` 对象，Vulkan RAII 就会替我们处理销毁。
+
+== 查询呈现支持
+
+尽管 Vulkan 实现可能支持窗口系统集成，但这并不意味着系统中的每一块设备都支持。因此我们需要扩展 `createLogicalDevice`，确保设备能把图像呈现到我们创建的表面上。由于呈现是队列特有的特性，问题实际上就变成了找出一个支持向我们创建的表面呈现的队列族。
+
+支持图形命令的队列族与支持呈现的队列族完全不重叠的情况确实可能发生，但概率极低。为简单起见，我们假设存在一个同时满足两者的队列族，若不存在则直接退出。
+
+也就是说，接下来我们要找一个既具备图形操作能力、又能向我们窗口表面呈现的队列族。检查呈现支持的函数是 `vk::raii::PhysicalDevice::getSurfaceSupportKHR`，它接收队列族索引和表面作为参数：
+
+[,c++]
+----
+uint32_t queueIndex = ~0;
+for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++)
+{
+  if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) &&
+      physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
+  {
+    // found a queue family that supports both graphics and present
+    queueIndex = qfpIndex;
+    break;
+  }
+}
+if (queueIndex == ~0)
+{
+  throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
+}
+----
+
+== 创建呈现队列
+
+只剩最后一件事：修改逻辑设备的创建流程，创建队列并取得 `vk::raii::Queue` 句柄。我们需要修改筛选逻辑，在检测队列族的同时找出最适合使用的那些。下面是我们在设备创建函数中用单个函数完成的写法：
+
+[,c++]
+----
+void createLogicalDevice() {
+    // find the index of the first queue family that supports graphics
+    std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
+
+    // get the first index into queueFamilyProperties which supports both graphics and present
+    uint32_t queueIndex = ~0;
+    for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++)
+    {
+      if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) &&
+          physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
+      {
+        // found a queue family that supports both graphics and present
+        queueIndex = qfpIndex;
+        break;
+      }
+    }
+    if (queueIndex == ~0)
+    {
+      throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
+    }
+
+    // query for Vulkan 1.3 features
+		vk::StructureChain<vk::PhysicalDeviceFeatures2,
+		                   vk::PhysicalDeviceVulkan11Features,
+		                   vk::PhysicalDeviceVulkan13Features,
+		                   vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+		    featureChain = {
+		        {},                                    // vk::PhysicalDeviceFeatures2
+		        {.shaderDrawParameters = true},        // vk::PhysicalDeviceVulkan11Features
+		        {.dynamicRendering = true},            // vk::PhysicalDeviceVulkan13Features
+		        {.extendedDynamicState = true}         // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+		    };
+
+    // create a Device
+    float                     queuePriority = 0.5f;
+    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{.queueFamilyIndex = queueIndex, .queueCount = 1, .pQueuePriorities = &queuePriority};
+    vk::DeviceCreateInfo      deviceCreateInfo{.pNext                   = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+                                               .queueCreateInfoCount    = 1,
+                                               .pQueueCreateInfos       = &deviceQueueCreateInfo,
+                                               .enabledExtensionCount   = static_cast<uint32_t>(requiredDeviceExtension.size()),
+                                               .ppEnabledExtensionNames = requiredDeviceExtension.data()};
+
+    device = vk::raii::Device( physicalDevice, deviceCreateInfo );
+    queue  = vk::raii::Queue(device, queueIndex, 0);
+}
+----
+
+在 xref:./01_Swap_chain.adoc[下一章]中，我们将研究交换链，以及它如何让我们把图像呈现到表面。
+
+link:/attachments/05_window_surface.cpp[C{pp} 代码]

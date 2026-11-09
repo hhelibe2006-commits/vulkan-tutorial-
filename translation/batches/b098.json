@@ -1,0 +1,66 @@
+{
+  "id": "b098",
+  "words": 5276,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc",
+      "words": 268,
+      "title": "Dynamic Rendering for Spatial Views"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc",
+      "words": 590,
+      "title": "Rendering into Spatial Swapchains"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc",
+      "words": 739,
+      "title": "Stereo Viewport & Scissor Management"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc",
+      "words": 524,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc",
+      "words": 363,
+      "title": "The Predictive Frame Loop and Timing Math"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc",
+      "words": 681,
+      "title": "The XR Lifecycle"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/03_display_time_prediction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/03_display_time_prediction.adoc",
+      "words": 635,
+      "title": "Display Time Prediction"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc",
+      "words": 496,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc",
+      "words": 304,
+      "title": "Late Latching and Timeline Semaphores"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/02_last_second_update.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/02_last_second_update.adoc",
+      "words": 676,
+      "title": "The Last-Second Update"
+    }
+  ]
+}

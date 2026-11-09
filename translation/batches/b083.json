@@ -1,0 +1,12 @@
+{
+  "id": "b083",
+  "words": 3956,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/06_model_formats.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/06_model_formats.adoc",
+      "words": 3956,
+      "title": "Model Formats"
+    }
+  ]
+}

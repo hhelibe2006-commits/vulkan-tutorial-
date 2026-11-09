@@ -1,0 +1,311 @@
+:pp: {plus}{plus}
+= 无绑定形变缓冲区与计算集成
+
+== 为什么用无绑定？
+
+在 Vulkan 1.2 的描述符索引（Vulkan 1.3 中正式化，Vulkan 1.4 中完全强制）之前，要从着色器访问一组 GPU 缓冲区，必须逐个绑定每个缓冲区——要么作为单独的描述符集，要么作为预先声明好的固定大小数组中的一个元素。对于形变目标，这带来一个实际问题：你要么需要绑定所有形变目标缓冲区（包括未激活的那些），要么就得在活动集合变化时每帧重建描述符集。
+
+**描述符索引**（也叫无绑定渲染）解决了这个问题：它允许着色器在运行时用执行期间计算出的值来索引描述符数组。你在着色器中声明一个很大的描述符数组，在加载时把所有形变目标缓冲区填入其中，然后在派发时提供一个「*要读取哪些索引*」的列表——即当前激活的形变目标及其权重。GPU 用一个描述符索引（一个普通整数）查找正确的缓冲区句柄，CPU 端无需任何重新绑定。
+
+我们具体需要的 Vulkan 特性是 `VK_EXT_descriptor_indexing`（Vulkan 1.2 核心），并启用 `shaderStorageBufferArrayNonUniformIndexing` 特性。
+
+=== 启用设备特性
+
+要使用无绑定形变缓冲区，你必须在创建逻辑设备时启用相应特性。在 Vulkan 1.4 中，这些特性属于核心规范，但仍必须在 `VkPhysicalDeviceFeatures2` 链中显式请求：
+
+[source,cpp]
+----
+// 1. Check for support
+VkPhysicalDeviceDescriptorIndexingFeatures indexing_features {};
+indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+
+VkPhysicalDeviceFeatures2 device_features {};
+device_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+device_features.pNext = &indexing_features;
+
+vkGetPhysicalDeviceFeatures2(physical_device, &device_features);
+
+if (!indexing_features.shaderStorageBufferArrayNonUniformIndexing) {
+    throw std::runtime_error("GPU does not support non-uniform indexing of storage buffers!");
+}
+
+// 2. Enable during device creation
+VkDeviceCreateInfo device_info {};
+device_info.pNext = &device_features; // Includes the requested indexing features
+// ... rest of device creation ...
+----
+
+== 搭建描述符基础设施
+
+我们需要一个描述符集布局，其中包含运行期大小的存储缓冲区描述符数组。在 Vulkan 中，这通过 `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` 与 `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` 标志声明，它们共同告诉驱动：该数组可以只填充一部分，并且只有我们实际使用的条目需要有效：
+
+[source,cpp]
+----
+void create_morph_descriptor_set_layout(
+    VkDevice device,
+    uint32_t max_morph_targets, // Upper bound on the total number of morph target buffers
+    VkDescriptorSetLayout& out_layout)
+{
+    // Binding 0: runtime-sized array of storage buffers (one per morph target)
+    VkDescriptorSetLayoutBinding binding {};
+    binding.binding            = 0;
+    binding.descriptorType     = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binding.descriptorCount    = max_morph_targets;
+    binding.stageFlags         = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorBindingFlags flags =
+        VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT           |
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags {};
+    binding_flags.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    binding_flags.bindingCount  = 1;
+    binding_flags.pBindingFlags = &flags;
+
+    VkDescriptorSetLayoutCreateInfo layout_info {};
+    layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.pNext        = &binding_flags;
+    layout_info.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    layout_info.bindingCount = 1;
+    layout_info.pBindings    = &binding;
+
+    vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &out_layout);
+}
+
+void update_morph_descriptors(
+    VkDevice device,
+    VkDescriptorSet descriptor_set,
+    const std::vector<VkBuffer>& morph_buffers)
+{
+    std::vector<VkDescriptorBufferInfo> buffer_infos;
+    std::vector<VkWriteDescriptorSet> writes;
+
+    for (size_t i = 0; i < morph_buffers.size(); ++i) {
+        VkDescriptorBufferInfo info {};
+        info.buffer = morph_buffers[i];
+        info.offset = 0;
+        info.range  = VK_WHOLE_SIZE;
+        buffer_infos.push_back(info);
+
+        VkWriteDescriptorSet write {};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = descriptor_set;
+        write.dstBinding      = 0;
+        write.dstArrayElement = static_cast<uint32_t>(i);
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.descriptorCount = 1;
+        write.pBufferInfo     = &buffer_infos.back();
+        writes.push_back(write);
+    }
+
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+----
+
+=== 创建形变计算管线
+
+要运行我们扩展后的计算着色器，需要一个包含无绑定描述符集的管线。管线布局必须把无绑定数组对应到 set 1 的 binding 0（与我们的 `[[vk::binding(0, 1)]]` 声明一致）：
+
+[source,cpp]
+----
+void create_morph_pipeline(
+    VkDevice device,
+    VkDescriptorSetLayout base_layout,  // Binding set 0 (input/output vertices, joint matrices)
+    VkDescriptorSetLayout morph_layout, // Binding set 1 (bindless morph buffers)
+    VkShaderModule shader_module,
+    VkPipelineLayout& out_layout,
+    VkPipeline& out_pipeline)
+{
+    // 1. Pipeline Layout
+    std::vector<VkDescriptorSetLayout> layouts = { base_layout, morph_layout };
+
+    VkPushConstantRange push_range {};
+    push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    push_range.offset     = 0;
+    push_range.size       = sizeof(PushConstants);
+
+    VkPipelineLayoutCreateInfo layout_info {};
+    layout_info.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_info.setLayoutCount = static_cast<uint32_t>(layouts.size());
+    layout_info.pSetLayouts    = layouts.data();
+    layout_info.pushConstantRangeCount = 1;
+    layout_info.pPushConstantRanges    = &push_range;
+
+    vkCreatePipelineLayout(device, &layout_info, nullptr, &out_layout);
+
+    // 2. Compute Pipeline
+    VkComputePipelineCreateInfo pipeline_info {};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.layout = out_layout;
+    pipeline_info.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipeline_info.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipeline_info.stage.module = shader_module;
+    pipeline_info.stage.pName  = "main";
+
+    vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &out_pipeline);
+}
+----
+
+从这个布局分配描述符集时，你指定想要的描述符实际数量（可以小于 `max_morph_targets`）。分配之后，用上面展示的 `vkUpdateDescriptorSets` 填充数组。这是加载时的一次性设置——缓冲区本身不变，变化的只是用于混合它们的权重。
+
+== 形变目标动画
+
+运行时驱动形变权重通过带 `weights` 路径的 glTF 动画通道完成。与平移（vec3）或旋转（四元数）不同，形变权重通道产生一个标量值（如果同一通道中动画多个形变目标，则产生一个标量数组）。
+
+[source,cpp]
+----
+void update_morph_weights(
+    const AnimationChannel& channel,
+    const AnimationSampler& sampler,
+    float current_time,
+    std::vector<float>& mesh_weights)
+{
+    if (channel.path != AnimationChannel::WEIGHTS) return;
+
+    // Find the keyframe interval [t0, t1]
+    uint32_t k = find_keyframe(sampler, current_time);
+    float t0 = sampler.inputs[k];
+    float t1 = sampler.inputs[k+1];
+    float factor = (current_time - t0) / (t1 - t0);
+
+    // Sample the weights for all targets in this mesh
+    uint32_t target_count = mesh_weights.size();
+    for (uint32_t i = 0; i < target_count; ++i) {
+        float w0 = sampler.values[k * target_count + i].x;
+        float w1 = sampler.values[(k+1) * target_count + i].x;
+
+        // Linear interpolation is typically sufficient for facial expressions
+        mesh_weights[i] = glm::mix(w0, w1, factor);
+    }
+}
+----
+
+这些权重随后被打包进 `PushConstants` 并发送给计算着色器。
+
+== 扩展的计算着色器
+
+我们需要扩展第 3 章的蒙皮计算着色器，在骨骼蒙皮步骤之前施加形变目标位移。形变施加与骨骼蒙皮都是对同一顶点缓冲区的线性操作，因此它们可以干净地组合：先施加形变（在绑定姿态下移动顶点），再施加骨骼蒙皮（把形变后的绑定姿态变换到动画世界姿态）。
+
+下面是 Slang 中的扩展着色器。关键新增内容是 `morphTargets` 无绑定缓冲区数组、`MorphWeightBlock` 参数，以及形变累积循环：
+
+[source,slang]
+----
+// morph_accumulate.slang — combines morph target accumulation with skeletal skinning.
+// Requires: VK_EXT_descriptor_indexing, runtimeDescriptorArray.
+
+// Same C-array struct layout as skinning.slang (matches GPU buffer memory layout).
+struct InputVertex  { float p[3]; float n[3]; float uv[2]; float t[4]; };
+struct OutputVertex { float p[3]; float n[3]; float uv[2]; float t[4]; };
+
+// Set 0: per-mesh buffers (same 5-binding layout as the base skinning shader)
+[[vk::binding(0, 0)]] StructuredBuffer<InputVertex>    base_vertices;
+[[vk::binding(1, 0)]] RWStructuredBuffer<OutputVertex> output_vertices;
+[[vk::binding(2, 0)]] StructuredBuffer<float4x4>       joint_matrices;
+[[vk::binding(3, 0)]] StructuredBuffer<uint4>          joint_indices;
+[[vk::binding(4, 0)]] StructuredBuffer<float4>         joint_weights;
+
+// Set 1: runtime-length array of morph delta buffers (one StructuredBuffer per target).
+// MorphDelta uses a C-array to match GPU buffer layout.
+struct MorphDelta { float d[3]; };
+[[vk::binding(0, 1)]] StructuredBuffer<MorphDelta> morph_targets[];
+
+// MorphWeightBlock must match SkinPushConstants::MorphWeightBlock in renderer_advanced_types.h.
+struct MorphWeightBlock {
+    float    weights[24];     // Blending weights for the active targets
+    uint32_t active_count;    // How many entries in weights[] are valid
+    uint32_t apply_skinning;  // 1 = also apply skeletal skinning, 0 = morph only
+    uint32_t pad[2];
+};
+
+struct PushConstants {
+    uint32_t         vertex_count;
+    uint32_t         morph_indices[24]; // Which descriptor slot each active target lives in
+    MorphWeightBlock morph_weights;
+};
+[[vk::push_constant]] PushConstants pc;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 dispatch_id : SV_DispatchThreadID)
+{
+    uint vertex_idx = dispatch_id.x;
+    if (vertex_idx >= pc.vertex_count) return;
+
+    InputVertex base = base_vertices[vertex_idx];
+    float3 base_pos = float3(base.p[0], base.p[1], base.p[2]);
+    float3 base_nrm = float3(base.n[0], base.n[1], base.n[2]);
+    float4 base_tan = float4(base.t[0], base.t[1], base.t[2], base.t[3]);
+
+    // --- Pass 1: morph target accumulation ---
+    float3 morphed_position = base_pos;
+    float3 morphed_normal   = base_nrm;
+
+    for (uint m = 0; m < pc.morph_weights.active_count; ++m) {
+        float weight = pc.morph_weights.weights[m];
+        if (abs(weight) < 1e-5f) continue;
+
+        uint slot = pc.morph_indices[m];
+        // NonUniformResourceIndex: different threads may use different descriptor slots.
+        MorphDelta delta_raw = morph_targets[NonUniformResourceIndex(slot)][vertex_idx];
+        float3 delta = float3(delta_raw.d[0], delta_raw.d[1], delta_raw.d[2]);
+        morphed_position += weight * delta;
+    }
+
+    // --- Pass 2: skeletal skinning (same LBS as skinning.slang) ---
+    uint4  j_idx = joint_indices[vertex_idx];
+    float4 j_w   = joint_weights[vertex_idx];
+
+    float4x4 skin_matrix =
+        j_w.x * joint_matrices[j_idx.x] +
+        j_w.y * joint_matrices[j_idx.y] +
+        j_w.z * joint_matrices[j_idx.z] +
+        j_w.w * joint_matrices[j_idx.w];
+
+    float3x3 skin_rot = float3x3(
+        skin_matrix[0].xyz, skin_matrix[1].xyz, skin_matrix[2].xyz);
+
+    float3 final_position = morphed_position;
+    float3 final_normal   = morphed_normal;
+    float3 final_tangent  = base_tan.xyz;
+    if (pc.morph_weights.apply_skinning != 0u) {
+        final_position = mul(skin_matrix, float4(morphed_position, 1.0)).xyz;
+        final_normal   = normalize(mul(skin_rot, morphed_normal));
+        final_tangent  = normalize(mul(skin_rot, base_tan.xyz));
+    }
+
+    // Write to output buffer element-by-element (C-array structs require this).
+    OutputVertex out;
+    out.p[0] = final_position.x;  out.p[1] = final_position.y;  out.p[2] = final_position.z;
+    out.n[0] = final_normal.x;    out.n[1] = final_normal.y;    out.n[2] = final_normal.z;
+    out.t[0] = final_tangent.x;   out.t[1] = final_tangent.y;
+    out.t[2] = final_tangent.z;   out.t[3] = base_tan.w;
+    out.uv[0] = base.uv[0];       out.uv[1] = base.uv[1];
+
+    output_vertices[vertex_idx] = out;
+}
+----
+
+`NonUniformResourceIndex` 注解是让无绑定索引正确工作的关键。没有它，GPU 驱动可能会假设一个波前（wave，一组锁步执行的线程）中的所有线程访问同一个描述符索引——当同一次派发中正在为不同角色蒙皮时，这就是错误的。`NonUniformResourceIndex` 告诉编译器在索引上生成 `NonUniform` 装饰，指示硬件执行非一致纹理/缓冲区读取，从而正确处理逐线程的差异。
+
+== 与派发循环集成
+
+形变系统可以自然地融入帧循环：
+
+1. **更新权重。** 动画系统推进 `WEIGHTS` 动画通道，把新的浮点值写入每个网格的形变权重数组。
+2. **剔除未激活目标。** 权重低于阈值（通常 0.005）的形变目标从派发中排除。只用激活的目标构建紧凑的 `morph_indices` 与 `weights` 数组。
+3. **推送常量。** 用激活目标数量、激活缓冲区的描述符索引及其权重填充 `PushConstants` 结构体。
+4. **派发。** 绑定描述符集（其中注册了所有形变目标缓冲区），推送常量，派发计算着色器。每个顶点一个线程。
+5. **屏障。** 在光栅化或光线追踪通道读取输出缓冲区之前，对它发出 `VkBufferMemoryBarrier2`（与第 3 章相同）。
+
+唯一需要小心的是每帧的推送常量大小。最多 24 个激活形变目标时，`PushConstants` 包含 24 个索引（96 字节）加上带 24 个权重的 `MorphWeightBlock`（96 字节）再加元数据——总共约 200 字节。Vulkan 规范保证至少 128 字节的推送常量空间，但大多数桌面 GPU 支持 256 字节或更多。24 个目标的上限正是为了留在这个预算内。如果你需要更多同时激活的目标，就把权重数据移入一个小的统一缓冲区。
+
+== 形变目标与骨骼绑定协同
+
+最后一个问题是形变目标与关节骨架如何协作。当一个角色张开嘴时，这既涉及一个形变目标（让嘴唇滑动并露出牙齿的复杂、非刚性形变），也涉及一个关节旋转（向下旋转下颌骨，把下颚拉开）。这两个系统必须按正确的顺序施加，并且必须在基础姿态上取得一致。
+
+规则是：**在绑定姿态下施加形变，然后施加骨骼蒙皮。** 绑定姿态是美术在 Blender 中设定的静止配置。形变目标定义为相对该姿态的位移。骨骼的逆绑定矩阵也是相对该姿态定义的。如果你先施加形变（我们的着色器就是这样做的），再用逆绑定矩阵执行关节影响加权，结果在数学上是正确的：绑定姿态下形变后的几何体被动画姿态变换，得到最终的动画加形变网格。
+
+做错这一步——在骨骼蒙皮之后施加形变目标，或者在世界空间而非绑定空间中施加——会产生模糊拖影，面部几何体会被拉伸或无法跟随下颌骨。
+
+xref:Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc[上一章：形态键导入：从 glTF 解析形变目标] | xref:Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc[下一章：形变目标：小结与下一步]

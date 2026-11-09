@@ -1,0 +1,671 @@
+:pp: {plus}{plus}
+
+== GUI：UI 元素与集成概念
+
+== UI 元素与集成概念
+
+现在我们已经把 ImGui 搭好了、也实现了输入处理，接下来看看把 GUI 集成到 Vulkan 应用中的关键概念。我们会聚焦集成层面，而不是把 ImGui 的控件示例逐一罗列——这些内容在 ImGui 文档里已经写得很清楚了。
+
+=== GUI 集成概念
+
+把 GUI 集成进 3D 应用时，有几个重要概念需要考虑：
+
+1. *关注点分离*：让 GUI 代码与渲染代码相互独立，以保持架构清晰。
+2. *性能影响*：GUI 会影响性能，布局复杂或更新频繁时尤其明显。
+3. *输入管理*：妥善处理输入，确保它被正确分发给 GUI 或 3D 场景。
+4. *渲染顺序*：GUI 通常作为叠加层，在 3D 场景之后渲染。
+5. *状态管理*：通过 GUI 以受控的方式修改应用状态。
+
+=== ImGui 基本用法
+
+ImGui 采用立即模式（immediate mode）范式：UI 每帧都会重新构建。下面是一个简单的例子：
+
+[source,cpp]
+----
+void drawGUI() {
+    // Start a new ImGui frame
+    ImGui::NewFrame();
+
+    // Create a window
+    ImGui::Begin("Settings");
+
+    // Add UI elements here
+    static bool enableFeature = false;
+    if (ImGui::Checkbox("Enable Feature", &enableFeature)) {
+        // This code runs when the checkbox value changes
+        updateFeatureState(enableFeature);
+    }
+
+    static float value = 0.5f;
+    if (ImGui::SliderFloat("Parameter", &value, 0.0f, 1.0f)) {
+        // This code runs when the slider value changes
+        updateParameter(value);
+    }
+
+    ImGui::End();
+
+    // Render ImGui
+    ImGui::Render();
+}
+----
+
+关于全部可用 ImGui 控件及其选项的完整说明，请参考官方 ImGui 文档与演示：
+https://github.com/ocornut/imgui/blob/master/imgui_demo.cpp
+
+=== Vulkan 应用的 GUI 设计考量
+
+为 Vulkan 应用设计 GUI 时，需要考虑以下几个方面：
+
+==== 内存管理
+
+ImGui 会生成顶点缓冲区与索引缓冲区，这些数据需要上传到 GPU。要确保这些资源得到妥善管理：
+
+1. *缓冲区尺寸*：分配足够大的缓冲区，或者实现扩容逻辑
+2. *内存类型*：需要频繁更新时使用主机可见内存
+3. *同步*：确保缓冲区更新与渲染保持同步
+
+==== 命令缓冲区集成
+
+把 ImGui 的渲染命令与 Vulkan 命令缓冲区整合起来：
+
+[source,cpp]
+----
+// Record commands for scene rendering
+// ...
+
+// Record ImGui rendering commands
+imGuiUtil.drawFrame(commandBuffer);
+
+// Submit command buffer
+// ...
+----
+
+==== 描述符资源
+
+ImGui 的字体纹理会用到描述符。要确保描述符池有足够的容量：
+
+[source,cpp]
+----
+// Create descriptor pool with enough capacity for ImGui
+vk::DescriptorPoolSize poolSizes[] = {
+    { vk::DescriptorType::eCombinedImageSampler, 50 },
+    // Other descriptor types...
+};
+
+vk::DescriptorPoolCreateInfo poolInfo{};
+poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+poolInfo.maxSets = 50;
+poolInfo.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
+poolInfo.pPoolSizes = poolSizes;
+
+descriptorPool = device.createDescriptorPool(poolInfo);
+----
+
+=== 性能考量
+
+把 ImGui 与 Vulkan 集成时，需要考虑以下性能层面的问题：
+
+1. *命令缓冲区录制*：高效地录制 ImGui 命令，理想情况下每帧只录制一次
+2. *描述符管理*：尽量减少描述符集的分配与更新
+3. *缓冲区更新*：优化顶点缓冲区与索引缓冲区的更新
+4. *管线状态*：为 ImGui 使用专用管线，以减少状态切换
+5. *渲染通道集成*：考虑是否为 GUI 单独使用一个渲染通道或子通道
+
+==== 飞行帧：每帧复制一份动态缓冲区
+
+如果你的渲染器使用多个飞行帧（例如双缓冲/三缓冲），且帧与帧之间不调用等待设备空闲，那么 ImGui 的动态顶点缓冲区和索引缓冲区就不能跨帧共享。否则 CPU 可能覆盖掉上一帧的 GPU 仍在读取的数据。
+
+- 每个飞行帧各分配一个顶点缓冲区和一个索引缓冲区。
+- 只更新、绑定当前帧索引对应的缓冲区。
+- 每个缓冲区按该帧的 ImDrawData 的 TotalVtxCount/TotalIdxCount 设定大小，需要时再扩容。
+
+简要示例：
+
+[source,cpp]
+----
+class ImGuiSystem {
+  // ...
+  std::vector<vk::raii::Buffer> vertexBuffers;
+  std::vector<vk::raii::DeviceMemory> vertexMemories;
+  std::vector<vk::raii::Buffer> indexBuffers;
+  std::vector<vk::raii::DeviceMemory> indexMemories;
+  std::vector<uint32_t> vertexCounts;
+  std::vector<uint32_t> indexCounts;
+
+  bool Initialize(Renderer* renderer, uint32_t w, uint32_t h) {
+    // ... create pipelines, font, descriptors ...
+    const uint32_t frames = renderer->GetMaxFramesInFlight();
+    vertexBuffers.resize(frames);
+    vertexMemories.resize(frames);
+    indexBuffers.resize(frames);
+    indexMemories.resize(frames);
+    vertexCounts.assign(frames, 0);
+    indexCounts.assign(frames, 0);
+    return true;
+  }
+
+  void Render(vk::raii::CommandBuffer& cmd, uint32_t frameIndex) {
+    ImGui::Render();
+    updateBuffers(frameIndex);
+    // bind per-frame buffers
+    std::array vb = {*vertexBuffers[frameIndex]};
+    std::array<vk::DeviceSize,1> offs{};
+    cmd.bindVertexBuffers(0, vb, offs);
+    cmd.bindIndexBuffer(*indexBuffers[frameIndex], 0, vk::IndexType::eUint16);
+    // draw lists...
+  }
+
+  void updateBuffers(uint32_t frameIndex) {
+    ImDrawData* dd = ImGui::GetDrawData();
+    if (!dd || dd->CmdListsCount == 0) return;
+    vk::DeviceSize vbytes = dd->TotalVtxCount * sizeof(ImDrawVert);
+    vk::DeviceSize ibytes = dd->TotalIdxCount * sizeof(ImDrawIdx);
+    // grow-per-frame if needed, then map/copy for this frame only
+    // ...
+  }
+};
+----
+
+与主渲染器集成时，把当前帧索引传给 ImGui 的渲染调用：
+
+[source,cpp]
+----
+// inside your frame loop after scene rendering
+imguiSystem->Render(commandBuffers[currentFrame], currentFrame);
+----
+
+=== 组织 GUI 代码
+
+为了让 GUI 代码易于维护，可以考虑以下组织方式：
+
+1. *基于组件的方式*：把 GUI 拆分成若干逻辑组件
+2. *状态管理*：使用集中的状态存储，由 GUI 修改其中的状态
+3. *事件系统*：为 GUI 触发的操作实现一套事件系统
+4. *惰性更新*：只在 GUI 设置真正发生变化时才更新 Vulkan 资源
+
+[source,cpp]
+----
+// Component-based approach example
+class VulkanGUI {
+private:
+    // GUI state
+    struct {
+        bool showRenderSettings = true;
+        bool showPerformance = true;
+        bool showSceneControls = true;
+    } state;
+
+    // Components
+    void drawRenderSettingsPanel();
+    void drawPerformancePanel();
+    void drawSceneControlsPanel();
+
+public:
+    void draw() {
+        // Start a new ImGui frame
+        ImGui::NewFrame();
+
+        // Draw components based on state
+        if (state.showRenderSettings) drawRenderSettingsPanel();
+        if (state.showPerformance) drawPerformancePanel();
+        if (state.showSceneControls) drawSceneControlsPanel();
+
+        // Main menu for toggling panels
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Render Settings", nullptr, &state.showRenderSettings);
+                ImGui::MenuItem("Performance", nullptr, &state.showPerformance);
+                ImGui::MenuItem("Scene Controls", nullptr, &state.showSceneControls);
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        // Render ImGui
+        ImGui::Render();
+    }
+};
+----
+
+=== 在 ImGui 中显示纹理
+
+GUI 系统里的一个常见需求是显示纹理，比如渲染结果、材质预览或图标。ImGui 通过 `ImGui::Image` 和 `ImGui::ImageButton` 函数提供显示纹理的能力。要在 Vulkan 上使用它们，你需要为纹理正确设置描述符集。
+
+==== 设置纹理描述符
+
+要在 ImGui 中显示 Vulkan 纹理，你需要：
+
+1. 为纹理创建描述符集布局
+2. 分配描述符集
+3. 用纹理的图像视图与采样器更新描述符集
+4. 把描述符集句柄传给 ImGui
+
+===== 创建描述符集布局
+该布局声明一个组合图像采样器，供着色器在 ImGui 绘制四边形时采样。
+
+[source,cpp]
+----
+// Create a descriptor set layout for textures
+vk::DescriptorSetLayoutBinding binding{};
+binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+binding.descriptorCount = 1;
+binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+binding.binding = 0;
+
+vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+layoutInfo.bindingCount = 1;
+layoutInfo.pBindings = &binding;
+
+vk::raii::DescriptorSetLayout textureSetLayout = device.createDescriptorSetLayout(layoutInfo);
+----
+
+===== 分配描述符集
+每张要在 ImGui 中显示的纹理各分配一个描述符集。
+
+[source,cpp]
+----
+// Allocate a descriptor set for each texture
+vk::DescriptorSetAllocateInfo allocInfo{};
+allocInfo.descriptorPool = *descriptorPool;
+allocInfo.descriptorSetCount = 1;
+vk::DescriptorSetLayout layouts[] = {*textureSetLayout};
+allocInfo.pSetLayouts = layouts;
+
+vk::raii::DescriptorSet textureDescriptorSet = std::move(device.allocateDescriptorSets(allocInfo).front());
+----
+
+===== 更新描述符集
+把描述符指向你的图像视图和采样器，图像布局设为着色器读取布局。
+
+[source,cpp]
+----
+// Update the descriptor set with your texture
+vk::DescriptorImageInfo imageInfo{};
+imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+imageInfo.imageView = textureImageView.getHandle();
+imageInfo.sampler = *textureSampler;
+
+vk::WriteDescriptorSet writeSet{};
+writeSet.dstSet = *textureDescriptorSet;
+writeSet.descriptorCount = 1;
+writeSet.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+writeSet.pImageInfo = &imageInfo;
+writeSet.dstBinding = 0;
+
+device.updateDescriptorSets(1, &writeSet, 0, nullptr);
+----
+
+==== 在 ImGui 中使用
+
+描述符集设置好之后，就可以配合 ImGui 的图像函数使用了：
+
+[source,cpp]
+----
+// Store the descriptor set as ImTextureID (which is just a void*)
+ImTextureID textureId = (ImTextureID)(VkDescriptorSet)*textureDescriptorSet;
+
+// Display the texture in ImGui
+ImGui::Begin("Texture Viewer");
+
+// Display as a simple image
+ImGui::Image(textureId, ImVec2(width, height));
+
+// Or as an image button
+if (ImGui::ImageButton(textureId, ImVec2(width, height))) {
+    // Handle button click
+}
+
+// You can also apply tinting and modify UV coordinates
+ImGui::Image(textureId, ImVec2(width, height),
+             ImVec2(0, 0), ImVec2(1, 1),  // UV coordinates (0,0) to (1,1) for the full texture
+             ImVec4(1, 1, 1, 1),          // Tint color (white = no tint)
+             ImVec4(1, 1, 1, 0.5));       // Border color
+
+ImGui::End();
+----
+
+==== 完整示例：ImGui 的纹理管理器
+
+下面是一个更完整的例子：一个负责为 ImGui 管理多张纹理的纹理管理器类：
+
+[source,cpp]
+----
+class ImGuiTextureManager {
+private:
+    vk::raii::Device* device = nullptr;
+    vk::raii::DescriptorPool* descriptorPool = nullptr;
+    vk::raii::DescriptorSetLayout descriptorSetLayout{nullptr};
+
+    struct TextureInfo {
+        vk::raii::DescriptorSet descriptorSet{nullptr};
+        uint32_t width;
+        uint32_t height;
+    };
+
+    std::unordered_map<std::string, TextureInfo> textures;
+
+public:
+    ImGuiTextureManager(vk::raii::Device& device, vk::raii::DescriptorPool& descriptorPool)
+        : device(&device), descriptorPool(&descriptorPool) {
+
+        // Create descriptor set layout for textures
+        vk::DescriptorSetLayoutBinding binding{};
+        binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        binding.descriptorCount = 1;
+        binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+        binding.binding = 0;
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &binding;
+
+        descriptorSetLayout = device.createDescriptorSetLayout(layoutInfo);
+    }
+
+    // Register a texture for use with ImGui
+    ImTextureID registerTexture(const std::string& name, vk::ImageView imageView,
+                               vk::Sampler sampler, uint32_t width, uint32_t height) {
+
+        // Allocate descriptor set
+        vk::DescriptorSetAllocateInfo allocInfo{};
+        allocInfo.descriptorPool = **descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        vk::DescriptorSetLayout layouts[] = {*descriptorSetLayout};
+        allocInfo.pSetLayouts = layouts;
+
+        vk::raii::DescriptorSet descriptorSet = std::move(device->allocateDescriptorSets(allocInfo).front());
+
+        // Update descriptor set
+        vk::DescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfo.imageView = imageView;
+        imageInfo.sampler = sampler;
+
+        vk::WriteDescriptorSet writeSet{};
+        writeSet.dstSet = *descriptorSet;
+        writeSet.descriptorCount = 1;
+        writeSet.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        writeSet.pImageInfo = &imageInfo;
+        writeSet.dstBinding = 0;
+
+        device->updateDescriptorSets(1, &writeSet, 0, nullptr);
+
+        // Store texture info
+        textures[name] = {std::move(descriptorSet), width, height};
+
+        // Return the descriptor set as ImTextureID
+        return (ImTextureID)(VkDescriptorSet)*textures[name].descriptorSet;
+    }
+
+    // Get a previously registered texture
+    ImTextureID getTexture(const std::string& name) {
+        if (textures.find(name) == textures.end()) {
+            throw std::runtime_error("Texture not found: " + name);
+        }
+
+        return (ImTextureID)(VkDescriptorSet)*textures[name].descriptorSet;
+    }
+
+    // Get texture dimensions
+    ImVec2 getTextureDimensions(const std::string& name) {
+        if (textures.find(name) == textures.end()) {
+            throw std::runtime_error("Texture not found: " + name);
+        }
+
+        return ImVec2(static_cast<float>(textures[name].width),
+                     static_cast<float>(textures[name].height));
+    }
+};
+----
+
+==== 用法示例
+
+在你的应用里可以这样使用纹理管理器：
+
+[source,cpp]
+----
+// During initialization
+ImGuiTextureManager textureManager(device, descriptorPool);
+
+// Register textures (e.g., after loading a model or rendering to a texture)
+ImTextureID albedoTexId = textureManager.registerTexture(
+    "albedo",
+    albedoImageView,
+    textureSampler,
+    albedoWidth,
+    albedoHeight
+);
+
+ImTextureID normalMapId = textureManager.registerTexture(
+    "normalMap",
+    normalMapImageView,
+    textureSampler,
+    normalMapWidth,
+    normalMapHeight
+);
+
+// In your GUI rendering code
+void drawMaterialEditor() {
+    ImGui::Begin("Material Editor");
+
+    // Display textures
+    ImGui::Text("Albedo Texture:");
+    ImGui::Image(textureManager.getTexture("albedo"),
+                ImVec2(200, 200));
+
+    ImGui::Text("Normal Map:");
+    ImGui::Image(textureManager.getTexture("normalMap"),
+                ImVec2(200, 200));
+
+    // Material properties
+    static float roughness = 0.5f;
+    if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f)) {
+        updateMaterialProperty("roughness", roughness);
+    }
+
+    static float metallic = 0.0f;
+    if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f)) {
+        updateMaterialProperty("metallic", metallic);
+    }
+
+    ImGui::End();
+}
+----
+
+==== 性能考量
+
+在 ImGui 中使用纹理时，请留意以下性能要点：
+
+1. *描述符管理*：只在需要时为纹理创建描述符集，并尽量复用
+2. *纹理尺寸*：考虑为 UI 使用尺寸更小的纹理预览版本
+3. *mipmap 选择*：对大尺寸纹理，确保正确选择 mipmap 层级以避免走样
+4. *纹理更新*：如果某张纹理频繁变化，请用暂存缓冲区来完成更新
+5. *纹理图集*：对大量小纹理（如图标），考虑使用纹理图集
+
+在 ImGui 集成中妥善管理纹理，你就能做出丰富的界面，把渲染内容、材质预览以及其他视觉元素直接显示在 GUI 里。
+
+=== 对象拾取：与 3D 场景交互
+
+GUI 集成的一个重要方面是处理对象拾取——用鼠标选中 3D 物体。这需要 ImGui 与 3D 场景之间做好协调：
+
+[source,cpp]
+----
+void handleMouseInput(float mouseX, float mouseY) {
+    // First, check if ImGui is using this input
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) {
+        // ImGui is using the mouse, don't use it for 3D picking
+        return;
+    }
+
+    // ImGui isn't using the mouse, so we can use it for 3D picking
+    pickObject(mouseX, mouseY);
+}
+
+void pickObject(float mouseX, float mouseY) {
+    // Convert screen coordinates to normalized device coordinates
+    float ndcX = (2.0f * mouseX) / windowWidth - 1.0f;
+    float ndcY = 1.0f - (2.0f * mouseY) / windowHeight;
+
+    // Create a ray from the camera through the mouse position
+    glm::vec4 clipCoords(ndcX, ndcY, -1.0f, 1.0f);
+    glm::vec4 eyeCoords = glm::inverse(projectionMatrix) * clipCoords;
+    eyeCoords = glm::vec4(eyeCoords.x, eyeCoords.y, -1.0f, 0.0f);
+
+    glm::vec3 rayDirection = glm::normalize(glm::vec3(
+        glm::inverse(viewMatrix) * eyeCoords
+    ));
+
+    glm::vec3 rayOrigin = camera.getPosition();
+
+    // Test for intersections with scene objects
+    float closestHit = std::numeric_limits<float>::max();
+    int hitObjectId = -1;
+
+    for (size_t i = 0; i < sceneObjects.size(); i++) {
+        float hitDistance;
+        if (rayIntersectsObject(rayOrigin, rayDirection, sceneObjects[i], hitDistance)) {
+            if (hitDistance < closestHit) {
+                closestHit = hitDistance;
+                hitObjectId = static_cast<int>(i);
+            }
+        }
+    }
+
+    // If we hit an object, select it
+    if (hitObjectId >= 0) {
+        selectObject(hitObjectId);
+    }
+}
+----
+
+==== 实现射线与物体的求交
+
+要让对象拾取正常工作，你需要实现射线与物体的求交测试。下面是一个简单的球体求交示例：
+
+[source,cpp]
+----
+bool rayIntersectsSphere(
+    const glm::vec3& rayOrigin,
+    const glm::vec3& rayDirection,
+    const glm::vec3& sphereCenter,
+    float sphereRadius,
+    float& outDistance
+) {
+    glm::vec3 oc = rayOrigin - sphereCenter;
+    float a = glm::dot(rayDirection, rayDirection);
+    float b = 2.0f * glm::dot(oc, rayDirection);
+    float c = glm::dot(oc, oc) - sphereRadius * sphereRadius;
+    float discriminant = b * b - 4 * a * c;
+
+    if (discriminant < 0) {
+        return false; // No intersection
+    }
+
+    // Calculate the closest intersection point
+    float t = (-b - sqrt(discriminant)) / (2.0f * a);
+    if (t < 0) {
+        // Try the other intersection point
+        t = (-b + sqrt(discriminant)) / (2.0f * a);
+        if (t < 0) {
+            return false; // Both intersection points are behind the ray
+        }
+    }
+
+    outDistance = t;
+    return true;
+}
+----
+
+==== 可视化选中的物体
+
+物体被选中之后，你可以把选中状态可视化出来：
+
+[source,cpp]
+----
+void drawScene(vk::raii::CommandBuffer& commandBuffer) {
+    // Draw all objects
+    for (size_t i = 0; i < sceneObjects.size(); i++) {
+        // If this object is selected, use a different pipeline
+        if (static_cast<int>(i) == selectedObjectId) {
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *highlightPipeline);
+        } else {
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *standardPipeline);
+        }
+
+        // Draw the object
+        drawObject(commandBuffer, sceneObjects[i]);
+    }
+}
+----
+
+==== 把拾取与 ImGui 整合起来
+
+你还可以在 GUI 中显示选中物体的信息：
+
+[source,cpp]
+----
+void drawObjectPropertiesPanel() {
+    if (selectedObjectId < 0) {
+        return; // No object selected
+    }
+
+    ImGui::Begin("Object Properties");
+
+    SceneObject& obj = sceneObjects[selectedObjectId];
+
+    // Display object properties
+    ImGui::Text("Object ID: %d", selectedObjectId);
+    ImGui::Text("Name: %s", obj.name.c_str());
+
+    // Edit object properties
+    glm::vec3 position = obj.position;
+    if (ImGui::DragFloat3("Position", &position[0], 0.1f)) {
+        obj.position = position;
+        updateObjectTransform(selectedObjectId);
+    }
+
+    glm::vec3 rotation = obj.rotation;
+    if (ImGui::DragFloat3("Rotation", &rotation[0], 1.0f, -180.0f, 180.0f)) {
+        obj.rotation = rotation;
+        updateObjectTransform(selectedObjectId);
+    }
+
+    glm::vec3 scale = obj.scale;
+    if (ImGui::DragFloat3("Scale", &scale[0], 0.1f, 0.1f, 10.0f)) {
+        obj.scale = scale;
+        updateObjectTransform(selectedObjectId);
+    }
+
+    ImGui::End();
+}
+----
+
+对象拾取构建出一种强大的交互模型：用户可以直接选中并操作 3D 物体，同时借助 GUI 精细调整属性。这种直接操作与精确控制的组合带来了直观的使用体验。
+
+=== 平衡 GUI 与 3D 交互
+
+设计应用时，要考虑如何平衡基于 GUI 的控制与直接的 3D 交互：
+
+1. *适合用 GUI 的场景*：
+   - 精确的数值输入
+   - 选项众多的复杂设置
+   - 层级化数据可视化
+   - 应用级控制
+
+2. *适合用 3D 交互的场景*：
+   - 物体的摆放与移动
+   - 相机导航
+   - 直接操作场景元素
+   - 直观的空间操作
+
+3. *混合方式*：
+   - 用 gizmo 完成 3D 变换，同时保留精确控制
+   - 在选中物体附近弹出的上下文菜单
+   - 随选中项更新的属性面板
+
+把 ImGui 与你的 Vulkan 应用用心集成，并实现对象拾取，你就能打造出既强大又直观的用户界面，兼得 2D GUI 控件与直接 3D 交互两者的长处。
+
+下一节我们会进一步探讨如何把 GUI 渲染与 Vulkan 渲染管线集成起来。
+
+xref:Building_a_Simple_Engine/GUI/03_input_handling.adoc[上一篇：GUI：输入处理] | xref:Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc[下一篇：GUI：与 Vulkan 集成]

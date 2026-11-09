@@ -1,0 +1,39 @@
+= mipmap 与细节层级（LOD）
+
+mipmap 通过采样纹理的预过滤版本来减少走样与带宽。LOD 简单来说就是「我们现在用哪一级 mip？」。
+
+在本示例中，核心想法是：在资产流式加载进来的同时，我们希望纹理采样稳定、观感良好，又不把纹理管理变成庞大的子系统。
+
+== 我们在这里做了什么
+
+* 在有 mipmap 时使用带 mip 的纹理（KTX2 转码可以包含 mip）。
+* 对于原始 RGBA 上传，我们把自动生成的 mip 限制在很小的数量，以避免 VRAM 占用激增。
+* 通过 UI 滑块启用采样器各向异性，让你能快速看到其中的取舍。
+
+== 它位于代码的哪里
+
+* 采样器创建与各向异性滑块：
+** `renderer_resources.cpp`（采样器创建辅助函数）
+** `renderer_rendering.cpp` 中的 ImGui 面板
+* 上传路径（暂存 → 设备图像，然后转换到 `SHADER_READ_ONLY_OPTIMAL`）：
+** `renderer_resources.cpp`
+** `resource_manager.cpp` / `scene_loading.cpp`（更高层的流式加载/控制流程）
+
+== 提示
+
+* 大场景优先使用带 mip 的压缩格式（BC/ASTC/ETC）。
+* 把最大各向异性限制在设备支持的范围内。
+
+== 后续工作想法
+
+如果你想走得更远：
+
+* 添加逐材质的「mip 偏置」控制（非常适合风格化外观和调试闪烁）。
+* 添加按 mip 层级的纹理流式加载（先加载低 mip，再逐步细化）。
+* 添加一个小的「纹理驻留」浮层（按 mip 可用性统计纹理数量）。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc[光线查询渲染]

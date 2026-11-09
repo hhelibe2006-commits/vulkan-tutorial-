@@ -1,0 +1,42 @@
+= 分离的图像与采样器描述符——何时使用以及为什么
+
+Vulkan 允许你把图像视图和采样器一起绑定（组合图像采样器），或者分开绑定。组合绑定在教学和维护上更简单。分离绑定则带来灵活性（例如在多个图像间复用一个采样器；只改变采样器状态）。
+
+在本示例中，我们默认使用组合图像采样器，因为在我们专注于更大的引擎概念（流式加载、同步、通道结构）时，它能让描述符模型保持简单。
+
+== 我们的默认选择
+
+在本示例中我们更偏好组合图像采样器，一是为了可读性，二是因为大多数材质在运行时并不切换采样器。
+
+== 何时该拆分
+
+* 你想在许多纹理之间切换采样器状态（例如启用／禁用各向异性过滤），而不更新每一个描述符。
+* 你有一个采样器对象库（point／linear／aniso／wrap／clamp），并希望与图像自由搭配。
+
+== 实践建议
+
+* 用于教学时，保持布局小而稳定。
+* 如果引入分离绑定，要清楚记录生命周期规则：现在图像和采样器可以独立变化。
+
+== 代码里该看哪里
+
+* 纹理与采样器创建：
+** `renderer_resources.cpp`
+* 描述符布局与绑定：
+** `renderer_pipelines.cpp`
+* 在逐帧安全点更新描述符：
+** `renderer_rendering.cpp`
+
+== 后续工作想法
+
+如果你想具体演示分离的图像／采样器描述符：
+
+* 创建一个小型采样器「库」（point／linear／aniso、wrap／clamp），并从 UI 切换采样器索引。
+* 在大型纹理表中使用共享采样器，以减少流式加载期间的描述符更新量。
+* 增加逐材质的采样器选择（例如像素风招牌使用最近邻）。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc[mipmap 与细节层级（LOD）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]

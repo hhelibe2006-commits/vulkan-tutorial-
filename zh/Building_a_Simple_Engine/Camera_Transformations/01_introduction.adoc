@@ -1,0 +1,31 @@
+:pp: {plus}{plus}
+
+= 相机与变换：简介
+== 简介
+
+欢迎来到「构建简易引擎」系列的「相机与变换」章节！本章我们将深入探讨在 Vulkan 中实现 3D 相机系统所必需的数学与技术。
+
+理解如何操控 3D 空间，是创建交互式 3D 应用的基础。我们将探究 3D 变换的数学基础，并实现一套灵活的相机系统，让你能从任意视角浏览和观察 3D 场景。
+
+本章我们将重点关注：
+
+* 理解 3D 变换的数学基础
+* 实现不同类型的变换矩阵（模型、视图、投影）
+* 创建支持多种移动模式的灵活相机系统
+* 处理用户输入来控制相机
+* 把相机系统与我们的 Vulkan 渲染管线集成
+
+读完本章，你将扎实掌握 3D 变换，并获得一套可复用的相机系统，能够集成到你的 Vulkan 应用中。
+
+== 前置条件
+
+开始本章之前，你应该已经完成主 Vulkan 教程，并且熟悉以下内容：
+
+* Vulkan 的基础概念：
+** xref:03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc[命令缓冲区]
+** xref:03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc[图形管线]
+* xref:04_Vertex_buffers/00_Vertex_input_description.adoc[顶点缓冲区] 与 xref:04_Vertex_buffers/03_Index_buffer.adoc[索引缓冲区]
+* xref:05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc[统一缓冲区]
+* 基础编程概念与 C++
+
+xref:Building_a_Simple_Engine/Engine_Architecture/conclusion.adoc[上一篇：引擎架构：结语] | xref:Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc[下一篇：相机与变换：数学基础]

@@ -1,0 +1,237 @@
+:pp: {plus}{plus}
+
+= 工具链：Vulkan 项目的 CI/CD
+
+== 面向 Vulkan 的持续集成与部署
+
+持续集成（CI）与持续部署（CD）是现代软件开发中的基本实践。它们有助于保证代码质量、尽早发现问题，并让发布流程更顺畅。对 Vulkan 应用而言——它们往往要在多种 GPU 架构的多个平台上运行——一条健壮的 CI/CD 流水线尤其有价值。
+
+=== 搭建 CI/CD 流水线
+
+我们来探讨如何搭建一条专门为 Vulkan 项目量身定制的 CI/CD 流水线。这里以 GitHub Actions 为例，但这些概念同样适用于 GitLab CI、Jenkins 或 Azure DevOps 等其它 CI/CD 系统。
+
+==== 基本流水线结构
+
+一个典型的 Vulkan 项目 CI/CD 流水线可能包含以下阶段：
+
+1. *构建*：在多个平台（Windows、Linux、macOS）上编译应用
+2. *测试*：运行单元测试与集成测试
+3. *打包*：为每个平台创建可分发的包
+4. *部署*：部署到预发布环境或向用户发布
+
+下面是一个 Vulkan 项目的基本 GitHub Actions 工作流文件：
+
+[source,yaml]
+----
+name: Vulkan CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        build_type: [Debug, Release]
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.1.1
+      with:
+        version: latest
+        cache: true
+
+    - name: Configure CMake
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{matrix.build_type}}
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ctest -C ${{matrix.build_type}}
+
+    - name: Package
+      if: matrix.build_type == 'Release'
+      run: |
+        # Platform-specific packaging commands
+        if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          # Linux packaging (e.g., .deb or .AppImage)
+          echo "Packaging for Linux"
+        elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+          # Windows packaging (e.g., .exe installer)
+          echo "Packaging for Windows"
+        elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+          # macOS packaging (e.g., .app bundle or .dmg)
+          echo "Packaging for macOS"
+        fi
+----
+
+==== Vulkan 特有的考虑
+
+为 Vulkan 项目搭建 CI/CD 时，需要考虑以下特有的难点：
+
+===== Vulkan SDK 安装
+
+确保你的 CI 环境安装了 Vulkan SDK。许多 CI 平台默认并不包含它。在上面的示例中，我们用了一个 GitHub Action 来安装 SDK。
+
+===== CI 环境中的 GPU 可用性
+
+大多数 CI 环境没有可用的 GPU，这会让 Vulkan 应用的测试变得棘手。可考虑以下做法：
+
+* 用软件渲染（例如 SwiftShader）完成基础测试
+* 实现无需显示器的无头测试模式
+* 使用云端 GPU 实例进行更全面的测试
+
+===== 平台特有的 Vulkan 加载器
+
+不同平台加载 Vulkan 的方式不同。确保你的构建系统正确处理这些差异：
+
+* Windows：Vulkan-1.dll 通常在运行时加载
+* Linux：libvulkan.so.1 在运行时加载
+* macOS：MoltenVK 通过 Metal 提供 Vulkan 支持
+
+===== 着色器编译
+
+着色器编译可能是构建流程中复杂的一环。可考虑以下做法：
+
+* 在构建阶段预编译着色器
+* 把着色器编译纳入 CI 流水线，以便尽早发现 GLSL/SPIR-V 错误
+* 使用能处理跨平台差异的着色器管理系统
+
+=== 为 Vulkan 应用自动化测试
+
+测试 Vulkan 应用有其独特的挑战。以下是一些值得考虑的做法：
+
+==== 对 Vulkan 代码做单元测试
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+// A testable function using vk::raii
+bool create_pipeline(vk::raii::Device& device,
+                     vk::raii::PipelineLayout& layout,
+                     vk::raii::Pipeline& out_pipeline) {
+    try {
+        // Pipeline creation code using RAII
+        return true;
+    } catch (vk::SystemError& err) {
+        std::cerr << "Failed to create pipeline: " << err.what() << std::endl;
+        return false;
+    }
+}
+
+// In a test file
+TEST_CASE("Pipeline creation") {
+    // Setup test environment with mock or real Vulkan objects
+    vk::raii::Context context;
+    auto instance = create_test_instance(context);
+    auto device = create_test_device(instance);
+    auto layout = create_test_pipeline_layout(device);
+
+    vk::raii::Pipeline pipeline{nullptr};
+    REQUIRE(create_pipeline(device, layout, pipeline));
+    REQUIRE(pipeline);
+}
+----
+
+==== 集成测试
+
+对于集成测试，可以考虑创建一种能在 CI 环境中运行的无头渲染模式：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+class HeadlessRenderer {
+public:
+    HeadlessRenderer() {
+        // Initialize Vulkan without surface
+        init_vulkan();
+    }
+
+    bool render_frame() {
+        // Render to an image without presenting
+        try {
+            // Rendering code
+            return true;
+        } catch (vk::SystemError& err) {
+            std::cerr << "Render failed: " << err.what() << std::endl;
+            return false;
+        }
+    }
+
+    // Compare rendered image with reference
+    bool verify_output(const std::string& reference_image) {
+        // Image comparison code
+        return true;
+    }
+
+private:
+    void init_vulkan() {
+        // Vulkan initialization code
+    }
+
+    vk::raii::Context context;
+    vk::raii::Instance instance{nullptr};
+    vk::raii::PhysicalDevice physical_device{nullptr};
+    vk::raii::Device device{nullptr};
+    // Other Vulkan objects
+};
+
+// In a test file
+TEST_CASE("Render output matches reference") {
+    HeadlessRenderer renderer;
+    REQUIRE(renderer.render_frame());
+    REQUIRE(renderer.verify_output("reference_image.png"));
+}
+----
+
+=== 分发方面的考虑
+
+当应用通过全部测试后，最后一个阶段就是打包与分发。以下是一些考量：
+
+==== 打包 Vulkan 应用
+
+* 为每个平台包含相应的 Vulkan 加载器
+* 打包着色器文件或预编译的 SPIR-V
+* 考虑使用平台特有的打包工具：
+  ** Windows：NSIS、WiX 或 MSIX
+  ** Linux：AppImage、Flatpak 或 .deb/.rpm 包
+  ** macOS：DMG 或 App Store 包
+
+==== 处理 Vulkan 依赖
+
+确保你的安装包包含或正确处理所有依赖：
+
+* Vulkan 加载器（或安装它的说明）
+* 所需的任何 Vulkan 扩展
+* GPU 驱动要求
+
+==== 版本管理与更新
+
+实现一套版本管理机制，其中包含：
+
+* 应用版本
+* 要求的最低 Vulkan 版本
+* 所需扩展及其版本
+
+=== 结语
+
+对于 Vulkan 应用的开发，一条设计良好的 CI/CD 流水线是保证质量与生产力的关键。通过自动化构建、测试与打包，你可以把更多精力放在开发功能上，而不是手工流程上。
+
+下一节我们将探讨 Vulkan 应用的调试工具，包括强大的 VK_KHR_debug_utils 扩展以及 RenderDoc 这类外部工具。
+
+xref:Building_a_Simple_Engine/Tooling/01_introduction.adoc[上一页：工具链：简介] | xref:Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc[下一页：工具链：使用 VK_KHR_debug_utils 与 RenderDoc 调试]

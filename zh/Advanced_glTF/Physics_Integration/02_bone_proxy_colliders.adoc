@@ -1,0 +1,208 @@
+:pp: {plus}{plus}
+= 骨骼代理碰撞体
+
+== 为什么不用真实网格？
+
+角色物理碰撞最直觉的做法，是把实际的网格表面当作碰撞几何体。毕竟计算着色器已经产出了动画后的顶点缓冲区——为什么不直接把它交给物理引擎，让引擎用真实形状去算呢？
+
+答案是性能与稳定性。物理引擎的碰撞检测系统最适合简单、凸的形状。一旦你给它一个凹网格——几乎每个角色的身体部位都是凹的——引擎就必须切换到代价高得多的分解算法，才能正确处理凹陷。一个典型的人形角色网格有几万个顶点。哪怕只是一小群角色，对它们跑完整的网格对网格碰撞检测，你的帧预算也会瞬间耗尽。
+
+更微妙的是，复杂碰撞形状每帧会产生更多接触点，这给约束求解器带来更大的负担。物理约束求解器的工作方式是迭代求解场景中所有的接触力和关节约束，直到找到一个不违反任何一项的配置。接触越多，迭代越多；迭代越多，耗时越多——而且往往收益递减，因为复杂形状带来的额外精度几乎不会在玩法上产生可见的改进。
+
+业界几十年前就定下的方案是**代理碰撞体（proxy collider）**：这些简单形状「足够接近」骨骼的体积，能产生可信的碰撞，同时又足够简单，让物理引擎能以实时模拟所需的速度处理它们。「代理」一词是刻意的——这些形状是真实几何体的替身，而不是它的表示。
+
+== 选择合适的形状
+
+对人形角色来说，两种形状就能覆盖绝大多数情况：**胶囊体**和**盒体**。
+
+胶囊体是两端带半球帽的圆柱体。它是肢体的理想形状，因为它旋转对称、表面光滑（可避免关节处的穿透伪影），而且只需要两个参数就能定义：半高和半径。物理引擎能以极高的效率执行胶囊体对胶囊体的碰撞检测。长骨——肱骨（上臂）、尺骨/桡骨（前臂）、股骨（大腿）、胫骨（小腿）——都能用胶囊体很好地近似。
+
+盒体更适合躯干和骨盆，这两个部位大致是矩形，并且受益于各自独立的宽度、高度和深度。盒体也能相当好地表示头骨。它们比胶囊体稍贵一些，但仍远比凸网格碰撞体便宜。
+
+手和脚则可以自己权衡。每只手用一个胶囊体（把掌和手指当作一个整体团块）是最便宜的选择，对大多数游戏来说足够。如果你需要更精确的手部交互——比如角色要抓握物体的游戏——可以用一个小盒体表示手掌、再用若干小胶囊体表示每根手指，但一定要仔细做性能分析。
+
+== 在 glTF extras 中定义碰撞体属性
+
+第 2 章我们介绍了 glTF 「extras」的概念——可以附加到 glTF 文件任意节点上的任意 JSON 元数据。这里正是存放碰撞体定义的地方。把碰撞体参数嵌入 glTF 资产，可以让物理设置与骨架数据放在一起，同时给美术提供了一种直接在 Blender 中调整形状、而不必碰引擎代码的途径。
+
+前臂骨骼的碰撞体 extra 在 Blender 自定义属性里大概是这样：
+
+[source,json]
+----
+{
+  "physics": {
+    "collider": "capsule",
+    "radius": 0.045,
+    "half_height": 0.13,
+    "mass": 1.2,
+    "collision_group": "arm",
+    "collision_mask": "world,props"
+  }
+}
+----
+
+`collider` 字段指定形状类型。`radius` 和 `half_height` 在骨骼的局部坐标空间中定义胶囊体的尺寸。`mass` 告诉物理引擎这段身体的重量（这对真实的布娃娃行为很重要——前臂的重量应当明显小于躯干）。`collision_group` 和 `collision_mask` 字段我们会在后面的小节用于自碰撞过滤。
+
+在 C{pp} 一侧，我们扩展第 2 章的节点解析代码，让它同时提取物理元数据：
+
+[source,cpp]
+----
+struct ColliderDef {
+    enum class Shape { CAPSULE, BOX, NONE };
+    Shape shape     = Shape::NONE;
+    float radius    = 0.0f;
+    float half_height = 0.0f;
+    glm::vec3 box_half_extents = {};
+    float mass      = 1.0f;
+    std::string collision_group;
+    std::string collision_mask;
+};
+
+ColliderDef parse_collider_extras(const tinygltf::Value& extras)
+{
+    ColliderDef def;
+    if (!extras.Has("physics")) return def;
+
+    const auto& phys = extras.Get("physics");
+    if (!phys.Has("collider")) return def;
+
+    const std::string shape_str = phys.Get("collider").Get<std::string>();
+    if      (shape_str == "capsule") def.shape = ColliderDef::Shape::CAPSULE;
+    else if (shape_str == "box")     def.shape = ColliderDef::Shape::BOX;
+    else                             return def; // unknown shape, skip
+
+    if (phys.Has("radius"))       def.radius       = static_cast<float>(phys.Get("radius").GetNumberAsDouble());
+    if (phys.Has("half_height"))  def.half_height  = static_cast<float>(phys.Get("half_height").GetNumberAsDouble());
+    if (phys.Has("mass"))         def.mass         = static_cast<float>(phys.Get("mass").GetNumberAsDouble());
+
+    if (phys.Has("box_half_extents")) {
+        const auto& ext = phys.Get("box_half_extents");
+        def.box_half_extents = {
+            static_cast<float>(ext.Get(0).GetNumberAsDouble()),
+            static_cast<float>(ext.Get(1).GetNumberAsDouble()),
+            static_cast<float>(ext.Get(2).GetNumberAsDouble())
+        };
+    }
+
+    if (phys.Has("collision_group")) def.collision_group = phys.Get("collision_group").Get<std::string>();
+    if (phys.Has("collision_mask"))  def.collision_mask  = phys.Get("collision_mask").Get<std::string>();
+
+    return def;
+}
+----
+
+注意，如果 extras 里没有我们期望的数据，我们会提前返回一个默认的 `NONE` 形状。这种优雅降级很重要：没有物理元数据的骨骼应当干脆没有碰撞体，而不是让加载器崩溃。
+
+== 创建物理刚体
+
+解析好碰撞体定义之后，我们就能创建真正的物理刚体。每根带碰撞体定义的骨骼都需要一个**刚体**：一个具有位置、朝向、质量和碰撞形状、并参与物理模拟的物理对象。
+
+在动画阶段，我们由场景图驱动这些刚体（让它们成为**运动学**刚体——它们跟随我们的变换，而不被模拟）。在布娃娃阶段，我们把它们翻转为**动态**——它们成为被模拟的对象，并产出变换供我们读回。这个状态切换我们会在布娃娃交接一节处理；现在先把它们全部创建为运动学刚体。
+
+[source,cpp]
+----
+struct BoneBody {
+    uint32_t    node_index;      // Index into our scene graph Node array
+    JPH::BodyID physics_body;    // Jolt Physics body ID
+    ColliderDef collider_def;    // The parameters we parsed from extras
+};
+
+std::vector<BoneBody> create_bone_bodies(
+    const std::vector<Node>& nodes,
+    const Skin& skin,
+    PhysicsWorld& physics_world)
+{
+    std::vector<BoneBody> bodies;
+
+    for (uint32_t joint_idx = 0; joint_idx < skin.joints.size(); ++joint_idx) {
+        uint32_t node_index = skin.joints[joint_idx];
+        const Node& node    = nodes[node_index];
+
+        if (node.collider_def.shape == ColliderDef::Shape::NONE) continue;
+
+        // Create the collision shape from the parsed definition using Jolt
+        JPH::Ref<JPH::Shape> shape;
+        if (node.collider_def.shape == ColliderDef::Shape::CAPSULE) {
+            shape = new JPH::CapsuleShape(
+                node.collider_def.half_height,
+                node.collider_def.radius);
+        } else if (node.collider_def.shape == ColliderDef::Shape::BOX) {
+            shape = new JPH::BoxShape(JPH::Vec3(
+                node.collider_def.box_half_extents.x,
+                node.collider_def.box_half_extents.y,
+                node.collider_def.box_half_extents.z));
+        }
+
+        if (!shape) continue;
+
+        // Create the rigid body at the bone's current world position.
+        // We start it as KINEMATIC - it will be driven by the animation system.
+        JPH::BodyCreationSettings settings;
+        settings.SetShape(shape);
+        settings.mMassPropertiesOverride.mMass = node.collider_def.mass;
+        settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+
+        PhysicsPose pose = decompose_to_pose(node.world_matrix);
+        settings.mPosition = JPH::Vec3(pose.position.x, pose.position.y, pose.position.z);
+        settings.mRotation = JPH::Quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+        settings.mMotionType = JPH::EMotionType::Kinematic;
+
+        JPH::BodyID body = physics_world.create_body(settings);
+
+        bodies.push_back({ node_index, body, node.collider_def });
+    }
+
+    return bodies;
+}
+----
+
+`decompose_to_pose` 函数值得简单看一看。物理引擎通常用一个位置和一个四元数来表示刚体状态，而不是 4×4 矩阵。我们需要把场景图的矩阵表示分解成这些分量：
+
+[source,cpp]
+----
+PhysicsPose decompose_to_pose(const glm::mat4& world_matrix)
+{
+    PhysicsPose pose;
+    // Extract translation directly from the last column
+    pose.position = glm::vec3(world_matrix[3]);
+
+    // Extract rotation by normalizing the 3x3 basis vectors to remove scale,
+    // then constructing a quaternion from the pure rotation matrix.
+    glm::mat3 rot_scale = glm::mat3(world_matrix);
+    glm::mat3 rotation;
+    rotation[0] = glm::normalize(rot_scale[0]);
+    rotation[1] = glm::normalize(rot_scale[1]);
+    rotation[2] = glm::normalize(rot_scale[2]);
+    pose.orientation = glm::quat_cast(rotation);
+
+    return pose;
+}
+----
+
+== 每帧更新运动学刚体
+
+角色处于动画状态（未进入布娃娃）时，每帧我们都要更新每根骨骼的物理刚体，使其与场景图当前的世界矩阵一致。这就是第 2 章讨论的双向链接中「动画到物理」的方向。
+
+[source,cpp]
+----
+void sync_animation_to_physics(
+    const std::vector<Node>& nodes,
+    std::vector<BoneBody>& bodies,
+    PhysicsWorld& physics_world)
+{
+    for (auto& bone_body : bodies) {
+        const Node& node = nodes[bone_body.node_index];
+        PhysicsPose pose = decompose_to_pose(node.world_matrix);
+
+        // Move the kinematic body to the animated position.
+        // The physics engine will compute the velocity automatically,
+        // based on how far it moved since last frame. This velocity
+        // becomes critical during the ragdoll handoff.
+        physics_world.move_kinematic(bone_body.physics_body, pose);
+    }
+}
+----
+
+这里有一个微妙但重要的理由，说明为什么应当用 `move_kinematic`，而不是简单地把刚体瞬移到新位置：多数物理引擎会用上一帧与当前帧位置之间的差值来估算刚体速度。之后我们把刚体翻转为动态模式做布娃娃时，物理引擎需要一个真实的初始速度，布娃娃才不会从静止状态开始。如果我们一直在瞬移刚体而不是连续移动它，这个速度估算就会是错的，布娃娃交接看起来也会不对。
+
+xref:Advanced_glTF/Physics_Integration/01_introduction.adoc[上一篇：物理集成：碰撞体与布娃娃] | xref:Advanced_glTF/Physics_Integration/03_constraints_and_joint_limits.adoc[下一篇：约束与关节限制]

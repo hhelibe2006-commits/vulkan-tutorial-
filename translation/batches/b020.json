@@ -1,0 +1,60 @@
+{
+  "id": "b020",
+  "words": 5741,
+  "files": [
+    {
+      "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/05_fine_tuning_lora.adoc",
+      "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/05_fine_tuning_lora.adoc",
+      "words": 1241,
+      "title": "Fine-Tuning for Your Engine (LoRA)"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc",
+      "words": 434,
+      "title": "Multimodal AI: Visual Reasoning Capabilities"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/02_multimodal_models.adoc",
+      "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/02_multimodal_models.adoc",
+      "words": 533,
+      "title": "Understanding Multimodal Models: Vision for Graphics"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/03_visual_bug_diagnosis.adoc",
+      "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/03_visual_bug_diagnosis.adoc",
+      "words": 618,
+      "title": "Visual Bug Diagnosis: Identifying Graphics Artifacts"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc",
+      "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc",
+      "words": 380,
+      "title": "Setting Realistic Expectations: The Limits of Vision"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/05_workflow/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/05_workflow/01_introduction.adoc",
+      "words": 481,
+      "title": "Workflow: System Design to Implementation"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/05_workflow/02_phase_1_planning.adoc",
+      "target": "zh/AI_Assisted_Vulkan/05_workflow/02_phase_1_planning.adoc",
+      "words": 815,
+      "title": "Phase 1: System Design"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc",
+      "target": "zh/AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc",
+      "words": 621,
+      "title": "Phase 2: Implementation"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/05_workflow/04_phase_3_refactoring.adoc",
+      "target": "zh/AI_Assisted_Vulkan/05_workflow/04_phase_3_refactoring.adoc",
+      "words": 618,
+      "title": "Phase 3: Refactoring"
+    }
+  ]
+}

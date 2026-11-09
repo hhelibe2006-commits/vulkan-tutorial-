@@ -1,0 +1,102 @@
+:pp: {plus}{plus}
+
+= 共享内存（LDS）：高速数据交换
+
+GPU 的主内存（VRAM）容量大但相对较慢。对许多计算任务来说，从 VRAM 取数据是首要瓶颈。为了解决这一点，GPU 提供了一种小型的、极快的内存，它位于每个工作组本地。
+
+在 Vulkan 中，它被称为**共享内存**。在物理硬件上，它常被称为 **LDS（本地数据存储）**或**暂存内存**（scratchpad memory，用于本地数据的高速临时内存）。
+
+== 为什么用共享内存？
+
+共享内存是优化受带宽限制的内核最强大的工具。它通常用于：
+
+*   **手动缓存**：从 VRAM 一次性读入一块数据，存到共享内存，然后让工作组里的所有线程反复从这份快速的本地副本读取。
+*   **数据交换**：在同一工作组的线程之间传递数据（例如计算**前缀和**——每个元素是所有前面元素之和——或做一次**归约**）。
+*   **工作组级归约**：通过先在每个工作组内做归约（把多个值合并成一个），在一个大数据集中找出最大值或最小值。
+
+== 在 Slang 中使用共享内存
+
+在 Slang（以及 HLSL）中，你用 `groupshared` 关键字声明共享内存。因为它在物理上位于某个计算单元本地，所以由工作组内的所有线程共享，但对其他工作组不可见。
+
+[source,slang]
+----
+groupshared float sharedData[256];
+
+[numthreads(256, 1, 1)]
+void main(uint3 tid : SV_GroupThreadID) {
+    // Each thread initializes its own slot in shared memory
+    sharedData[tid.x] = someBuffer[tid.x];
+
+    // CRITICAL: We must wait for all threads to finish writing AND make those writes visible!
+    // GroupMemoryBarrier: Ensures all previous memory writes are complete and visible.
+    // WithGroupSync: Acts as an execution barrier, waiting for all threads in the group to arrive.
+    GroupMemoryBarrierWithGroupSync();
+
+    // Now it is safe to read data written by our neighbors
+    float neighborValue = sharedData[(tid.x + 1) % 256];
+}
+----
+
+=== 拆解这个晦涩的名字
+
+函数 `GroupMemoryBarrierWithGroupSync()` 看着像绕口令，但它的名字恰好告诉你它跨越两种不同类型的同步做了什么：
+
+1.  **GroupMemoryBarrier**：这是一个**内存屏障**。它确保线程对 `groupshared` 内存所做的任何写入都被「推」出去，并对工作组内所有其他线程可见。没有它，邻近线程可能从你在共享内存中的槽位读到旧值或未初始化的值。
+2.  **WithGroupSync**：这是一个**执行屏障**。它强制工作组中的每个线程都停下，在这一行等待。在组内*每个*线程都到达这一点之前，任何线程都不能继续执行下一条指令。
+
+把两者结合起来，你就保证了：当某个线程越过这一行时，它所有的邻居都已完成工作，数据也准备好被读取。
+
+=== GLSL：shared 与 barrier()
+
+在 GLSL 中，你用 `shared` 关键字声明工作组本地内存。同步由 `barrier()` 函数处理，它同时对 `shared` 内存充当执行屏障和内存屏障。
+
+[source,glsl]
+----
+shared float sharedData[256];
+
+layout(local_size_x = 256) in;
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+
+    // Each thread initializes its own slot in shared memory
+    sharedData[tid] = someBuffer[tid];
+
+    // Wait for all threads to reach this point and make memory visible
+    barrier();
+
+    // Now it is safe to read
+    float neighborValue = sharedData[(tid + 1) % 256];
+}
+----
+
+这里的主要区别在于 Slang 的 `GroupMemoryBarrierWithGroupSync()`，它对「把内存屏障与执行同步结合」这一常见模式给出了更具描述性的名称。
+
+== 存储体冲突：速度陷阱
+
+共享内存被组织成**存储体**（bank，并行的内存模块，通常是 32 个）。每个存储体每个时钟周期能处理一次请求。如果你的线程访问内存的方式落在不同的存储体上，操作就会以全速并行完成。
+
+然而，如果一批（子组）中有两个或更多线程试图访问落在**同一存储体**内的不同地址，就会发生**存储体冲突**。硬件必须把这些请求串行化，这可能让该指令的执行时间变成两倍甚至三倍。
+
+[source,text]
+----
+// NO CONFLICT (Fast)
+Thread 0 -> Bank 0
+Thread 1 -> Bank 1
+Thread 2 -> Bank 2
+
+// BANK CONFLICT (Slow)
+Thread 0 -> Bank 0 (Address 0)
+Thread 1 -> Bank 0 (Address 32)
+----
+
+要避免存储体冲突，应追求线性访问模式，即让 `thread_id` 与 `index` 匹配。使用为 1 的**步长**（依次访问相邻元素）通常是确保全速最稳妥的方式。
+
+== 生命周期与作用域
+
+共享内存只在单个工作组的生命周期内有效。工作组结束后，它的共享内存就被丢弃。
+
+关键的是，**共享内存在工作组之间不具有一致性**。如果你需要把数据从工作组 A 送到工作组 B，必须把它写回全局 VRAM，并使用上一节所述的正式 Vulkan 内存屏障。
+
+下一节我们看看如何平衡这些屏障，让你的管线尽可能保持饱和。
+
+xref:Advanced_Vulkan_Compute/03_Memory_Models/02_vulkan_memory_model.adoc[上一篇：Vulkan 内存模型：可用性、可见性与域操作] | xref:Advanced_Vulkan_Compute/03_Memory_Models/04_memory_consistency.adoc[下一篇：内存一致性：Slang 屏障与管线停顿]

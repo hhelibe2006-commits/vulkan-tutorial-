@@ -1,0 +1,152 @@
+:pp: {plus}{plus}
+= 自碰撞过滤
+
+== 为什么不过滤角色就会爆炸
+
+当你为布娃娃的所有身体部位之间开启完整碰撞检测时，模拟几乎立刻就会变得不稳定。问题出在几何重叠：在真实的人体里，相邻的身体部位共享体积。手臂与躯干接触。大腿在髋窝处与骨盆略有重叠。脊柱各节互相穿插。对视觉来说这没问题——皮肤网格把这些都盖住了——但物理引擎并不知道皮肤。它看到的是底层的碰撞形状，如果这些形状重叠，求解器就会把重叠解释成穿透，必须用巨大的分离力来消解。
+
+结果是相邻的骨骼刚体猛烈地把彼此推开。手臂被从躯干里弹出来。大腿把骨盆往上顶。脊柱各节飞散。约束试图把所有东西拉回一起，接触又把所有东西推开，模拟进入一种永久内部冲突的状态，于是产生了经典的「布娃娃爆炸」瑕疵。
+
+解决方案是告诉物理引擎哪些刚体对之间*不*应碰撞。这叫作**碰撞过滤**。物理引擎用位掩码实现它：每个刚体属于一个或多个**碰撞组**，每个刚体还有一个**碰撞掩码**，规定它允许与哪些组碰撞。只有当第一个刚体的组位在第二个刚体的掩码中置位，并且反过来也成立时，两个刚体才会产生碰撞接触。
+
+== 设计位掩码布局
+
+碰撞过滤的艺术在于选择一种位掩码布局，能正确表达你的布娃娃的碰撞规则，又不需要你显式枚举每一对禁止碰撞的刚体。设计良好的布局能让你紧凑地表达规则，并且容易扩展。
+
+对人形角色来说，一种实用的布局是按解剖区域组织身体部位。每个区域成为一个具名位：
+
+[source,cpp]
+----
+// Collision group bits for a humanoid ragdoll
+// Each body part type gets one bit.
+namespace CollisionGroup {
+    constexpr uint32_t WORLD     = (1 << 0); // Static world geometry
+    constexpr uint32_t PROPS     = (1 << 1); // Dynamic world objects (crates, barrels, etc.)
+    constexpr uint32_t TORSO     = (1 << 2); // Chest, spine, pelvis
+    constexpr uint32_t HEAD      = (1 << 3); // Skull and neck
+    constexpr uint32_t ARM_L     = (1 << 4); // Left upper arm and forearm
+    constexpr uint32_t ARM_R     = (1 << 5); // Right upper arm and forearm
+    constexpr uint32_t HAND_L    = (1 << 6); // Left hand and wrist
+    constexpr uint32_t HAND_R    = (1 << 7); // Right hand and wrist
+    constexpr uint32_t LEG_L     = (1 << 8); // Left thigh and shin
+    constexpr uint32_t LEG_R     = (1 << 9); // Right thigh and shin
+    constexpr uint32_t FOOT_L    = (1 << 10); // Left foot and ankle
+    constexpr uint32_t FOOT_R    = (1 << 11); // Right foot and ankle
+}
+----
+
+有了这个布局，躯干可以归入 `TORSO` 组，其碰撞掩码可以设为只允许与 `WORLD` 和 `PROPS` 碰撞——意味着它会与环境及可移动物体碰撞，但不与角色自己的任何肢体碰撞。手臂同样与世界和道具碰撞，但不与躯干碰撞，也不与彼此碰撞。
+
+[source,cpp]
+----
+// Collision masks define what each group can collide WITH.
+namespace CollisionMask {
+    using namespace CollisionGroup;
+
+    // The torso collides with world and props, but NOT with its own arms, legs, or head.
+    // Internal ragdoll self-collision is handled by constraints, not contacts.
+    constexpr uint32_t TORSO = WORLD | PROPS;
+
+    // The head doesn't collide with the neck/torso (they are constrained together),
+    // but can hit the world.
+    constexpr uint32_t HEAD = WORLD | PROPS;
+
+    // Arms collide with world and props. They can also collide with the opposing side
+    // (left arm can interact with right arm if they cross) but not with the torso.
+    constexpr uint32_t ARM_L  = WORLD | PROPS | ARM_R;
+    constexpr uint32_t ARM_R  = WORLD | PROPS | ARM_L;
+    constexpr uint32_t HAND_L = WORLD | PROPS | ARM_R | HAND_R;
+    constexpr uint32_t HAND_R = WORLD | PROPS | ARM_L | HAND_L;
+
+    // Legs collide with world, props, and with each other (they can interact
+    // when the character's legs cross during a fall).
+    constexpr uint32_t LEG_L  = WORLD | PROPS | LEG_R;
+    constexpr uint32_t LEG_R  = WORLD | PROPS | LEG_L;
+    constexpr uint32_t FOOT_L = WORLD | PROPS | LEG_R | FOOT_R;
+    constexpr uint32_t FOOT_R = WORLD | PROPS | LEG_L | FOOT_L;
+}
+----
+
+这一设计允许左右肢体彼此交互——这是正确的，因为倒下的角色手臂确实会交叉——同时防止受约束的相邻身体部位产生破坏性的接触力。
+
+== 从 glTF extras 应用掩码
+
+前面定义碰撞体 extras 格式时，我们把 `collision_group` 和 `collision_mask` 作为字符串字段包含进来。现在我们可以写一个解析函数，把这些人类可读的字符串映射到位掩码值：
+
+[source,cpp]
+----
+uint32_t resolve_collision_group(const std::string& group_name)
+{
+    static const std::unordered_map<std::string, uint32_t> group_map = {
+        { "world",   CollisionGroup::WORLD   },
+        { "props",   CollisionGroup::PROPS   },
+        { "torso",   CollisionGroup::TORSO   },
+        { "head",    CollisionGroup::HEAD    },
+        { "arm_l",   CollisionGroup::ARM_L   },
+        { "arm_r",   CollisionGroup::ARM_R   },
+        { "hand_l",  CollisionGroup::HAND_L  },
+        { "hand_r",  CollisionGroup::HAND_R  },
+        { "leg_l",   CollisionGroup::LEG_L   },
+        { "leg_r",   CollisionGroup::LEG_R   },
+        { "foot_l",  CollisionGroup::FOOT_L  },
+        { "foot_r",  CollisionGroup::FOOT_R  },
+    };
+
+    auto it = group_map.find(group_name);
+    return (it != group_map.end()) ? it->second : 0;
+}
+
+// The mask field in extras is a comma-separated list of group names
+// e.g., "world,props,leg_r" => WORLD | PROPS | LEG_R
+uint32_t resolve_collision_mask(const std::string& mask_str)
+{
+    uint32_t mask = 0;
+    std::stringstream ss(mask_str);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        // Trim whitespace
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        mask |= resolve_collision_group(token);
+    }
+    return mask;
+}
+----
+
+当我们为骨骼创建物理刚体时，应用这些掩码：
+
+[source,cpp]
+----
+JPH::BodyCreationSettings settings;
+// ... set shape, mass, pose ...
+settings.mMotionType = JPH::EMotionType::Kinematic;
+
+// Apply collision filtering from the parsed extras
+// settings.mObjectLayer = resolve_collision_layer(node.collider_def.collision_group, node.collider_def.collision_mask);
+
+JPH::BodyID body = physics_world.create_body(settings);
+----
+
+== 角色之间的过滤
+
+上面的位掩码设计处理了单个角色的自碰撞。但多个角色呢？如果两个角色在打斗，你大概希望它们的布娃娃互相交互——一个角色倒下的身体应当能撞到另一个角色的身体。但你仍然不希望角色 A 的手臂与角色 A 自己的躯干碰撞。
+
+多角色过滤的标准技术是在身体部位组之上再加一层**角色实例层**。每个角色实例获得一个唯一的数字 ID，角色 A 身体部位的碰撞掩码显式排除角色 A 自己的其他身体部位，同时包含所有其他角色对应的身体部位。
+
+角色数量少时，最简单的做法就是干脆不管。有了合适的关节限制，相邻受约束身体部位之间的自碰撞会被约束本身阻止——只有远距离的自碰撞（比如手臂交叉到身体另一侧）才需要显式过滤，而那种情况相对少见。真正重要的过滤是针对由约束相连的相邻身体部位，这些我们总是希望过滤掉。
+
+角色数量多时——比如人群模拟——你就需要一个更复杂的过滤系统。一种常见做法是为每个角色分配 8 位或 16 位的一块，块内每个身体区域占一位。这样宽相位就能在层这一级快速剔除同一角色身体部位之间的碰撞，而不需要逐对做接触过滤。
+
+== 验证你的过滤器
+
+设置好碰撞过滤后，值得花几分钟刻意测试一下。最简单的测试是生成单个角色、触发布娃娃、看它倒地。过滤问题的迹象有这些：
+
+如果布娃娃在第一帧就爆炸，说明相邻身体部位正在产生穿透接触——受约束的邻居之间存在过滤缺口。检查相邻骨骼（例如上臂与前臂）的组与掩码是否互相排除。
+
+如果角色的手臂直接穿过了墙壁或地板，说明某个掩码过于严格——该身体部位没有与 `WORLD` 几何体碰撞。检查每个身体部位的碰撞掩码里是否都包含 `WORLD`。
+
+如果两个角色的布娃娃在叠落到一起时彼此融合、互相穿过，说明掩码没有包含对方角色的身体部位组。如果你把角色对角色碰撞全部过滤掉了，这是预期行为；但如果你希望角色之间能交互，这就不合期望了。
+
+我们将在第 8 章构建的调试绘制器，对可视化碰撞形状及其被分配的层会极有价值，能让这些问题在视觉上容易诊断得多。
+
+xref:Advanced_glTF/Physics_Integration/04_ragdoll_handoff.adoc[上一篇：布娃娃交接] | xref:Advanced_glTF/Physics_Integration/06_conclusion.adoc[下一篇：物理集成：结语]

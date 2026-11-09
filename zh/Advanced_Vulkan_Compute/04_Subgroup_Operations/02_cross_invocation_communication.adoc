@@ -1,0 +1,76 @@
+:pp: {plus}{plus}
+
+= 子组洗牌、广播与算术运算
+
+== 不经过内存交换数据
+
+上一节中，我们把**子组（Subgroup）**这一概念介绍为硬件的原生执行宽度（例如 32 或 64 个线程）。子组真正强大的地方在于，它能让各调用之间共享数据而完全不必写入内存。不经过 VRAM，不经过 LDS——只在寄存器之间传递。
+
+这通过三大类操作实现：**广播（Broadcast）**（把一个值发送给所有线程）、**洗牌（Shuffle）**（在特定线程之间交换值），以及**算术运算（归约/扫描）**（在整个子组范围内做数学运算）。
+
+== 子组广播
+
+子组通信最简单的形式是**广播**。它让子组中的一个线程把自己的本地值共享给同一子组中的所有其他线程。
+
+[source,slang]
+----
+// Slang example of a subgroup broadcast
+float localValue = computeSomeData();
+float sharedValue = WaveReadLaneAt(localValue, 0); // Everyone gets thread 0's value
+----
+
+在上面的例子里，子组中的每个线程现在都拥有相同的 `sharedValue`，而这个值原本只有线程 0 才有。当某个“锚点”值或配置数据只需要一个线程计算或加载时，这种做法的用处极大。
+
+=== GLSL：子组的写法
+
+在 GLSL 中，你要使用 `subgroup` 内建函数。这需要启用相应的扩展（通常取决于具体操作，是 `GL_KHR_shader_subgroup_basic` 或 `GL_KHR_shader_subgroup_ballot`）。
+
+[source,glsl]
+----
+#extension GL_KHR_shader_subgroup_basic : enable
+
+// The GLSL equivalent of a subgroup broadcast
+float localValue = computeSomeData();
+float sharedValue = subgroupBroadcast(localValue, 0);
+----
+
+== 子组洗牌
+
+广播把一个值发给所有人，而**洗牌**则允许更复杂的模式。你可以把它看成对整个子组中的寄存器做一次**置换**（重新排列）。
+
+在 Slang 中，通用索引可以用 `WaveReadLaneAt`，相对移动则用更专门的函数。
+
+[source,slang]
+----
+// Every thread "swaps" its value with its neighbor (assuming 32 threads)
+uint neighborIdx = (WaveGetLaneIndex() + 1) % 32;
+float neighborValue = WaveReadLaneAt(localValue, neighborIdx);
+----
+
+现代 GPU 还支持更专门的洗牌，例如 `WaveReadLaneFirst` 和按位洗牌。它们通常比通用洗牌更高效，因为能直接映射到硬件数据通路。
+
+== 子组算术运算（归约与扫描）
+
+子组不只会搬数据，还能在一条指令里对所有线程做数学运算。这类操作称为**归约**和**扫描**。
+
+*   **子组归约**：把所有线程的值合并成一个结果（例如 `WaveActiveSum`、`WaveActiveMin`、`WaveActiveMax`）。
+*   **子组扫描（包含/排除）**：每个线程都会收到截至自身索引为止的所有线程的部分和（或最小值/最大值）。**包含式**扫描会算上当前线程的值；**排除式**扫描则不算。
+
+[source,slang]
+----
+// Calculate the sum of all local values in the subgroup
+float subgroupTotal = WaveActiveSum(localValue);
+
+// Each thread gets the sum of all values from threads with a lower ID
+float runningSum = WavePrefixSum(localValue);
+----
+
+这些操作是高性能前缀和、**流压缩**（把数组过滤成只剩活跃元素）以及并行归约的基石。你往往不必写一个使用共享内存和屏障的复杂多趟内核，在单个子组内只需几个周期就能完成同样的工作。
+
+== 选择合适的操作
+
+虽然你很想到处都用子组操作，但要记住它们只在单个子组内有效。如果你需要在完整的 1024 线程工作组内共享数据，仍然得用**共享内存（LDS）**在子组之间搭桥。
+
+不过，“子组优先”的思路往往最快。尽可能多地在子组内完成工作，只在确实需要与另一个子组通信时才用 LDS。
+
+xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc[上一节：子组操作：隐藏的力量] | xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc[下一节：子组划分：Ballot 与 Match]

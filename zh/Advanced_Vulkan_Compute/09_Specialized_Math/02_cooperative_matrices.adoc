@@ -1,0 +1,122 @@
+:pp: {plus}{plus}
+= 使用协作矩阵
+
+[NOTE]
+====
+本节需要 `VK_KHR_cooperative_matrix` 扩展以及 Vulkan 1.3 或更高版本。在 Vulkan 1.4 中，该扩展已被提升为核心 API。
+====
+
+要理解**协作矩阵**为何如此强大，我们需要重新思考在 GPU 上做矩阵乘法的方式。在传统的「朴素」循环里，每个调用负责计算结果矩阵的一个或多个元素。这涉及大量冗余的内存读取，并且天生受限于硬件的标准浮点吞吐量。
+
+协作矩阵引入了一种新方式，改变了一切：一组调用（一个**子组**）共同完成单次矩阵乘法与累加（即 **GEMM** 运算）。不再是各个调用孤立工作，整个子组「协作」完成这一运算。
+
+== 概念：矩阵片段与子组作用域
+
+协作矩阵的关键是**片段**（Fragment）这一概念。当你声明一个协作矩阵类型时，数据并不是存放在一个任何调用都能访问的连续数组里。相反，它被**分布**到子组内的各个调用上。
+
+每个调用只拥有矩阵的一小块。你可以把它理解为硬件把矩阵「分片」到自己的寄存器里。这使 GPU 能使用专用硬件单元（如 NVIDIA 的 **Tensor Core** 或 AMD 的 **Matrix Core**），直接在这些寄存器上完成运算，而不必付出传统 ALU 指令的开销。
+
+关键在于，运算发生在**子组作用域**上。这意味着子组里的每个调用都必须同时参与加载、乘法和存储运算。如果你试图在一个发散的分支里调用协作矩阵函数，而该分支中某些子组成员处于非活动状态，那么你很可能会遇到未定义行为或 GPU 挂起。
+
+这些单元执行的标准 GEMM 运算是：
+[latexmath]
+++++
+D = A \times B + C
+++++
+其中 latexmath:[A] 是 latexmath:[M \times K] 矩阵，latexmath:[B] 是 latexmath:[K \times N] 矩阵，而 latexmath:[C, D] 是 latexmath:[M \times N] 矩阵。
+
+== 内存布局：步长与主序
+
+从内存加载片段时，你必须指明矩阵在缓冲区中的布局。
+
+1. **行主序 vs. 列主序**：大多数 Vulkan 应用偏好**行主序**（即一行中的元素连续存放）。
+2. **步长**：这是一行的起始到下一行起始之间的距离（以元素为单位，而非字节）。对于简单的紧凑矩阵，步长就等于列数。
+
+如果你的缓冲区里存放着一个大矩阵，而你只加载一个 $16 \times 16$ 的小块，那么步长应是*整个*大矩阵的宽度。
+
+== Slang：分块矩阵乘法
+
+Slang 把协作矩阵视为一等类型，因此能写出富有表现力的分块算法。下面是实现大矩阵乘法中一个分块的写法：
+
+[source,slang]
+----
+import slang_vulkan_compute;
+
+// Matrix dimensions supported by the physical device
+const int M = 16;
+const int N = 16;
+const int K = 16;
+
+struct Params {
+    uint64_t addrA, addrB, addrC;
+    uint32_t strideA, strideB, strideC;
+    uint32_t totalK;
+};
+
+ParameterBlock<Params> cb;
+
+[numthreads(32, 1, 1)] // Subgroup size must match hardware expectations
+void computeMain(uint3 threadId : SV_GroupThreadID, uint3 groupId : SV_GroupID) {
+    // Each subgroup handles one (M x N) tile of the output matrix C
+    CooperativeMatrix<float, M, N> acc = 0.0f;
+
+    // Loop over the K dimension in blocks of 'K'
+    for (uint32_t k = 0; k < cb.totalK; k += K) {
+        CooperativeMatrix<float16, M, K> matA;
+        CooperativeMatrix<float16, K, N> matB;
+
+        // Load tiles from memory using Buffer Device Address
+        matA.load((float16*)cb.addrA, getOffsetA(groupId, k), cb.strideA);
+        matB.load((float16*)cb.addrB, getOffsetB(groupId, k), cb.strideB);
+
+        // Accumulate product: acc = matA * matB + acc
+        acc = mul(matA, matB) + acc;
+    }
+
+    // Store the final accumulated tile
+    acc.store((float*)cb.addrC, getOffsetC(groupId), cb.strideC);
+}
+----
+
+== GLSL：低层的优势
+
+Slang 让代码看起来像标准的矩阵运算，但看看等价的 GLSL 会很有帮助，这样能理解 Vulkan 1.4 通过 `GL_KHR_cooperative_matrix` 扩展带来的「赢面」。注意那些显式的「Use」类型，它们提示编译器如何优化寄存器分配。
+
+[source,glsl]
+----
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+
+// Define the fragments with explicit scopes and uses
+layout(constant_id = 0) const int M = 16;
+layout(constant_id = 1) const int N = 16;
+layout(constant_id = 2) const int K = 16;
+
+// UseA and UseB are inputs, UseAccumulator is for C and D
+coopmat<float16_t, gl_ScopeSubgroup, M, K, gl_MatrixUseA> matA;
+coopmat<float16_t, gl_ScopeSubgroup, K, N, gl_MatrixUseB> matB;
+coopmat<float, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> acc;
+
+void main() {
+    // Explicit loading requires byte-offset and row-stride
+    coopMatLoad(matA, dataA, offsetA, strideA, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(matB, dataB, offsetB, strideB, gl_CooperativeMatrixLayoutRowMajor);
+
+    // acc = matA * matB + acc
+    acc = coopMatMulAdd(matA, matB, acc);
+
+    coopMatStore(acc, dataC, offsetC, strideC, gl_CooperativeMatrixLayoutRowMajor);
+}
+----
+
+== 硬件约束与能力
+
+物理尺寸（latexmath:[M, N, K]）不是随意的。你必须查询 `VkPhysicalDeviceCooperativeMatrixPropertiesKHR` 才能找到受支持的组合。
+
+* **子组大小**：在 NVIDIA 上，这些单元通常期望子组大小为 32。在 AMD 上可能是 64。在 `[numthreads]` 里使用错误的子组大小，会导致协作矩阵类型初始化失败。这一点在移动端更为重要：越来越多的 Arm 与 Qualcomm 部件为设备端 ML 暴露了 `VK_KHR_cooperative_matrix`，但它们的子组大小与桌面端不同，所以务必查询受支持的配置，而不要照抄桌面端的值（参见 xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc[Android 上的计算]）。
+* **精度权衡**：标准做法是用 `float16` 作为输入矩阵（A 和 B），以最大化吞吐量并节省带宽，同时用 `float32` 作为累加器（C 和 D）。这种「混合精度 GEMM」在速度与数值稳定性之间提供了最佳平衡。
+* **对齐**：传给 `.load()` 与 `.store()` 的内存地址通常要求特定对齐（例如 16 字节）。从非对齐地址加载可能导致设备丢失错误。
+
+借助这些专用单元，你可以获得往往比标准浮点单元高一个数量级的吞吐量。这使协作矩阵成为 GPU 上任何性能关键的线性代数运算的必备工具。
+
+xref:Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc[上一节：协作矩阵与专用数学] | xref:Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc[下一节：掌握混合精度：FP16 与 Int8]

@@ -1,0 +1,77 @@
+:pp: {plus}{plus}
+
+= 安装与配置：准备你的环境
+
+要在 Vulkan 上运行 OpenCL 代码，你的开发工具箱里需要几件额外的工具。最重要的两件是 **clspv**（编译器）与 **clvk**（运行时库）。
+
+== 从哪里获取这些工具
+
+`clspv` 与 `clvk` 都是托管在 GitHub 上的开源项目。它们目前不属于标准 Vulkan SDK 的一部分，所以你需要自己获取并构建，不过某些平台偶尔会有预编译好的二进制。
+
+- **clspv**：link:https://github.com/google/clspv[github.com/google/clspv]
+- **clvk**：link:https://github.com/kpet/clvk[github.com/kpet/clvk]
+
+== 构建 clspv
+
+`clspv` 是一个建立在 LLVM 与 Clang 之上的复杂工具。因此它有几个依赖项：
+
+1.  **CMake**：3.17.2 或更高版本。
+2.  **Python 3**：用于各类构建脚本。
+3.  **Git**：用于克隆仓库及其依赖。
+4.  **C{pp} 编译器**：一个现代编译器（GCC 7+、Clang 5+ 或 MSVC 2017+）。
+
+构建 `clspv` 的步骤如下：
+
+[source,bash]
+----
+git clone --recursive https://github.com/google/clspv.git
+cd clspv
+python3 utils/fetch_sources.py
+mkdir build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja clspv
+----
+
+构建完成后，`build` 文件夹里会有一个 `clspv` 可执行文件。把它加入系统的 `PATH`，以便随时调用。
+
+== 构建 clvk
+
+`clvk` 会把 `clspv` 作为依赖一并构建，并在内部用它于运行时把 OpenCL C 内核编译成 Vulkan 兼容的 SPIR-V。因此，如果你的唯一目标就是使用 `clvk`，不必单独构建 `clspv`。构建主要需要 Vulkan 驱动与头文件：
+
+[source,bash]
+----
+git clone --recursive https://github.com/kpet/clvk.git
+cd clvk
+mkdir build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja
+----
+
+这会生成一个共享库（例如 Linux 上的 `libOpenCL.so.1` 或 Windows 上的 `OpenCL.dll`）。
+
+== 各平台注意事项
+
+虽然各平台的构建流程相似，但有几处需要特别注意：
+
+=== Linux
+
+在 Linux 上，请确保已安装 Vulkan SDK 或发行版的 Vulkan 开发包（`vulkan-headers`、`libvulkan-dev`）。多数开发者倾向于把 `clvk` 当作 **Vulkan 层**使用，或者显式链接 `clvk` 共享库。
+
+=== Windows
+
+在 Windows 上，你需要 Visual Studio。`clspv` 可以在 Visual Studio 命令提示符下构建。要使用 `clvk`，你可以把生成的 `OpenCL.dll` 重命名为 `clvk.dll`（以避免与系统范围内的 OpenCL 驱动冲突），然后在应用中动态加载它。
+
+=== Android
+
+Android 是 `clvk` 最受欢迎的平台之一。要为 Android 构建，你需要 **Android NDK**。你可以在主机上交叉编译 `clspv` 以生成 SPIR-V 二进制，然后把 `clvk` 库作为原生共享库放进 Android 工程的 `jniLibs` 文件夹。
+
+== 验证你的环境
+
+工具构建完成后，验证一下安装是否正确：
+
+1.  **clspv**：在终端运行 `clspv --version`。它应当报告当前版本及其 LLVM/Clang 基础版本。
+2.  **clvk**：你可以用 `clinfo` 这样的工具检查系统是否正确把 `clvk` 识别为 OpenCL 平台。在 Linux 上以 `LD_LIBRARY_PATH=/path/to/clvk/build clinfo` 运行，看看由 Vulkan 支撑的 OpenCL 设备是否出现。
+
+你的环境已经就绪，接下来看看如何用 `clspv` 为 Vulkan 编译你的第一个 OpenCL 内核。
+
+xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc[上一节：异构生态：Vulkan 上的 OpenCL] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc[下一节：clspv 管线：从 OpenCL C 到 SPIR-V]

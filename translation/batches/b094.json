@@ -1,0 +1,18 @@
+{
+  "id": "b094",
+  "words": 5624,
+  "files": [
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc",
+      "words": 2906,
+      "title": "Element-Wise Operations"
+    },
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc",
+      "words": 2718,
+      "title": "Matrix Operations"
+    }
+  ]
+}

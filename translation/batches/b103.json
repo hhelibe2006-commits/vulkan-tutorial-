@@ -1,0 +1,66 @@
+{
+  "id": "b103",
+  "words": 3780,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc",
+      "words": 449,
+      "title": "Zero-Copy Hand-off for Sensor Data"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc",
+      "words": 411,
+      "title": "Incorporating Scene Understanding into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc",
+      "words": 165,
+      "title": "ML Inference with Cooperative Matrices"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc",
+      "words": 405,
+      "title": "On-GPU Inference with Cooperative Matrices"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc",
+      "words": 465,
+      "title": "Refining Spatial Data"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc",
+      "words": 395,
+      "title": "Incorporating ML Inference into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc",
+      "words": 159,
+      "title": "Semantic Occlusion: Depth-Aware Real/Virtual Compositing"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc",
+      "words": 477,
+      "title": "ML-Driven Segmentation"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc",
+      "words": 447,
+      "title": "Per-Pixel Masking & Stable Compositing"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc",
+      "words": 407,
+      "title": "Incorporating Semantic Occlusion into the Engine"
+    }
+  ]
+}

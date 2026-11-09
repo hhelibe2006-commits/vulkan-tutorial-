@@ -1,0 +1,18 @@
+{
+  "id": "b063",
+  "words": 3784,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc",
+      "words": 1799,
+      "title": "Subsystems: Vulkan for Audio Processing"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc",
+      "words": 1985,
+      "title": "Subsystems: Physics Basics"
+    }
+  ]
+}

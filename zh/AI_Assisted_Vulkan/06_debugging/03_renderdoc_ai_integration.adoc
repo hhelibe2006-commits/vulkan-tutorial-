@@ -1,0 +1,91 @@
+:pp: {plus}{plus}
+
+= AI 与 RenderDoc 集成：自动化 GPU 分析
+
+== 简介
+
+**RenderDoc** 是 Vulkan 调试的标准工具——它让你冻结一帧，检查 GPU 上的每一次绘制调用、每一个描述符集和管线状态对象。但一个复杂的场景，单帧就可能有上千个事件，要找出导致阴影痤疮或纹理缺失的那一次绘制调用，往往是缓慢的手工活。
+
+把 RenderDoc 的状态追踪与 AI 代理结合起来，能把其中一部分手工搜索变成更接近脚本化审计的流程。
+
+== 以编程方式检视
+
+要把 AI 接到 RenderDoc 上，你要走 **RenderDoc 命令行工具（`renderdoccmd`）**，而不是图形界面。这样代理（比如 Goose）就能以编程方式浏览 GPU 捕获。
+
+假设你遇到黑屏：绘制调用确实发生了，但你不知道是哪个管线状态配错了。这种情况如果手工在 RenderDoc 界面里翻，很容易耗掉一小时。
+
+如果代理能运行 `rdc-cli`，你就可以直接问它：*“分析最新的 RenderDoc 捕获。找出 'MainPass' 的绘制调用，审计描述符集。为什么片元着色器收到的漫反射纹理值是零？”*
+
+代理会导出管线状态（JSON 或 Markdown），通过上下文桥（Context Bridge）与你的 C{pp} 源码比对，然后汇报发现。
+
+== 示例：纹理缺失
+
+假设你在调试一个缺失的纹理。在 RenderDoc 里看，纹理是绑定的，但着色器输出是黑的。
+
+=== 第 1 步：要求做有针对性的状态检查
+
+别去逐个点开标签页，直接问：*“Goose，用 RenderDoc 工具检查 'G-Buffer' 通道里第三次绘制调用的 `VkSampler` 状态。”*
+
+=== 第 2 步：发现
+
+代理导出采样器状态，发现 `minLod` 被设成 `10.0f`，而纹理只有 5 个 mip 层级。
+
+**“你绑定的采样器迫使 GPU 从不存在的 mip 层级采样，这就是纹理显示为黑色的原因。检查 `VulkanContext.cpp` 里的 `SamplerBuilder`。”**
+
+=== 第 3 步：修复
+
+由于代理同时掌握你的源码，它可以直接给出修复方案——例如重构采样器创建逻辑，把 `minLod` 钳制到所绑定图像实际的 mip 数量。
+
+== 把 Goose 接到 RenderDoc
+
+要把这类分析自动化，就给代理开放 **RenderDoc 命令行工具（`renderdoccmd`）**，让它能把 `.rdc` 捕获当成可查询的文档来用。
+
+1.  **确保 RenderDoc 在 PATH 上。**
+    `renderdoccmd` 可执行文件（Windows 上是 `renderdoccmd.exe`）需要能在你的终端里被找到。
++
+[source,bash]
+----
+# On Windows (PowerShell)
+$env:Path += ";C:\Program Files\RenderDoc"
+# On Linux
+export PATH=$PATH:/usr/bin/renderdoc
+----
+
+2.  **捕获一帧。**
+    用 RenderDoc 图形界面从你的 Vulkan 程序捕获一帧，保存为 `debug_capture.rdc`。
+
+3.  **让代理检视它。**
+    在你的 Goose 会话里，让它列出绘制调用，找出使用特定着色器的那一个。
++
+[source,text]
+----
+Goose, list all draw calls in 'debug_capture.rdc' using 'renderdoccmd'.
+Find the one using 'MainPass' and export its full
+pipeline state to a structured file named 'state.txt'.
+----
+
+4.  **对照源码做比较。**
+    状态导出后，让助手拿它和你的源码比对。
++
+[source,text]
+----
+Compare 'state.txt' with the 'VkGraphicsPipelineCreateInfo'
+logic in 'Renderer.cpp'. Are there any mismatches in the
+depth test settings or cull mode that could explain
+why our geometry is missing?
+----
+
+5.  **在源码处修复。**
+    代理发现捕获里 `depthTestEnable` 是 `VK_FALSE`，而你的代码里本应是 `VK_TRUE`，于是定位到相应代码行并给出修复。
+
+== 为什么结构化状态有用
+
+AI 模型没法真正“看”RenderDoc 界面，但它能很好地处理结构化数据。一旦你把 GPU 状态导出成它可解析的格式，它就能抓到诸如冗余的管线重绑定之类的问题——比如同一个管线在命令缓冲区里被绑定五次，而中间没有任何绘制调用。
+
+它还能检查内存对齐（12 字节的顶点缓冲区偏移能否满足 16 字节的硬件要求？），并把一条验证层错误与它在 RenderDoc 时间线上最初的准确位置对应起来。
+
+== 小结
+
+把 RenderDoc 的结构化状态喂给 AI 代理，能让一部分 GPU 调试从在层层菜单里点击，变成提一个直接的问题再核对答案。它不会取代你理解管线状态的含义，但确实减少了手工比对的工作量。
+
+下一节：xref:AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc[着色器调试与日志解析]

@@ -1,0 +1,195 @@
+= 高级内存管理：突破内存墙
+:pp: ++
+:stem: latexmath
+
+你已经优化了内核，也量化了权重。你的 MobileNetV2 能轻松塞进 14MB。但需求变了：现在要求你在一台只有 8GB 显存的笔记本上，运行一个有 70 亿参数的**大语言模型（LLM）**（latexmath:[\approx 14 \text{GB}]）。
+
+这就是**内存墙**。现代 AI 模型的增长速度已经超过了 GPU 的 VRAM。如果你只是简单地把所有东西都分配出来，应用就会因 `VK_ERROR_OUT_OF_DEVICE_MEMORY` 而崩溃。
+
+本章我们将学习如何像专业人士一样管理 GPU 内存。我们会同时探索**务实之路**（优化 ONNX Runtime 的内存占用）与**教学之路**（构建自定义的资源别名子分配器）。
+
+== 务实之路：优化库的内存
+
+如果你使用的是 ONNX Runtime，暂时还不用操心 `vkBindBufferMemory`，但你仍然需要管理**内存竞技场（Memory Arena）**。
+
+=== 1. 内存竞技场配置
+ONNX Runtime 内部使用一种名为 Arena 的「伙伴分配器（Buddy Allocator）」。默认情况下，它按大块分配内存，以尽量减少系统调用。对嵌入式设备来说，这种做法可能过于激进。
+
+[source,cpp]
+----
+Ort::SessionOptions options;
+
+// Configure the CPU Arena
+// '1' enables the arena, '0' disables it (for absolute minimal footprint)
+options.AddConfigEntry("session.use_ort_model_bytes_for_initializers", "1");
+
+// Configure the GPU Arena (WebGPU/DirectML)
+// You can limit the total memory ONNX is allowed to touch
+options.AddConfigEntry("session.gpu_mem_limit", "2147483648"); // 2GB
+----
+
+=== 2. 内存映射（外部初始化器）
+对于 Llama-3 或 Stable Diffusion 这类模型，你无法先把整个模型加载进 RAM 里的一个 `std::vector<uint8_t>`。你还没碰到 GPU，CPU 内存就已经耗尽了。
+
+*   **专业做法**：使用**内存映射**（`mmap` 或 `CreateFileMapping`）。这样操作系统就能把磁盘上的模型文件当作一个虚拟数组来对待。
+*   **与 ONNX 集成**：你可以让 ONNX Runtime 把这些映射得到的指针用作「外部初始化器」，从而绕过标准的「加载 → 拷贝」流程。
+
+== 内存墙的数学：吞吐量与延迟
+
+当模型大到无法放进 VRAM 时，我们必须把权重存放在系统内存里，并按需「流式」传输到 GPU。瓶颈在于 **PCIe 总线**。
+
+[latexmath]
+++++
+\text{Stream Latency} = \frac{\text{Model Size}}{\text{Bus Bandwidth}}
+++++
+
+对于一个插在 PCIe 4.0 x16 插槽上（latexmath:[31.5 \text{ GB/s}]）的 14GB 模型：
+[latexmath]
+++++
+\frac{14 \text{ GB}}{31.5 \text{ GB/s}} \approx 444 \text{ milliseconds}
+++++
+
+这意味着即使 GPU 的计算耗时为**零**，你的模型也永远不会快过 latexmath:[2 \text{ FPS}]。要解决这个问题，我们必须使用**异步传输**，把第 latexmath:[N+1] 层的「加载」时间藏到第 latexmath:[N] 层的「计算」时间背后。
+
+== 策略 1：资源别名（缓冲区池）
+
+ML 中最浪费的模式，是为每一层的输出都单独分配一个缓冲区。第 1 层输出到缓冲区 A，第 2 层读取 A 并写入缓冲区 B。到第 50 层时你就有了 50 个缓冲区，尽管在任何一个时刻其中 48 个都在闲置。
+
+**资源别名**允许多个「虚拟」缓冲区共享同一段物理内存。
+
+=== 存活期分析算法
+
+要做内存别名，你必须先计算图中每个张量的**存活期（Liveness）**。
+
+.张量存活期与内存别名
+image::images/ML_Inference/Advanced_Topics/tensor_liveness.svg[展示共享同一内存偏移的不重叠张量区间的示意图, 600]
+
+1.  **追踪**：遍历执行图。对每个张量，标记写入它的第一层和最后读取它的那一层的索引。
+2.  **重叠判断**：如果两个张量的 `[First, Last]` 区间不重叠，它们就可以共享同一段内存。
+3.  **堆打包**：我们把 GPU 内存看作一个一维堆，并用**首次适应递减（First-Fit Decreasing）**算法把这些区间尽可能紧凑地打包。
+
+=== 实现：生命周期（C++）
+
+首先，我们定义一个结构体，用来表示张量在时间（层索引）和空间（字节数）上的驻留情况。
+
+[source,cpp]
+----
+struct TensorInterval {
+    std::string name;
+    uint32_t firstLayer; // Index of the layer that creates it
+    uint32_t lastLayer;  // Index of the layer that last reads it
+    VkDeviceSize size;
+    VkDeviceSize offset = 0; // To be calculated
+};
+----
+
+=== 在 Vulkan 中应用别名
+
+偏移量算好之后，你创建多个 `VkBuffer` 对象，但把它们绑定到**同一块** `VkDeviceMemory` 上。
+
+[source,cpp]
+----
+// 1. Calculate total required memory pool size
+VkDeviceSize totalPoolSize = calculateRequiredHeap(tensors);
+
+// 2. Allocate one big block of DEVICE_LOCAL memory
+vk::MemoryAllocateInfo allocInfo{ .allocationSize = totalPoolSize, ... };
+auto sharedMemory = device.allocateMemory(allocInfo);
+
+// 3. Bind virtual buffers to the pool with calculated offsets
+for (const auto& t : tensors) {
+    // This is the core trick: multiple buffers, one memory object
+    device.bindBufferMemory(t.vkBuffer, sharedMemory, t.offset);
+}
+----
+
+**重要的安全提示**：使用别名时，在共享同一段内存的层之间**必须**使用管线屏障。如果第 5 层要写入第 2 层刚用完的偏移，屏障能确保第 2 层的读取真正完成之后，第 5 层才开始覆盖那段内存。
+
+== 策略 2：用乒乓缓冲区流式加载权重
+
+如果权重本身就太大（LLM），我们就必须逐层「流式」传输它们。要在不让 GPU 停顿的前提下做到这一点，我们使用**乒乓缓冲（Ping-Pong Buffering）**。
+
+*   **缓冲区 A**：存放 GPU 当前正在计算的那一层的权重。
+*   **缓冲区 B**：正由 DMA 引擎填充*下一*层的权重。
+
+=== 异步握手
+我们用**时间线信号量**来协调 CPU、DMA 引擎（传输队列）和计算引擎（计算队列）。
+
+[source,cpp]
+----
+// CPU Orchestration Loop
+for (int i = 0; i < numLayers; ++i) {
+    // 1. Wait for the pre-fetch of Layer i to finish
+    vk::SemaphoreWaitInfo wait{ .semaphore = weightReady[i], .value = 1 };
+    device.waitSemaphores(wait, UINT64_MAX);
+
+    // 2. Dispatch Compute for Layer i
+    cmd.dispatch(...);
+
+    // 3. Start the pre-fetch for Layer i+1 immediately (Non-blocking)
+    if (i + 1 < numLayers) {
+        submitAsyncTransfer(weights[i+1], bufferPingPong[(i+1)%2]);
+    }
+}
+----
+
+=== 零拷贝同步：「栅栏还是信号量」的抉择
+流式加载权重时，同步上有两种选择：
+1.  **栅栏（粗粒度）**：由 CPU 等待 GPU 完成。这种写法容易，但在操作系统进行上下文切换时，可能让 GPU 空转数微秒。
+2.  **时间线信号量（细粒度）**：由 GPU 等待*DMA 引擎*完成。CPU 完全不参与其中。这是高性能流式加载的**黄金标准**。
+
+[source,cpp]
+----
+// GPU-to-GPU Synchronization (No CPU intervention)
+vk::TimelineSemaphoreSubmitInfo timelineInfo;
+timelineInfo.setWaitSemaphoreValues(transferCompleteValue);
+timelineInfo.setSignalSemaphoreValues(computeCompleteValue);
+
+submitInfo.setPNext(&timelineInfo);
+computeQueue.submit(submitInfo);
+----
+
+== 策略 3：统一内存（SoC）上的零拷贝
+
+如果你的目标是 **Apple Silicon（M1/M2/M3）**、**Intel Xe** 或 **ARM Mali（Android）**，你就拥有一个巨大的优势：**物理统一内存**。CPU 和 GPU 共享同一块芯片、同一份物理 RAM。
+
+*   **错误做法**：用 `vkCmdCopyBuffer` 把数据从「暂存」缓冲区搬到「设备本地」缓冲区。在这些芯片上，这是一次多余的拷贝，会浪费 50% 的内存带宽并消耗电池。
+*   **专业做法**：使用 `VK_EXT_external_memory_host`。它允许你把一个标准的 CPU 指针（来自 `malloc` 或 `std::vector`）直接映射进 Vulkan 缓冲区。
+
+[source,cpp]
+----
+// Map an existing CPU buffer directly to Vulkan
+vk::ImportMemoryHostPointerInfoEXT importInfo{
+    .handleType = vk::ExternalMemoryHandleTypeFlagBits::eHostPointerEXT,
+    .pHostPointer = my_large_weight_array.data()
+};
+
+vk::MemoryAllocateInfo allocInfo{
+    .pNext = &importInfo,
+    .allocationSize = my_large_weight_array.size(),
+    .memoryTypeIndex = findHostPointerMemoryType()
+};
+
+device.allocateMemory(&allocInfo, nullptr, &sharedMemory);
+----
+现在 GPU 以全速**直接从系统内存**读取你的权重。没有传输命令，没有延迟，也没有任何内存重复。
+
+== 生产环境的安全措施：预算与优先级
+
+在真实的操作系统里，其他应用也在争抢 VRAM。专业的引擎必须做一个「好公民」。
+
+1.  **VK_EXT_memory_budget**：在开始推理之前，始终查询 `VkPhysicalDeviceMemoryBudgetPropertiesEXT`。如果接近上限，就自动触发「权重驱逐」策略（把较旧的权重搬回系统内存）。
+2.  **VK_EXT_memory_priority**：把权重的优先级设为 `1.0`（高），把临时激活缓冲区设为 `0.5`（中）。如果操作系统需要把内存换出到磁盘，它会保留 VRAM 中的权重，而先换出临时数据。
+
+== 小结：内存管理检查清单
+
+1.  **检测拓扑**：如果是集成（统一）内存，通过 `VK_EXT_external_memory_host` 使用**零拷贝**指针。
+2.  **池化激活值**：使用感知存活期的子分配器，为不重叠的张量做别名。
+3.  **流式加载权重**：对 LLM，用时间线信号量实现一条**乒乓**异步传输管线。
+4.  **页锁定内存**：在桌面上，确保所有主机侧缓冲区都是**主机一致（Host-Coherent）**且**主机可见（Host-Visible）**的，从而以 latexmath:[31 \text{ GB/s}] 启用 DMA。
+
+内存管理关乎**物流**。你不只是程序员，你还是一个交通调度员，指挥着数以 GB 计的数据穿过一根狭窄的管道。
+
+在本节的最后一章，我们会来看**模型优化**——如何重写网络本身，让它更高效。
+
+xref:ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc[上一篇：厂商专属优化：榨干最后一滴性能] | xref:ML_Inference/Advanced_Topics/05_model_optimization.adoc[下一篇：模型优化技术：超越代码]

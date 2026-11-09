@@ -1,0 +1,30 @@
+{
+  "id": "b031",
+  "words": 5279,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc",
+      "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc",
+      "words": 1222,
+      "title": "Shape Key Ingestion: Parsing Morph Targets from glTF"
+    },
+    {
+      "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc",
+      "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc",
+      "words": 1911,
+      "title": "Bindless Morph Buffers & Compute Integration"
+    },
+    {
+      "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc",
+      "words": 758,
+      "title": "Morph Targets: Summary & What's Next"
+    },
+    {
+      "source": "en/Advanced_glTF/Physics_Integration/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Physics_Integration/01_introduction.adoc",
+      "words": 1388,
+      "title": "Physics Integration: Colliders & Ragdolls"
+    }
+  ]
+}

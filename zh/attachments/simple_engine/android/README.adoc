@@ -1,0 +1,52 @@
+= Vulkan 游戏引擎教程的 Android 项目
+
+这个 Android 项目让你能在 Android 上运行游戏引擎的示例代码。
+它演示了如何用同一套代码库，在桌面与移动环境中维护一个并不简单的项目。
+
+== 项目概览
+
+Vulkan 游戏引擎教程是一个综合性的学习项目，展示如何使用 Vulkan API 进行现代图形编程。
+这个 Android 移植版本让同一套引擎代码能够在移动设备上运行，演示了跨平台开发实践。
+
+== 前置条件
+
+* Android Studio 4.2 或更高版本
+* Android NDK r21 或更高版本
+* CMake 3.10+
+* Vulkan SDK
+* 支持 Vulkan 的 Android 设备（Android 7.0+）
+
+== 构建与运行
+
+1. 在 Android Studio 中打开项目
+2. 同步 Gradle 文件
+3. 构建项目
+4. 在你的 Android 设备或模拟器上运行
+
+== 项目结构
+
+* `app/` —— Android 专属代码与资源
+* `src/` —— 共享的 C++ 引擎代码
+* `assets/` —— 共享的游戏资产与着色器（由 Gradle 自动复制）
+** `models/` —— GLTF/GLB 模型文件
+** `shaders/` —— 编译后的 SPIR-V 着色器文件
+** `textures/` —— 纹理资产
+* `CMake/` —— 构建配置文件
+
+== 资产管理
+
+项目使用 Gradle 自动处理资产的部署。
+把你的资产放在以下源位置：
+
+* 源资产位置：`<project_root>/assets/`
+* Gradle 会自动把资产复制到：`app/src/main/assets/`
+* 构建期间资产改动会被同步
+
+== 关键组成部分
+
+* 支持 GLTF 模型加载
+* 跨平台渲染管线
+* 使用 nlohmann_json 的 JSON 配置
+* 由 Gradle 自动化的统一资产管理系统
+
+项目演示了专业级的技术：维护单一代码库，同时面向桌面和移动平台，并利用现代 C++20 特性与 Vulkan 的跨平台能力。

@@ -1,0 +1,65 @@
+:pp: {plus}{plus}
+
+= 高级 Vulkan 计算：并行之力
+
+== 简介
+
+欢迎来到「高级 Vulkan 计算」教程系列！本系列面向已经掌握 Vulkan 计算着色器基础、并想推动现代 GPU 硬件能力边界的开发者。
+
+Vulkan 不只是一个图形 API；它是一个用于通用 GPU 编程（GPGPU）的强大底层框架。入门教程讲的是如何派发一个简单的计算着色器，而本系列会深入架构、内存模型和各种高级特性，正是它们支撑起高性能模拟、复杂数据结构和异构执行。
+
+=== 超越基础
+
+在基础的计算着色器里，你可能只是把一组浮点数相乘。而在高级计算里，你是在：
+
+*   **编排数千个线程**，让它们协作解决同一个问题。
+*   **管理内存一致性**，确保一个线程写入的数据能被另一个线程安全读取。
+*   **利用专用硬件**，比如子组洗牌和协作矩阵，绕过缓慢的 **VRAM**（Video Random Access Memory）。
+*   **构建驻留 GPU 的数据结构**，比如 **BVH**（Bounding Volume Hierarchies，包围体层次结构）和八叉树，它们完全不需要触碰 CPU。
+
+要高效地做到这些，你需要的不仅是对 GLSL 或 Slang 的一知半解；你需要理解底层硬件架构和 Vulkan 执行模型。
+
+=== 你将学到什么
+
+本教程系列分为几个关键部分：
+
+1.  **计算架构**：把工作组映射到计算单元（CU）和流式多处理器（SM），并掌握占用率。
+2.  **内存模型与一致性**：理解 Vulkan 内存模型、共享内存（**LDS**，本地数据存储）和细粒度同步。
+3.  **子组操作**：用跨调用通信避免 VRAM 往返，最大化 **SIMD**（单指令多数据）吞吐量。
+4.  **异构生态**：用 `clspv`（AOT 编译器）和 `clvk`（在 Vulkan 之上分层的合规 OpenCL 3.0 运行时）在 Vulkan 上运行遗留 OpenCL C。
+5.  **高级数据结构**：用 64 位原子操作和 **BDA**（缓冲区设备地址）把树和链表这类复杂结构整体搬到 GPU 上。
+6.  **GPU 驱动管线**：把命令生成和工作负载管理完全交给 GPU，实现自主执行。
+7.  **异步编排**：用 Synchronization 2 和多个硬件队列让计算与图形并发运行。
+8.  **高级数学与优化**：用协作矩阵做线性代数，并审计内核的分支发散和吞吐量。
+9.  **移动与嵌入式计算**：在 Android 和嵌入式设备上运行计算，为功耗与带宽做优化，并走出手机、走向无头。
+
+=== 前置要求
+
+本系列假定你熟悉：
+
+*   标准的 Vulkan 初始化（实例、设备、队列）。
+*   基础的计算管线和描述符集。
+*   C{pp}20 以及 GLSL/Slang 着色器语言。
+*   主教程 xref:11_Compute_Shader.adoc[计算着色器] 一章中讲过的概念。
+
+=== 如何使用本教程
+
+每一章都自成体系，同时建立在前几章的概念之上。如果你是高级计算的新手，建议按顺序阅读；如果你要解决某个具体问题，也可以直接跳到相应章节。
+
+让我们一头扎进高性能 GPU 计算的世界吧！
+
+== 章节
+
+* xref:Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc[计算架构与执行模型：简介]
+* xref:Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc[内存模型与一致性：简介]
+* xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc[子组操作：隐藏的力量]
+* xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc[异构生态：Vulkan 上的 OpenCL]
+* xref:Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc[GPU 上的高级数据结构]
+* xref:Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc[间接派发与 GPU 驱动管线]
+* xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc[异步计算编排]
+* xref:Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc[协作矩阵与专用数学]
+* xref:Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc[性能审计与优化]
+* xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc[诊断与 AI 辅助计算优化：简介]
+* xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc[移动与嵌入式计算：简介]
+
+xref:11_Compute_Shader.adoc[上一篇：计算着色器] | xref:Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc[下一篇：计算架构与执行模型：简介]

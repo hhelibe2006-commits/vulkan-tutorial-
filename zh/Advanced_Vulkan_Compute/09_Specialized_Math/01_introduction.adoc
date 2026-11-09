@@ -1,0 +1,12 @@
+:pp: {plus}{plus}
+= 协作矩阵与专用数学
+
+前面几章我们看了如何高效地搬运数据，以及如何编排复杂的工作负载。但如果工作负载本身就是计算密集型的呢？很长一段时间里，GPU 计算几乎等同于浮点运算（FP32）。然而现代硬件已经进化出专为某一类特定工作而设计的单元：高速线性代数。
+
+这就是**协作矩阵**的世界。你可能听说过 NVIDIA 的「Tensor Core」或 AMD 的「Matrix Core」，而 Vulkan 通过 `VK_KHR_cooperative_matrix` 扩展（现已成为 Vulkan 1.4 的一部分）为这些专用单元提供了厂商中立的抽象。这些单元不只用于机器学习；对于任何涉及大量矩阵乘法与累加的任务（即 **GEMM**——通用矩阵乘法——运算），它们都强大得惊人。
+
+无论你是在构建需要求解大型线性方程组的流体模拟，还是在构建依赖复杂变换的信号处理管线，协作矩阵都能带来巨大的吞吐量提升。通过在硬件的专用单元里直接执行小规模矩阵乘法，你能获得远超标准计算着色器循环的性能。
+
+本章我们将深入这些专用数学单元的工作原理。我们会探索如何在 Slang 和 GLSL 中使用 `cooperative_matrix` 类型，也会看到如何利用**混合精度**——用 FP16 或 Int8 做计算，同时在关键之处保持精度。这不仅仅关乎速度，更关乎为高性能计算任务充分挖掘现代 GPU 硅片的潜力。
+
+xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc[上一节：队列优先级：管理延迟敏感型工作负载] | xref:Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc[下一节：使用协作矩阵]

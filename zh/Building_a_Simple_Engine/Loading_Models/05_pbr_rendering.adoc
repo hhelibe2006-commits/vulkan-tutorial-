@@ -1,0 +1,577 @@
+:pp: {plus}{plus}
+
+= 加载模型：为 glTF 模型实现 PBR
+
+== 将 PBR 应用于 glTF 模型
+
+=== 建立在已有 PBR 知识之上
+
+在 xref:Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc[光照与材质入门] 一章中，我们探讨了基于物理的渲染（PBR）的基础，包括它的核心原理、BRDF 以及材质属性。现在，我们就用这些知识为已加载的 glTF 模型实现一条 PBR 管线。
+
+正如我们在 xref:15_GLTF_KTX2_Migration.adoc[迁移到现代资产格式：glTF 与 KTX2] 一章中学到的，glTF 的材质系统采用金属度-粗糙度工作流的 PBR。这与我们已经掌握的 PBR 概念完全吻合，因此用物理上准确的光照渲染 glTF 模型就很直接了。
+
+=== 利用 glTF 的 PBR 材质
+
+glTF 格式已经包含了 PBR 所需的全部材质属性：
+
+* *基础颜色*：由 baseColorFactor 与 baseColorTexture 定义
+* *金属度与粗糙度*：由 metallicFactor、roughnessFactor 与 metallicRoughnessTexture 定义
+* *法线贴图*：在不增加几何体的情况下表现表面细节
+* *遮蔽贴图*：用于近似环境光遮蔽
+* *自发光贴图*：用于表现材质中自发光的部位
+
+直接使用这些属性，我们就能确保渲染结果符合美术的意图，并产生物理上准确的结果。
+
+=== 在引擎中实现 PBR
+
+既然已经理解了 PBR 背后的理论，我们就来在引擎中实现它。我们会在上一章从 glTF 文件加载的材质数据基础上继续构建。
+
+==== PBR 的统一缓冲区
+
+我们需要扩展统一缓冲区，把 PBR 参数加进去：
+
+[source,cpp]
+----
+// Structure for uniform buffer object
+struct UniformBufferObject {
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
+
+    // PBR parameters
+    alignas(16) glm::vec4 lightPositions[4];  // Position and radius
+    alignas(16) glm::vec4 lightColors[4];     // RGB color and intensity
+    alignas(16) glm::vec4 camPos;             // Camera position for view-dependent effects
+    alignas(4) float exposure = 4.5f;         // Exposure for HDR rendering
+    alignas(4) float gamma = 2.2f;            // Gamma correction value
+    alignas(4) float prefilteredCubeMipLevels = 1.0f;  // For image-based lighting
+    alignas(4) float scaleIBLAmbient = 1.0f;  // Scale factor for ambient lighting
+};
+----
+
+这个统一缓冲区包含：
+
+1. *标准变换矩阵*：用于顶点变换的模型、视图与投影矩阵
+2. *光源信息*：最多四个光源的位置与颜色
+3. *相机位置*：菲涅耳等依赖视角的效应需要它
+4. *渲染参数*：曝光、gamma 以及其他后处理用的值
+5. *基于图像的光照参数*：用于环境反射（我们会在后面的章节介绍）
+
+==== 材质的推送常量
+
+[NOTE]
+====
+我们前面在 xref:Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc[推送常量] 中介绍过推送常量；这里我们关注的是同一机制如何在每次绘制时高效地携带 glTF 金属度-粗糙度材质的各项旋钮。
+====
+
+我们会用 link:https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#descriptorsets-pushconstant[推送常量] 把材质属性传给着色器：
+
+[source,cpp]
+----
+// Structure for push constants
+struct PushConstantBlock {
+    glm::vec4 baseColorFactor;            // RGB base color and alpha
+    float metallicFactor;                 // How metallic the surface is
+    float roughnessFactor;                // How rough the surface is
+    int baseColorTextureSet;              // Texture coordinate set for base color
+    int physicalDescriptorTextureSet;     // Texture coordinate set for metallic-roughness
+    int normalTextureSet;                 // Texture coordinate set for normal map
+    int occlusionTextureSet;              // Texture coordinate set for occlusion
+    int emissiveTextureSet;               // Texture coordinate set for emission
+    float alphaMask;                      // Whether to use alpha masking
+    float alphaMaskCutoff;                // Alpha threshold for masking
+};
+----
+
+推送常量非常适合用来传递材质属性，原因如下：
+
+* 它们可以在绘制调用之间快速更新
+* 它们不需要描述符集
+* 它们非常适合材质属性这类逐对象数据
+
+==== 设置描述符集
+
+要实现 PBR，我们需要为纹理和统一缓冲区设置描述符集：
+
+[source,cpp]
+----
+// Create descriptor set layout
+void createDescriptorSetLayout() {
+    // Binding for uniform buffer
+    vk::DescriptorSetLayoutBinding uboBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
+    };
+
+    // Bindings for textures
+    std::array<vk::DescriptorSetLayoutBinding, 5> textureBindings{};
+
+    // Base color texture
+    textureBindings[0].binding = 1;
+    textureBindings[0].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    textureBindings[0].descriptorCount = 1;
+    textureBindings[0].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Metallic-roughness texture
+    textureBindings[1].binding = 2;
+    textureBindings[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    textureBindings[1].descriptorCount = 1;
+    textureBindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Normal map
+    textureBindings[2].binding = 3;
+    textureBindings[2].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    textureBindings[2].descriptorCount = 1;
+    textureBindings[2].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Occlusion map
+    textureBindings[3].binding = 4;
+    textureBindings[3].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    textureBindings[3].descriptorCount = 1;
+    textureBindings[3].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Emissive map
+    textureBindings[4].binding = 5;
+    textureBindings[4].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    textureBindings[4].descriptorCount = 1;
+    textureBindings[4].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Combine all bindings
+    std::array<vk::DescriptorSetLayoutBinding, 6> bindings = {
+        uboBinding,
+        textureBindings[0],
+        textureBindings[1],
+        textureBindings[2],
+        textureBindings[3],
+        textureBindings[4]
+    };
+
+    // Create the descriptor set layout
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
+        .pBindings = bindings.data()
+    };
+
+    descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+}
+----
+
+==== 设置管线
+
+我们的 PBR 管线需要针对基于物理的渲染的具体要求进行配置：
+
+[source,cpp]
+----
+void createPipeline() {
+    // ... (standard pipeline setup code)
+
+    // Enable alpha blending
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+        .blendEnable = vk::True,
+        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+        .colorBlendOp = vk::BlendOp::eAdd,
+        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+        .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+        .alphaBlendOp = vk::BlendOp::eAdd,
+        .colorWriteMask =
+            vk::ColorComponentFlagBits::eR |
+            vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB |
+            vk::ColorComponentFlagBits::eA
+    };
+
+    // Set up push constants for material properties
+    vk::PushConstantRange pushConstantRange{
+        .stageFlags = vk::ShaderStageFlagBits::eFragment,
+        .offset = 0,
+        .size = sizeof(PushConstantBlock)
+    };
+
+    // Create the pipeline layout
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptorSetLayout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pushConstantRange
+    };
+
+    pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+    // ... (rest of pipeline creation)
+}
+----
+
+=== PBR 着色器实现
+
+PBR 实现的核心在片元着色器里。下面是用 Slang 编写的 PBR 片元着色器的简化版本：
+
+[source,slang]
+----
+
+// Input from vertex shader
+struct VSOutput {
+    float3 WorldPos : POSITION;  // Automatically assigned to location 0
+    float3 Normal : NORMAL;      // Automatically assigned to location 1
+    float2 UV : TEXCOORD0;       // Automatically assigned to location 2
+    float4 Tangent : TANGENT;    // Automatically assigned to location 3
+};
+
+// Uniform buffer
+struct UniformBufferObject {
+    float4x4 model;
+    float4x4 view;
+    float4x4 proj;
+    float4 lightPositions[4];
+    float4 lightColors[4];
+    float4 camPos;
+    float exposure;
+    float gamma;
+    float prefilteredCubeMipLevels;
+    float scaleIBLAmbient;
+};
+
+// Push constants for material properties
+struct PushConstants {
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    int baseColorTextureSet;
+    int physicalDescriptorTextureSet;
+    int normalTextureSet;
+    int occlusionTextureSet;
+    int emissiveTextureSet;
+    float alphaMask;
+    float alphaMaskCutoff;
+};
+
+// Constants
+static const float PI = 3.14159265359;
+
+// Bindings
+ConstantBuffer<UniformBufferObject> ubo;
+Texture2D baseColorMap;
+SamplerState baseColorSampler;
+Texture2D metallicRoughnessMap;
+SamplerState metallicRoughnessSampler;
+Texture2D normalMap;
+SamplerState normalSampler;
+Texture2D occlusionMap;
+SamplerState occlusionSampler;
+Texture2D emissiveMap;
+SamplerState emissiveSampler;
+
+[[vk::push_constant]] PushConstants material;
+
+// PBR functions
+float DistributionGGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH2 = NdotH * NdotH;
+
+    float nom = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / denom;
+}
+
+float GeometrySmith(float NdotV, float NdotL, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+
+    float ggx1 = NdotV / (NdotV * (1.0 - k) + k);
+    float ggx2 = NdotL / (NdotL * (1.0 - k) + k);
+
+    return ggx1 * ggx2;
+}
+
+float3 FresnelSchlick(float cosTheta, float3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+// Main fragment shader function
+float4 main(VSOutput input) : SV_TARGET
+{
+    // Sample material textures
+    float4 baseColor = baseColorMap.Sample(baseColorSampler, input.UV) * material.baseColorFactor;
+    float2 metallicRoughness = metallicRoughnessMap.Sample(metallicRoughnessSampler, input.UV).bg;
+    float metallic = metallicRoughness.x * material.metallicFactor;
+    float roughness = metallicRoughness.y * material.roughnessFactor;
+    float ao = occlusionMap.Sample(occlusionSampler, input.UV).r;  // link:https://learnopengl.com/Advanced-Lighting/SSAO[Ambient occlusion]
+    float3 emissive = emissiveMap.Sample(emissiveSampler, input.UV).rgb;  // link:https://learnopengl.com/PBR/Lighting[Emissive lighting] (self-illumination)
+
+    // Calculate normal in link:https://learnopengl.com/Advanced-Lighting/Normal-Mapping[tangent space]
+    float3 N = normalize(input.Normal);
+    if (material.normalTextureSet >= 0) {
+        // Apply link:https://learnopengl.com/Advanced-Lighting/Normal-Mapping[normal mapping]
+        float3 tangentNormal = normalMap.Sample(normalSampler, input.UV).xyz * 2.0 - 1.0;
+        float3 T = normalize(input.Tangent.xyz);
+        float3 B = normalize(cross(N, T)) * input.Tangent.w;
+        float3x3 TBN = float3x3(T, B, N);
+        N = normalize(mul(tangentNormal, TBN));
+    }
+
+    // Calculate view and reflection vectors
+    float3 V = normalize(ubo.camPos.xyz - input.WorldPos);
+    float3 R = reflect(-V, N);
+
+    // Calculate F0 (base reflectivity)
+    float3 F0 = float3(0.04, 0.04, 0.04);
+    F0 = lerp(F0, baseColor.rgb, metallic);
+
+    // Initialize lighting
+    float3 Lo = float3(0.0, 0.0, 0.0);
+
+    // Calculate lighting for each light
+    for (int i = 0; i < 4; i++) {
+        float3 lightPos = ubo.lightPositions[i].xyz;
+        float3 lightColor = ubo.lightColors[i].rgb;
+
+        // Calculate light direction and distance
+        float3 L = normalize(lightPos - input.WorldPos);
+        float distance = length(lightPos - input.WorldPos);
+        float attenuation = 1.0 / (distance * distance);
+        float3 radiance = lightColor * attenuation;
+
+        // Calculate half vector (the normalized vector halfway between view and light direction)
+        // Used in link:https://en.wikipedia.org/wiki/Blinn%E2%80%93Phong_reflection_model[Blinn-Phong] and PBR models
+        float3 H = normalize(V + L);
+
+        // Calculate BRDF terms
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotV = max(dot(N, V), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+        float HdotV = max(dot(H, V), 0.0);
+
+        // Specular BRDF
+        float D = DistributionGGX(NdotH, roughness);
+        float G = GeometrySmith(NdotV, NdotL, roughness);
+        float3 F = FresnelSchlick(HdotV, F0);
+
+        float3 numerator = D * G * F;
+        float denominator = 4.0 * NdotV * NdotL + 0.0001;
+        float3 specular = numerator / denominator;
+
+        // link:https://learnopengl.com/PBR/Theory[Energy conservation]
+        float3 kS = F;
+        float3 kD = float3(1.0, 1.0, 1.0) - kS;
+        kD *= 1.0 - metallic;
+
+        // Add to outgoing radiance
+        Lo += (kD * baseColor.rgb / PI + specular) * radiance * NdotL;
+    }
+
+    // Add ambient and emissive
+    float3 ambient = float3(0.03, 0.03, 0.03) * baseColor.rgb * ao;
+    float3 color = ambient + Lo + emissive;
+
+    // link:https://en.wikipedia.org/wiki/High-dynamic-range_rendering[HDR] link:https://en.wikipedia.org/wiki/Tone_mapping[tonemapping] and link:https://en.wikipedia.org/wiki/Gamma_correction[gamma correction]
+    color = color / (color + float3(1.0, 1.0, 1.0));
+    color = pow(color, float3(1.0 / ubo.gamma, 1.0 / ubo.gamma, 1.0 / ubo.gamma));
+
+    return float4(color, baseColor.a);
+}
+----
+
+这个着色器实现了 PBR 光照模型的核心，包括：
+
+* 采样材质纹理
+* 计算法线映射
+* 计算包含 D、F、G 项的镜面 BRDF
+* 应用能量守恒
+* 处理多个光源
+* 色调映射与 gamma 校正
+
+==== PBR 的光照设置
+
+要获得真实的效果，PBR 需要仔细设置光源。下面是我们可以在应用中设置光源的方式：
+
+[source,cpp]
+----
+void setupLights() {
+    // Set up four lights with different positions and colors
+    std::array<glm::vec4, 4> lightPositions = {
+        glm::vec4(-10.0f, 10.0f, 10.0f, 1.0f),
+        glm::vec4(10.0f, 10.0f, 10.0f, 1.0f),
+        glm::vec4(-10.0f, -10.0f, 10.0f, 1.0f),
+        glm::vec4(10.0f, -10.0f, 10.0f, 1.0f)
+    };
+
+    std::array<glm::vec4, 4> lightColors = {
+        glm::vec4(300.0f, 300.0f, 300.0f, 1.0f),  // White
+        glm::vec4(300.0f, 300.0f, 0.0f, 1.0f),    // Yellow
+        glm::vec4(0.0f, 0.0f, 300.0f, 1.0f),      // Blue
+        glm::vec4(300.0f, 0.0f, 0.0f, 1.0f)       // Red
+    };
+
+    // Update uniform buffer with light data
+    for (size_t i = 0; i < maxConcurrentFrames; i++) {
+        UniformBufferObject ubo{};
+        // ... (set up transformation matrices)
+
+        // Set light positions and colors
+        for (int j = 0; j < 4; j++) {
+            ubo.lightPositions[j] = lightPositions[j];
+            ubo.lightColors[j] = lightColors[j];
+        }
+
+        // Set camera position for view-dependent effects
+        ubo.camPos = glm::vec4(camera.getPosition(), 1.0f);
+
+        // Set other PBR parameters
+        ubo.exposure = 4.5f;
+        ubo.gamma = 2.2f;
+
+        // Copy to uniform buffer (per frame-in-flight)
+        memcpy(uniformBuffers[i].mapped, &ubo, sizeof(ubo));
+    }
+}
+----
+
+==== 为 PBR 集成相机
+
+PBR 依赖菲涅耳效应这类与视角相关的效果，因此我们需要把相机系统集成进来：
+
+[source,cpp]
+----
+void updateUniformBuffer(uint32_t currentFrame) {
+    UniformBufferObject ubo{};
+
+    // Update transformation matrices
+    ubo.model = glm::mat4(1.0f);  // Or get from the model's node
+    ubo.view = camera.getViewMatrix();
+    ubo.proj = camera.getProjectionMatrix(swapChainExtent.width / (float)swapChainExtent.height);
+
+    // Vulkan's Y coordinate is inverted compared to OpenGL
+    ubo.proj[1][1] *= -1;
+
+    // Update camera position for PBR calculations
+    ubo.camPos = glm::vec4(camera.getPosition(), 1.0f);
+
+    // ... (update other PBR parameters)
+
+    // Copy to uniform buffer (per frame-in-flight)
+    memcpy(uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+}
+----
+
+=== 用 PBR 渲染模型
+
+最后，我们把所有内容整合起来，用 PBR 渲染模型：
+
+[source,cpp]
+----
+void drawModel(vk::raii::CommandBuffer& commandBuffer, Model* model) {
+    // Bind descriptor set with uniform buffer and textures
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        pipelineLayout,
+        0,
+        1,
+        &descriptorSets[currentFrame],
+        0,
+        nullptr
+    );
+
+    // Traverse the model's scene graph
+    for (auto& node : model->linearNodes) {
+        if (node->mesh.indices.size() > 0) {
+            // Get the global transformation matrix
+            glm::mat4 nodeMatrix = node->getGlobalMatrix();
+
+            // Update model matrix in uniform buffer
+            // (In a real implementation, we'd use a separate UBO for each model)
+
+            // Set up push constants for material properties
+            if (node->mesh.materialIndex >= 0) {
+                Material& mat = model->materials[node->mesh.materialIndex];
+
+                PushConstantBlock pushConstants{};
+                pushConstants.baseColorFactor = mat.baseColorFactor;
+                pushConstants.metallicFactor = mat.metallicFactor;
+                pushConstants.roughnessFactor = mat.roughnessFactor;
+                pushConstants.baseColorTextureSet = mat.baseColorTextureIndex;
+                pushConstants.physicalDescriptorTextureSet = mat.metallicRoughnessTextureIndex;
+                pushConstants.normalTextureSet = mat.normalTextureIndex;
+                pushConstants.occlusionTextureSet = mat.occlusionTextureIndex;
+                pushConstants.emissiveTextureSet = mat.emissiveTextureIndex;
+
+                commandBuffer.pushConstants(
+                    pipelineLayout,
+                    vk::ShaderStageFlagBits::eFragment,
+                    0,
+                    sizeof(PushConstantBlock),
+                    &pushConstants
+                );
+            }
+
+            // Bind vertex and index buffers
+            vk::Buffer vertexBuffers[] = {*node->mesh.vertexBuffer};
+            vk::DeviceSize offsets[] = {0};
+            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+            commandBuffer.bindIndexBuffer(*node->mesh.indexBuffer, 0, vk::IndexType::eUint32);
+
+            // Draw the mesh
+            commandBuffer.drawIndexed(
+                static_cast<uint32_t>(node->mesh.indices.size()),
+                1,
+                0,
+                0,
+                0
+            );
+        }
+    }
+}
+----
+
+=== 高级 PBR 技术
+
+我们已经介绍了 PBR 实现的基础，另外还有若干高级技术可以提升渲染的真实感：
+
+==== 基于图像的光照（IBL）
+
+link:https://learnopengl.com/PBR/IBL/Diffuse-irradiance[IBL] 使用环境贴图来模拟全局光照：
+* *漫反射 IBL*：使用 link:https://learnopengl.com/PBR/IBL/Diffuse-irradiance[辐照度贴图] 提供环境光照
+* *镜面 IBL*：使用 link:https://learnopengl.com/PBR/IBL/Specular-IBL[预滤波环境贴图] 与 link:https://learnopengl.com/PBR/IBL/Specular-IBL[BRDF 积分贴图] 实现反射
+
+==== 次表面散射
+
+对于皮肤、蜡或大理石这类光会穿透表面的材质：
+
+* link:https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-14-advanced-techniques-realistic-real-time-skin[模拟光在半透明材质内部如何散射]
+* 可以用次表面散射剖面之类的技术来近似
+
+==== 清漆层
+
+对于最上层带有一层薄而光亮涂层的材质：
+
+* link:https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_materials_clearcoat[汽车漆、清漆木材等]
+* 实现为额外的镜面波瓣
+
+==== 各向异性
+
+对于具有方向性反射的材质：
+
+* link:https://google.github.io/filament/Filament.html#materialsystem/anisotropicmodel[拉丝金属、毛发、织物等]
+* 需要额外的材质参数与经过修改的 BRDF
+
+=== 结论与下一步
+
+在本章中，我们运用光照与材质一章中的 PBR 知识，为 glTF 模型实现了一条 PBR 管线。我们学到了：
+
+* 如何利用 glTF 的材质属性进行 PBR 渲染
+* 如何为 PBR 参数设置统一缓冲区与推送常量
+* 如何实现能与 glTF 材质配合的 PBR 着色器
+* 如何让相机系统与 PBR 集成，以实现与视角相关的效果
+* 如何用物理上准确的光照渲染 glTF 模型
+
+这一实现让我们能用物理上准确的材质渲染上一章加载的 glTF 模型，从而在不同光照条件下都获得更真实、更一致的渲染结果。
+
+下一章中，我们会探讨如何渲染带有不同变换的多个对象，这样就能用具备 PBR 能力的引擎创建更复杂的场景。
+
+如果你想更深入地了解光照与材质，可以回到光照与材质一章，那里详细探讨了 PBR 背后的理论。
+
+xref:Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc[上一页：加载模型：理解 glTF] | xref:Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc[下一页：加载模型：管理多个对象]

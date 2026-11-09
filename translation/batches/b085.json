@@ -1,0 +1,18 @@
+{
+  "id": "b085",
+  "words": 5605,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc",
+      "words": 2390,
+      "title": "ONNX Runtime"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc",
+      "words": 3215,
+      "title": "TensorFlow Lite"
+    }
+  ]
+}

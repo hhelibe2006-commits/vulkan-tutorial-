@@ -1,0 +1,66 @@
+{
+  "id": "b026",
+  "words": 5372,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc",
+      "words": 358,
+      "title": "Indirect Dispatch and GPU-Driven Pipelines"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/02_indirect_dispatch.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/02_indirect_dispatch.adoc",
+      "words": 561,
+      "title": "Indirect Dispatch: Building Parameters on the GPU"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc",
+      "words": 381,
+      "title": "GPU-Side Command Generation: Autonomous Execution"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/04_multi_draw_indirect_mdi.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/04_multi_draw_indirect_mdi.adoc",
+      "words": 438,
+      "title": "Multi-Draw Indirect (MDI): Bridging Compute to Graphics"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc",
+      "words": 403,
+      "title": "Asynchronous Compute Orchestration"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc",
+      "words": 780,
+      "title": "Concurrent Execution and Synchronization 2"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc",
+      "words": 557,
+      "title": "Timeline Semaphores: Unified Synchronization"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc",
+      "words": 617,
+      "title": "Queue Priority: Managing Latency-Critical Workloads"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc",
+      "words": 264,
+      "title": "Cooperative Matrices and Specialized Math"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc",
+      "words": 1013,
+      "title": "Working with Cooperative Matrices"
+    }
+  ]
+}

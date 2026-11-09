@@ -1,0 +1,333 @@
+= 厂商专属优化：榨干最后一滴性能
+:pp: ++
+:stem: latexmath
+
+通用 Vulkan 计算着色器是「伟大的均衡器」——它们几乎能在任何现代 GPU 上运行。但在高风险的 ML 推理世界里，「能跑」还不够。你要的是统治级的表现。
+
+NVIDIA 有 **Tensor Core**，AMD 有 **AI 加速器**（WMMA），Intel 有 **XMX** 引擎。这些都是专用硬件模块，只为一件事而设计：以惊人的速度做矩阵乘法。如果你无视它们，就等于把 latexmath:[5\times] 到 latexmath:[10\times] 的性能白白扔在桌上。
+
+本章我们要学习如何编写**感知硬件的 Vulkan**。我们会探索「三大厂」的架构差异，并学习如何打通高层库用法（ONNX Runtime）与底层着色器工程之间的鸿沟。
+
+== 务实路线：库级别的硬件加速
+
+如果你在使用 ONNX Runtime（正如「桌面应用」一章所讲），可能会想：「我需要手写汇编才能用上 Tensor Core 吗？」
+
+答案是**不需要**。高层库被设计成通过**执行提供程序（EP）**自动检测并使用这类硬件。
+
+=== 1. WebGPU / DirectML（通用 Windows/Linux）
+当你使用 `webgpu` 或 `DirectML` 执行提供程序时，库会把你的模型节点翻译成**元命令**（Metacommands）。这些是由驱动程序提供的、预先编译好的、经厂商优化的 GPU 内核。
+
+*   **如何验证**：在 Windows 上，使用**任务管理器**或 **NVIDIA 控制面板**。如果在推理期间「Compute」或「Tensor」引擎占用飙升，而 3D 占用依然很低，就说明库成功绕开了通用图形单元。
+*   **调优**：你常常可以用环境变量强制某些行为。例如 `ORT_DIRECTML_DEVICE_ID` 可以选定某块 GPU，DirectML 本身也有内部标志在「性能」与「功耗」之间取舍。
+
+=== 2. CUDA / TensorRT（NVIDIA 专属）
+要在 NVIDIA 硬件上拿到绝对最高的性能，**TensorRT** 执行提供程序是王者。它不只是运行模型，而是针对你的具体 GPU 架构（例如 Ada Lovelace 与 Ampere）**编译**模型。
+
+*   **编译**：第一次用 TensorRT 跑某个模型时，它会停顿几分钟。它实际上是在你的这块芯片上测试不同的矩阵分块尺寸，找出吞吐量最高的那一个。
+*   **FP16/INT8**：要通过 TensorRT 使用 Tensor Core，你必须在 `SessionOptions` 中显式启用它们：
+[source,cpp]
+----
+Ort::SessionOptions options;
+OrtTensorRTProviderOptions trt_options;
+trt_options.device_id = 0;
+trt_options.trt_fp16_enable = 1; // Enables Tensor Cores
+trt_options.trt_int8_enable = 1; // Requires calibration data
+options.AppendExecutionProvider_TensorRT(trt_options);
+----
+
+== 芯片全景：矩阵数学单元
+
+要在着色器层面为某个厂商做优化（路线 2），你必须理解它的「矩阵单元」——那个在小矩阵块上执行融合乘加（latexmath:[D = A \times B + C]）的硬件模块。
+
+=== 1. NVIDIA（Tensor Core）
+自 **Volta** 架构以来，NVIDIA 的 SM（流式多处理器）中就包含了 Tensor Core。
+
+*   **单元**：Tensor Core 不处理单个数字，它处理**矩阵块**（通常是 16x16）。
+*   **工作方式**：**Warp**（32 个线程）中的线程协同工作。矩阵 latexmath:[A] 不是由某个线程加载的；它的各行被分配到全部 32 个线程上。Tensor Core 同时「伸进」warp 中所有线程的寄存器来完成乘法。
+
+.Warp 级矩阵协作
+image::images/ML_Inference/Advanced_Topics/coop_matrix_warp.svg[展示矩阵 A 与 B 在 GPU Warp 上的分布以实现硬件加速的示意图, 800]
+
+*   **瓶颈**：Tensor Core 太快了，以至于它们几乎总是**受内存限制**。如果你无法每隔几个时钟周期就喂给它们 16x16 的数据块，它们就会空转。这就是使用它们时**共享内存分块**（第 05 章）必不可少的原因。
+
+=== 2. AMD（WMMA - Wave Matrix Multiply-Accumulate）
+AI 加速器自 **RDNA3**（RX 7000 系列）引入。
+
+*   **单元**：WMMA 单元的设计目标是喂饱 AMD 宽大的 **SIMD 单元**。
+*   **工作方式**：与 NVIDIA 类似，但针对 AMD 的**波前**（32 或 64 个线程）做了优化。AMD 的架构高度依赖 **Infinity Cache** 来持续供给这些单元。
+*   **细微之处**：在 AMD 上，硬件常常支持不同的「Wave」尺寸（Wave32 与 Wave64）。如果你没有正确查询硬件限制，为 Wave32 编写的着色器在 Wave64 的卡上可能只跑出一半速度。
+
+=== 3. Intel（XMX - Xe Matrix Extensions）
+Intel 的 **Arc** GPU（Xe-HPG）搭载了消费市场上最激进的矩阵硬件之一。
+
+*   **单元**：每个 Xe-core 包含一个**脉动阵列**（Systolic Array）。
+*   **脉动流动**：标准的 GPU 线程要对寄存器读写，而脉动阵列把数据从一个处理单元直接传给相邻单元。可以想象一股数据的「脉冲」流过整个网格。
+*   **回报**：这能把「寄存器压力」降到最低，让 Intel GPU 在进行很深的矩阵计算时不必为内存停顿。Intel 的单元在 **INT8** 和 **BF16**（Brain Floating Point）精度上尤其高效。
+
+== 协作矩阵：通用快车道
+
+`VK_KHR_cooperative_matrix` 扩展是矩阵硬件的「标准库」。它提供的类型会被 Vulkan 编译器自动映射到正确的硬件单元（Tensor Core、WMMA 或 XMX）。
+
+=== 概念：不透明分块
+你不必再写嵌套的 `for` 循环，而是使用 `coopmat` 类型。`coopmat` 是**不透明**的——你并不知道哪个线程拥有哪个像素。最优映射由硬件决定。
+
+[source,glsl]
+----
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+
+// Define a matrix configuration
+// M, N, K are the tile dimensions (e.g., 16, 16, 16)
+layout(constant_id = 0) const uint M = 16;
+layout(constant_id = 1) const uint N = 16;
+layout(constant_id = 2) const uint K = 16;
+
+// Cooperative matrices for Subgroup scope (the 32/64 threads work together)
+coopmat<float16_t, gl_ScopeSubgroup, M, K, gl_MatrixUseA> matA;
+coopmat<float16_t, gl_ScopeSubgroup, K, N, gl_MatrixUseB> matB;
+coopmat<float32_t, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> matC;
+
+void main() {
+    // 1. Cooperative Load: Hardware-optimized memory fetch
+    // Stride is the number of elements between rows in VRAM.
+    // 'false' indicates the memory is not column-major.
+    coopMatLoad(matA, inputABuffer, indexA, strideA, false);
+    coopMatLoad(matB, inputBBuffer, indexB, strideB, false);
+
+    // 2. The Systolic Burst: Multiply-Add in one instruction
+    // This maps to 'hmma' on NVIDIA or 'v_wmma' on AMD.
+    matC = coopMatMulAdd(matA, matB, matC);
+
+    // 3. Store the result
+    coopMatStore(matC, outputBuffer, indexC, strideC, false);
+}
+----
+
+== 动手实践：查询并使用矩阵加速器
+
+协作矩阵是「不透明的」，因为它们的内部布局由硬件定义。要使用它们，你必须查询用户 GPU 支持的具体配置（M、N、K）。
+
+=== 阶段 1：启用扩展（C++）
+
+矩阵硬件需要在 Vulkan 初始化阶段显式激活。
+
+[source,cpp]
+----
+// 1. Instance Extensions
+// Usually none needed beyond standard Vulkan 1.2+
+
+// 2. Device Extensions
+std::vector<const char*> deviceExtensions = {
+    VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME,
+    VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME // Often needed for ML data types
+};
+
+// 3. Feature Activation
+VkPhysicalDeviceCooperativeMatrixFeaturesKHR matrixFeatures = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
+    .cooperativeMatrix = VK_TRUE, // Enable the actual hardware path
+    .cooperativeMatrixRobustness = VK_TRUE // Recommended for safety
+};
+
+// Pass matrixFeatures to your VkDeviceCreateInfo pNext chain
+----
+
+=== 阶段 2：查询硬件能力
+
+每块 GPU 支持的矩阵尺寸都不一样。RTX 4090 可能支持 16x16，而 AMD 的卡可能偏好 32x32。你必须在运行时查询。
+
+[source,cpp]
+----
+uint32_t propertyCount = 0;
+vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(gpu, &propertyCount, nullptr);
+
+std::vector<VkCooperativeMatrixPropertiesKHR> props(propertyCount);
+for(auto& p : props) p.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+
+vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(gpu, &propertyCount, props.data());
+
+// Filter for the configuration you want (e.g., float16 math)
+for (const auto& p : props) {
+    if (p.AType == VK_COMPONENT_TYPE_FLOAT16_KHR && p.scope == VK_SCOPE_SUBGROUP_KHR) {
+        std::cout << "Supported Tile: M=" << p.MSize << " N=" << p.NSize << " K=" << p.KSize << std::endl;
+        // Save these for Specialization Constants!
+    }
+}
+----
+
+=== 阶段 3：特化常量握手
+
+由于着色器需要在编译期就知道分块尺寸，以便分配寄存器，所以我们用**特化常量**把我们刚查询到的硬件数值传进去。
+
+[source,cpp]
+----
+// Map hardware M, N, K to specialization constants
+std::array<VkSpecializationMapEntry, 3> specMap;
+specMap[0] = { .constantID = 0, .offset = 0, .size = sizeof(uint32_t) }; // M
+specMap[1] = { .constantID = 1, .offset = 4, .size = sizeof(uint32_t) }; // N
+specMap[2] = { .constantID = 2, .offset = 8, .size = sizeof(uint32_t) }; // K
+
+uint32_t specData[] = { supportedM, supportedN, supportedK };
+
+VkSpecializationInfo specInfo = {
+    .mapEntryCount = 3, .pMapEntries = specMap.data(),
+    .dataSize = sizeof(specData), .pData = specData
+};
+
+// Pass specInfo to your VkComputePipelineCreateInfo
+----
+
+=== 阶段 4：派发编排
+
+使用协作矩阵时，你的派发必须按**子组**对齐。
+
+1.  **工作组尺寸**：把 `local_size_x` 设为 `subgroupSize`（例如 32）。
+2.  **网格维度**：用总矩阵尺寸除以硬件的分块尺寸（M、N）。
+    *   `dispatchX = totalN / supportedN;`
+    *   `dispatchY = totalM / supportedM;`
+
+== 掌控寄存器：隐藏的瓶颈
+
+在路线 2（自定义着色器）中，你最大的敌人不是代码逻辑——而是**寄存器压力**。
+
+=== 寄存器堆
+每个 GPU 计算单元都有一块固定的高速内存池，称为**寄存器堆**。
+
+*   如果你的着色器使用 **32 个寄存器**，GPU 可以同时启动 **2,048 个线程**（高占用率）。
+*   如果你的着色器使用 **128 个寄存器**（例如因为你有一个大的 `coopmat` 或大数组），GPU 只能启动 **512 个线程**（低占用率）。
+
+=== 占用率为何重要
+GPU 用线程来隐藏**内存延迟**。当一个线程在等待来自 VRAM 的数据时，GPU 会把它「换下」，换成另一个准备好计算的线程。
+
+*   **高占用率**：GPU 总有「新鲜」的线程可跑，硬件保持忙碌。
+*   **低占用率**：512 个线程全都在等 VRAM，GPU 计算单元空转。你被「寄存器限制」住了。
+
+=== 专业性能分析：「显微镜」
+要解决这个问题，你必须使用厂商专属的性能分析器：
+
+1.  **NVIDIA（Nsight Compute）**：查看「Register Pressure」指标。如果它显示「Spilling to Local Memory」，说明你的寄存器溢出到了缓慢的 VRAM。你必须缩小 `coopmat` 分块或简化循环。
+2.  **AMD（Radeon GPU Profiler）**：查看「Wavefront Occupancy」图表。如果每个 SIMD 的波前数低于 4，说明你的延迟隐藏不够有效。
+3.  **Intel（Graphics Performance Analyzers）**：检查「Stall Reason」。如果是「Register Dependency」，说明你的数学运算速度快过寄存器堆供数据的速度。
+
+== 子组混洗：不经过 VRAM 的通信
+
+即使你不做矩阵数学，也仍然可以通过**子组操作**为特定厂商做优化。它们允许子组内的线程**不碰共享内存或 L1 缓存**就共享数据。
+
+=== 「混洗」模式
+假设你在计算一个 **Softmax**。为了保证数值稳定性，你需要某一行的最大值。
+
+*   **朴素做法**：每个线程写入共享内存，调用 `barrier()`，然后由一个线程把它们全读出来。（延迟：40-100 个周期）。
+*   **硬件做法**：使用 `subgroupMax()`。
+
+[source,glsl]
+----
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+
+void main() {
+    float myVal = ...;
+    // The GPU hardware performs a reduction across all 32 threads
+    // in the register file.
+    float rowMax = subgroupMax(myVal);
+    // rowMax is now correct for ALL threads in the subgroup.
+}
+----
+这把延迟从 100 个周期降到 **1 个周期**。
+
+== 厂商差异：波前尺寸
+在厂商专属代码中，最大的障碍之一是**子组尺寸**。
+
+*   **NVIDIA**：永远是 32（Warp）。
+*   **Intel**：通常是 8、16 或 32，取决于着色器复杂度。
+*   **AMD**：可能是 32 或 64（Wave32 与 Wave64），取决于硬件世代。
+
+要写出健壮的厂商代码，你绝不能把 `32` 写死。始终查询 `gl_SubgroupSize`，或使用 Vulkan 提供的 `subgroupSize` 特化常量。如果你在 Wave64 的 AMD 卡上假设有 32 个线程，你就只处理了一半数据，另一半会变成未初始化的垃圾。
+
+== 多厂商调度器模式
+
+专业的推理引擎不应该有三个不同的应用。它应该只有一个应用，在运行时检测硬件并「替换」实现。
+
+[source,cpp]
+----
+class InferencePath {
+public:
+    virtual void dispatch(vk::CommandBuffer cmd) = 0;
+};
+
+// Implementation for NVIDIA Tensor Cores
+class NvidiaPath : public InferencePath { ... };
+
+// Implementation for AMD WMMA
+class AmdPath : public InferencePath { ... };
+
+// Implementation for Intel XMX
+class IntelPath : public InferencePath { ... };
+
+// Generic path using standard subgroups
+class GenericPath : public InferencePath { ... };
+
+// Helper to check for extension support
+bool supportsCoopMat(vk::PhysicalDevice gpu) {
+    auto extensions = gpu.enumerateDeviceExtensionProperties();
+    for (const auto& ext : extensions) {
+        if (std::string(ext.extensionName) == VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME) return true;
+    }
+    return false;
+}
+
+std::unique_ptr<InferencePath> selectOptimalPath(vk::PhysicalDevice gpu) {
+    auto props = gpu.getProperties();
+
+    // Check Vendor ID
+    if (props.vendorID == 0x10DE && supportsCoopMat(gpu)) {
+        return std::make_unique<NvidiaPath>();
+    }
+    if (props.vendorID == 0x1002 && supportsCoopMat(gpu)) {
+        return std::make_unique<AmdPath>();
+    }
+    if (props.vendorID == 0x8086 && supportsCoopMat(gpu)) {
+        return std::make_unique<IntelPath>();
+    }
+
+    return std::make_unique<GenericPath>();
+}
+----
+
+== 厂商专属性能概览
+
+选择精度时，你必须了解目标硬件的吞吐量比例。现代 GPU 严重偏向整数运算。下表中的数字代表标准矩阵乘法（GEMM）运算的峰值理论吞吐量。
+
+[options="header", cols="1,2,2,2"]
+|===
+| 精度 | NVIDIA（RTX 4090） | AMD（RX 7900 XTX） | Intel（Arc A770）
+| **FP32**  | 82.6 TFLOPS        | 61.3 TFLOPS        | 17.2 TFLOPS
+| **FP16**  | 330.3 TFLOPS (TC)  | 122.6 TFLOPS (WMMA)| 68.8 TFLOPS (XMX)
+| **INT8**  | 660.6 TOPS (TC)    | 245.2 TOPS (WMMA)  | 137.6 TOPS (XMX)
+|===
+
+**来源**：
+
+*   **NVIDIA**：link:https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/[RTX 4090 产品规格]（Tensor Core 吞吐量由峰值算力与稀疏比例推算）。
+*   **AMD**：link:https://www.amd.com/en/products/graphics/amd-radeon-rx-7900-xtx[AMD Radeon RX 7900 XTX 规格]（AI 加速器性能）。
+*   **Intel**：link:https://www.intel.com/content/www/us/en/products/sku/229151/intel-arc-a770-graphics-16gb/specifications.html[Intel Arc A770 规格]（XMX 吞吐量）。
+
+**洞察**：从 FP32 转向 INT8，你不只是在省内存；你是在接入一条在所有主流厂商上都**快 8 到 10 倍**的硬件路径。
+
+== 内存对齐：无声的性能杀手
+
+矩阵硬件对内存布局极其挑剔。如果你忽略这一点，驱动会静默地退回「慢路径」，你那 latexmath:[10\times] 的加速就消失了。
+
+1.  **缓冲区对齐**：NVIDIA Tensor Core 要求缓冲区起始地址以及每一行的「步长」都对齐到 **128 位（16 字节）**。
+2.  **分块策略**：始终尽量让矩阵维度是 16 的倍数。如果你的层是 100x100，就用零把它「填充」到 112x112。硬件数学快到这样一种程度：多算这 12 行零，比跑一个未对齐的 100x100 内核还快。
+
+== 小结：硬件精通清单
+
+1.  **库路线**：配置 `SessionOptions`，启用 `trt_fp16_enable` 或 `webgpu` 提供程序。
+2.  **查询**：用 `vkGetPhysicalDeviceProperties2` 检查 `VkPhysicalDeviceCooperativeMatrixPropertiesKHR`。
+3.  **分块**：把 ML 层对齐到 16x16 或 32x32 的块，以匹配硬件矩阵单元。
+4.  **协作矩阵**：用 `coopMatMulAdd` 替换内层循环，获得 latexmath:[5\text{--}10\times] 的提升。
+5.  **子组**：所有线程间通信都使用 `subgroupMax`、`subgroupSum` 和 `subgroupShuffle`。
+6.  **对齐**：确保所有缓冲区步长都是 16 字节对齐，以启用**合并内存访问**。
+
+下一章，我们来看最后一个硬件约束：**内存管理**。我们会学习如何用专业的池化与流式加载技术，把 10GB 的庞大模型塞进 4GB 的 GPU 内存。
+
+xref:ML_Inference/Advanced_Topics/02_quantization_strategies.adoc[上一篇：量化策略：精通比特预算] | xref:ML_Inference/Advanced_Topics/04_memory_management.adoc[下一篇：高级内存管理：突破内存墙]

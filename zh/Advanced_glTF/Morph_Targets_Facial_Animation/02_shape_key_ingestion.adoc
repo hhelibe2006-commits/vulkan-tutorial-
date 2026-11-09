@@ -1,0 +1,227 @@
+:pp: {plus}{plus}
+= 形态键导入：从 glTF 解析形变目标
+
+== 稀疏访问器问题
+
+当你从 Blender 导出一个带 60 个形变目标的角色，并打开生成的 glTF 文件时，你可能会注意到位移数组远比你预期的小。一个 5 万顶点的面部网格配上一个「微笑」形变目标，可能只生成含 800 个条目的位移缓冲区，而不是 50,000 个。这是因为 glTF 支持**稀疏访问器**（sparse accessor）：一种只存储数组中与默认值不同的条目的方式（此处的默认值是零向量，因为在给定形变目标中不移动的顶点位移为零）。
+
+理解稀疏访问器至关重要，因为 tinygltf 不会自动为你展开它们——你收到的是原始稀疏数据，需要自己构建完整的稠密数组。glTF 中的稀疏访问器结构有三个组成部分：一个 count（概念数组中的元素数量）、一个 indices 子访问器（具有非默认值的元素索引列表），以及一个 values 子访问器（对应的非默认值，顺序与索引一致）。要重建完整数组，你先分配一个大小为 `count` 的零初始化缓冲区，然后把值散布到索引指示的位置。
+
+让我们实际看看。在 tinygltf 中，加载模型后，每个网格图元的 `targets` 数组为每个形变目标保存一个条目。每个条目是一个从属性名（例如 `"POSITION"`、`"NORMAL"`）到访问器索引的映射。我们需要仔细遍历这个结构：
+
+[source,cpp]
+----
+struct MorphTargetData {
+    std::string              name;            // From mesh's target names, if present
+    std::vector<glm::vec3>   position_deltas; // Size = vertex count; zero where unchanged
+    std::vector<glm::vec3>   normal_deltas;   // May be empty if no normal targets
+    VkBuffer                 gpu_buffer     = VK_NULL_HANDLE;
+    VmaAllocation            gpu_allocation = VK_NULL_HANDLE;
+};
+
+// Expand a potentially-sparse accessor into a dense vector of vec3.
+// Returns a vector of 'vertex_count' elements.
+static std::vector<glm::vec3> expand_sparse_accessor(
+    const tinygltf::Model&    model,
+    int                       accessor_index,
+    uint32_t                  vertex_count)
+{
+    std::vector<glm::vec3> result(vertex_count, glm::vec3(0.0f));
+    if (accessor_index < 0) return result;
+
+    const tinygltf::Accessor& accessor = model.accessors[accessor_index];
+
+    if (!accessor.sparse.isSparse) {
+        // Dense accessor: read all values directly
+        const tinygltf::BufferView& view = model.bufferViews[accessor.bufferView];
+        const uint8_t* data = model.buffers[view.buffer].data.data()
+                            + view.byteOffset
+                            + accessor.byteOffset;
+        const int stride = accessor.ByteStride(view) > 0
+                         ? accessor.ByteStride(view)
+                         : sizeof(glm::vec3);
+
+        for (uint32_t i = 0; i < static_cast<uint32_t>(accessor.count); ++i) {
+            std::memcpy(&result[i], data + i * stride, sizeof(glm::vec3));
+        }
+    } else {
+        // Sparse accessor: first read the index list, then scatter values
+        const tinygltf::AccessorSparse& sparse = accessor.sparse;
+
+        // Read the indices (which vertices are non-zero)
+        std::vector<uint32_t> indices(sparse.count);
+        {
+            const tinygltf::BufferView& idx_view =
+                model.bufferViews[sparse.indices.bufferView];
+            const uint8_t* idx_data = model.buffers[idx_view.buffer].data.data()
+                                    + idx_view.byteOffset
+                                    + sparse.indices.byteOffset;
+
+            for (int i = 0; i < sparse.count; ++i) {
+                // glTF sparse indices can be UNSIGNED_BYTE, UNSIGNED_SHORT, or UNSIGNED_INT
+                switch (sparse.indices.componentType) {
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                        indices[i] = idx_data[i];
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        indices[i] = reinterpret_cast<const uint16_t*>(idx_data)[i];
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        indices[i] = reinterpret_cast<const uint32_t*>(idx_data)[i];
+                        break;
+                }
+            }
+        }
+
+        // Read the displacement values and scatter into result
+        {
+            const tinygltf::BufferView& val_view =
+                model.bufferViews[sparse.values.bufferView];
+            const uint8_t* val_data = model.buffers[val_view.buffer].data.data()
+                                    + val_view.byteOffset
+                                    + sparse.values.byteOffset;
+
+            for (int i = 0; i < sparse.count; ++i) {
+                uint32_t vertex_idx = indices[i];
+                if (vertex_idx < vertex_count) {
+                    std::memcpy(&result[vertex_idx],
+                                val_data + i * sizeof(glm::vec3),
+                                sizeof(glm::vec3));
+                }
+            }
+        }
+    }
+
+    return result;
+}
+----
+
+对索引分量类型的 switch 语句很重要——不要假设所有 glTF 导出器都使用相同的索引宽度。Blender 对顶点数少于 65,536 的网格通常使用 `UNSIGNED_SHORT`，但其他导出器可能默认使用 `UNSIGNED_INT`。
+
+== 读取形变目标名称
+
+glTF 允许（但不要求）把形变目标名称以 JSON 数组的形式存放在网格的 `extras` 字段中。Blender 就是这样导出的，键为 `"targetNames"`。这些名称很重要：你之后会用它们把动画通道（通过索引引用形变目标）映射为便于调试的可读名称，并把口型同步事件连接到正确的形变目标。
+
+[source,cpp]
+----
+std::vector<std::string> read_morph_target_names(const tinygltf::Mesh& mesh)
+{
+    std::vector<std::string> names;
+    if (!mesh.extras.Has("targetNames")) return names;
+
+    const tinygltf::Value& target_names = mesh.extras.Get("targetNames");
+    for (int i = 0; i < static_cast<int>(target_names.ArrayLen()); ++i) {
+        names.push_back(target_names.Get(i).Get<std::string>());
+    }
+    return names;
+}
+----
+
+== 为网格加载全部形变目标
+
+有了稀疏访问器展开与名称读取，我们就可以编写顶层函数，为一个网格图元加载全部形变目标：
+
+[source,cpp]
+----
+std::vector<MorphTargetData> load_morph_targets(
+    const tinygltf::Model&     model,
+    const tinygltf::Primitive& primitive,
+    const tinygltf::Mesh&      mesh,
+    uint32_t                   vertex_count)
+{
+    std::vector<MorphTargetData> targets;
+    std::vector<std::string>     names = read_morph_target_names(mesh);
+
+    for (size_t t = 0; t < primitive.targets.size(); ++t) {
+        MorphTargetData data;
+        data.name = (t < names.size()) ? names[t] : ("target_" + std::to_string(t));
+
+        // Position displacements are required; normals are optional
+        auto pos_it = primitive.targets[t].find("POSITION");
+        if (pos_it != primitive.targets[t].end()) {
+            data.position_deltas = expand_sparse_accessor(
+                model, pos_it->second, vertex_count);
+        } else {
+            data.position_deltas.assign(vertex_count, glm::vec3(0.0f));
+        }
+
+        auto nrm_it = primitive.targets[t].find("NORMAL");
+        if (nrm_it != primitive.targets[t].end()) {
+            data.normal_deltas = expand_sparse_accessor(
+                model, nrm_it->second, vertex_count);
+        }
+
+        targets.push_back(std::move(data));
+    }
+
+    return targets;
+}
+----
+
+== 上传到 GPU
+
+一旦 CPU 上有了形变目标数据，我们就把每个目标的位移数组上传到专用的 GPU 缓冲区。由于我们计划使用无绑定访问，不需要把所有目标打包进单个缓冲区——每个目标得到自己的 `VkBuffer`，我们保存缓冲区地址（或描述符索引）供之后着色器使用。
+
+[source,cpp]
+----
+void upload_morph_target_to_gpu(
+    VmaAllocator    allocator,
+    VkDevice        device,
+    VkCommandBuffer cmd,
+    MorphTargetData& target)
+{
+    VkDeviceSize buffer_size =
+        target.position_deltas.size() * sizeof(glm::vec3);
+
+    // Create a host-visible staging buffer
+    VkBuffer      staging_buf;
+    VmaAllocation staging_alloc;
+    create_buffer(allocator,
+                  buffer_size,
+                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VMA_MEMORY_USAGE_CPU_TO_GPU,
+                  staging_buf, staging_alloc);
+
+    void* mapped;
+    vmaMapMemory(allocator, staging_alloc, &mapped);
+    std::memcpy(mapped, target.position_deltas.data(), buffer_size);
+    vmaUnmapMemory(allocator, staging_alloc);
+
+    // Create the device-local GPU buffer
+    create_buffer(allocator,
+                  buffer_size,
+                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                  VK_BUFFER_USAGE_TRANSFER_DST_BIT   |
+                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                  VMA_MEMORY_USAGE_GPU_ONLY,
+                  target.gpu_buffer, target.gpu_allocation);
+
+    // Copy staging → GPU
+    VkBufferCopy region { 0, 0, buffer_size };
+    vkCmdCopyBuffer(cmd, staging_buf, target.gpu_buffer, 1, &region);
+
+    // (Staging buffer cleanup deferred until after command submission)
+}
+----
+
+`VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT` 标志让我们能在下一节构建的无绑定方案中使用该缓冲区的 GPU 地址。设置该标志后，我们可以调用 `vkGetBufferDeviceAddress` 获得一个 64 位 GPU 指针，计算着色器可以直接解引用它，无需任何描述符。
+
+== 权重动画通道
+
+形变目标权重由针对网格节点上 `WEIGHTS` 路径的 glTF 动画通道驱动。解析和插值这个通道用的是我们在第 3 章为关节旋转通道构建的同一套访问器与采样器基础设施——唯一区别是，我们不再把四元数写入关节的局部旋转，而是把一个标量浮点数写入形变目标权重数组。
+
+一种常见的做法是为每个网格维护一个 `std::vector<float>` 形变权重数组，每个目标一项，由动画系统每帧更新。然后在每次蒙皮派发之前，把这个数组作为小的统一缓冲区或推送常量上传到 GPU：
+
+[source,cpp]
+----
+struct MorphWeightBlock {
+    float    weights[24];     // Up to 24 active morph targets
+    uint32_t activeCount;     // How many entries in weights[] are valid
+    uint32_t applySkinning;   // 1 = also apply skeletal skinning, 0 = morph only
+    uint32_t pad[2];          // Align to 16 bytes
+};
+----
+
+把权重放在简单的扁平数组中，计算着色器实现起来就很直接：对每个顶点，遍历 `active_count` 个形变目标，读取权重与位移，把加权位移加到基础位置上。我们会在下一节写下这段着色器代码。
+
+xref:Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc[上一章：形变目标与面部动画] | xref:Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc[下一章：无绑定形变缓冲区与计算集成]

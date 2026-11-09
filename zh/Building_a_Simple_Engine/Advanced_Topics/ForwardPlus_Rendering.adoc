@@ -1,0 +1,37 @@
+= 本示例中的 Forward+ 渲染
+
+Forward+ 保留了你已经熟悉的前向着色模型，但把逐像素的光照循环限制为只处理可能影响该像素的光源。它通过把屏幕划分为瓦片（以及可选的 Z 切片），并用一个计算通道构建逐瓦片的光源列表来实现这一点。
+
+== 我们做了什么
+
+* 深度预通道（可选）：填充深度，使计算阶段能更有效地按 Z 剔除。
+* 计算通道：把光源分配到瓦片（和切片），并把紧凑的列表写入 SSBO。
+* 主 PBR 通道：对每个像素，取回瓦片头，只遍历这些光源。
+
+== 在代码中看哪里
+
+* 缓冲区、逐帧状态与描述符绑定：
+** `renderer_compute.cpp` 与 `renderer_resources.cpp`（查找 `ForwardPlusPerFrame` 数据）
+* 计算派发与逐帧参数：
+** `renderer_rendering.cpp`
+* 着色器侧对光源列表的消费：
+** `shaders/pbr.slang`（Forward+ 光照循环）
+
+== 提示
+
+* 调整瓦片大小；对 1080p 来说 16×16 是合理的默认值。
+* 如果你做了深度预通道，请在后继的不透明颜色通道中使用 `depthWriteEnable=false` 和 `depthCompare=Equal`。
+
+== 后续工作想法
+
+如果你想把这个示例做得更完整：
+
+* 从 2D 瓦片升级到聚类 Forward+（深度切片和/或对数 Z）。
+* 在开发构建标志后面加一个小的光源「预算」UI 和调试可视化（瓦片热力图）。
+* 添加阴影（从单个方向光阴影贴图开始），并扩展瓦片数据以包含带阴影的光源索引。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc[前向、Forward+ 与延迟——选择合适的路径]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc[本引擎中的 Synchronization 2 与帧节奏控制]

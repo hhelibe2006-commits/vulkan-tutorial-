@@ -1,0 +1,18 @@
+{
+  "id": "b067",
+  "words": 5820,
+  "files": [
+    {
+      "source": "en/ML_Inference/Advanced_Topics/02_quantization_strategies.adoc",
+      "target": "zh/ML_Inference/Advanced_Topics/02_quantization_strategies.adoc",
+      "words": 3376,
+      "title": "Quantization Strategies: Mastering the Bit-Budget"
+    },
+    {
+      "source": "en/ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc",
+      "target": "zh/ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc",
+      "words": 2444,
+      "title": "Vendor-Specific Optimizations: Squeezing the Last Drop"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+:pp: {plus}{plus}
+= 验证：Khronos glTF-Validator
+
+== 加载前为什么要验证
+
+你引擎的 glTF 加载器不是通用解析器——它是为处理格式正确的资产而写的，遇到畸形数据时可能静默出错，甚至崩溃。Khronos glTF-Validator 是一个参考实现，它会按完整规范检查 glTF 文件，并报告发现的每一处违规、警告和提示。在引擎中加载资产之前先用这个工具跑一遍，只花几秒钟，却能省下几个小时。
+
+验证器能捕获许多在导出时容易无意引入的问题：
+
+- 访问器的字节偏移没有按分量类型正确对齐（这是自定义导出器和手动写二进制数据的 Python 脚本的常见问题）。
+- 蒙皮关节引用了未列入场景层级的节点。
+- 动画采样器的输入数组不是严格单调递增的（这违反规范，并可能让插值产生无意义的结果）。
+- 缓冲区视图相互重叠或超出缓冲区长度。
+- 形变目标访问器的顶点数错误（与基础图元不匹配）。
+- 缺少必需字段（例如蒙皮没有 `inverseBindMatrices` 访问器）。
+
+这些问题中的许多在 tinygltf 这类宽容的加载器中不会立即崩溃——它们会静默地产生错误数据或被忽略。而验证器能在资产仍然孤立、错误来源显而易见的时候就把它们找出来。
+
+== 安装与运行验证器
+
+Khronos glTF-Validator 提供命令行工具和基于网页的拖放界面两种形式。要集成到生产管线，命令行工具才是正确选择。它以 Dart 应用的形式分发；通过 Dart 包管理器安装：
+
+[source,bash]
+----
+# Install Dart SDK (Linux, using apt)
+sudo apt-get update && sudo apt-get install dart
+
+# Install the validator
+dart pub global activate gltf_validator
+
+# Add Dart's global pub cache to your PATH (if not already done)
+export PATH="$PATH:$HOME/.pub-cache/bin"
+----
+
+在 macOS 上使用 Homebrew：
+
+[source,bash]
+----
+brew install dart
+dart pub global activate gltf_validator
+----
+
+安装完成后，用下面的命令验证文件：
+
+[source,bash]
+----
+gltf_validator character.glb
+----
+
+要集成到 CI，使用 `--format json` 参数获得机器可读的输出：
+
+[source,bash]
+----
+gltf_validator --format json character.glb > validation_report.json
+----
+
+只要发现错误，验证器就会以非零状态码退出，因此在 CI 构建中让无效资产直接失败非常容易。
+
+== 解读验证器输出
+
+验证器把结果分为四个级别：**错误**（Errors）、**警告**（Warnings）、**信息**（Infos）和**提示**（Hints）。
+
+**错误**表示确定会产生错误行为的规范违规。只要验证器报了任何错误，资产就不该继续使用，直到它们被修好为止。常见错误包括缓冲区溢出（访问器声称要读取的数据超出了缓冲区）、无效的关节索引（蒙皮引用了不存在的节点索引），以及形变目标数量畸形（各图元之间的形变目标访问器数量不一致）。
+
+**警告**表示按规范来说技术上合法、但很可能是错的或有隐患的情况。未归一化的蒙皮权重会产生警告——规范允许，但它几乎总是暗示美术工作流有问题。图元内重复的顶点位置同样是警告——它说明网格没有被正确合并焊接，可能存在拓扑问题。
+
+**信息**只是提示性质：资产具有合法但不寻常的特征，可能是有意为之，也可能不是。形变目标数量极多（比如 100 个以上）会产生一条信息——不是因为错，而是因为足够罕见，值得留意。
+
+**提示**指出不影响正确性的风格或优化问题。例如纹理坐标用了 32 位浮点，而 16 位就足够且没有质量损失。
+
+具体到角色资产，要特别关注关于蒙皮权重的警告，以及任何与动画采样器相关的错误。动画错误尤其阴险，因为它们可能只在动画时间线的特定时刻才显现——如果一个采样器的输入时间戳构造错误，在第 0 帧看起来正常的片段，到了第 120 帧可能产生损坏的数据。
+
+== 把验证集成到构建管线
+
+在团队环境中，验证应当作为资产构建管线的一部分自动运行，而不是手动步骤。具体如何集成取决于你的构建系统，但模式总是一样的：在任何 glTF 导出步骤之后运行验证器，一旦发现错误就让构建失败。
+
+一条简单的 Makefile 规则：
+
+[source,makefile]
+----
+assets/%.glb: blender/%.blend
+	blender -b $< --python scripts/export_gltf.py -- $@
+	gltf_validator $@ || (echo "Validation failed for $@"; exit 1)
+----
+
+这就保证了 `assets/` 目录中的任何 `.glb` 资产都是由 Blender 导出脚本生成的，并且在提交之前通过了验证。如果验证失败，构建就失败，错误立刻可见——而不是三天之后某位工程师加载角色时崩掉才发现。
+
+对于基于 Python 的管线，验证器也可以以编程方式调用。`gltf_validator` 包提供了一套库 API，返回结构化的结果对象，你可以检查这些对象来实现自定义策略（例如在你的项目中把某些信息级消息当作错误处理）。
+
+xref:Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc[上一章：从 Blender 到 Vulkan 的工作流] | xref:Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc[下一章：glTF 查看器审计：确立基准]

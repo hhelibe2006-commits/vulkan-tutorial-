@@ -1,0 +1,90 @@
+:pp: {plus}{plus}
+= AI 辅助的优化与改进
+
+GPU 计算领域发展迅速，高级 Vulkan 计算的复杂度有时会让人不知所措。大语言模型（LLM）可以在优化过程中充当讨论对象——但它们对 GPU 相关工作的有用程度，会因模型和提示词质量而有很大差别。
+
+== 该用哪些模型
+
+截至 2026 年年中，在 Vulkan 与 GPU 计算工作上最可靠、最有用的前沿模型是：
+
+* **Claude Opus / Sonnet**（Anthropic）——擅长代码分析，以及围绕管线阶段和内存布局的多步推理。
+* **GPT-5.5**（OpenAI）——对 GPU 架构知识面广；在 Slang/HLSL 内建函数上不太稳定，但对通用模式很扎实。
+* **Gemini 3.1 Pro / 3.1 Flash**（Google）——超大的上下文窗口很适合粘贴完整的着色器文件或验证层输出。
+
+[NOTE]
+====
+LLM 在 Vulkan 上的质量参差不齐。常见的失败模式包括：编造不存在的扩展名、错误的同步作用域推理，以及基于 Vulkan 1.0 时代做法的过时建议。把每条建议都当作起点，而不是答案。
+====
+
+== 新的工作流
+
+LLM 最适合作为第二遍工具使用，前提是你自己已经找出了候选瓶颈。把有问题的着色器连同性能分析输出或验证警告一起粘贴过去，要求它有针对性分析，而不是泛泛地审阅。
+
+=== 示例：从朴素实现到波感知
+
+考虑一个朴素的前缀和：单个线程串行完成所有工作：
+
+[source,slang]
+----
+// Naive approach: one thread serializes the entire buffer
+void computeMain(uint3 globalID : SV_DispatchThreadID) {
+    if (globalID.x == 0) {
+        uint total = 0;
+        for (uint i = 0; i < bufferSize; i++) {
+            total += data[i];
+            data[i] = total;
+        }
+    }
+}
+----
+
+把这段代码连同提示词 _"这个 Slang 着色器跑在 Vulkan 上。重构这个前缀和，利用 Wave/子组操作，去掉串行循环"_ 一起交给前沿模型，通常能得到一个并行版本。输出是否正确，很大程度上取决于提示词以及模型在 Slang/HLSL Wave 内建函数上的训练程度——所以一定要编译并做性能分析。
+
+一次正确的重构大致如下，但要确认模型没有把包含式/排他式语义弄反，也没有漏掉针对大于子组大小的缓冲区的跨子组归约：
+
+[source,slang]
+----
+// Wave-parallel prefix sum — verify subgroup size assumptions for your hardware
+void computeMain(uint3 globalID : SV_DispatchThreadID) {
+    uint val = data[globalID.x];
+
+    // Inclusive prefix sum within the subgroup
+    uint inclusive_sum = WavePrefixSum(val) + val;
+
+    // Total of this subgroup — must be combined with adjacent subgroup totals
+    // for buffers larger than WaveGetLaneCount()
+    uint subgroup_total = WaveReadLaneAt(inclusive_sum, WaveGetLaneCount() - 1);
+
+    // ... further logic to combine subgroup totals across workgroups ...
+    data[globalID.x] = inclusive_sum;
+}
+----
+
+== 对着色器有效提问
+
+泛泛的提示词只能得到泛泛的回答。想要有用的输出，请包含：
+
+* **目标 API 与着色语言**——写"Vulkan 1.3 加 Slang"，而不是"一个 GPU 着色器"。
+* **硬件层级**——桌面独显、移动端（Arm Mali/Qualcomm Adreno），还是嵌入式（RDNA 集成显卡）。
+* **具体症状**——性能分析器指标、验证层消息，或失败的测试用例。
+* **相关的 Vulkan 术语**——子组、LDS、缓冲区设备地址、管线屏障——以此引导模型给出准确回答，而不是泛泛的 CPU 优化建议。
+
+以下提示词往往能产出更高质量的输出：
+
+* _"重构这个 Slang 着色器，改用 `WavePrefixSum`，以便在子组为 64 通道的 RDNA3 GPU 上获得更好的吞吐量。"_
+* _"找出这段 Arm Mali 上 groupshared 内存访问模式中可能存在的 bank 冲突。给出导致冲突的访问步长。"_
+* _"在 Vulkan 1.3 的无绑定管线中，我如何用缓冲区设备地址替换这个描述符集？"_
+
+== 黄金法则：信任，但要验证
+
+AI 模型是起草工具，不是权威。
+
+1. **验证正确性**：AI 生成的同步代码是细微隐患的常见来源。在跑基准测试之前，先让任何建议的着色器通过 **GPU 辅助验证**（第 11 章第 2 节）。
+2. **分析性能**：一个语法正确的 Wave 重构，如果子组大小假设有误，或者内存访问模式引入了发散，在特定硬件上仍然可能更慢。用**发散审计**或**指令吞吐量分析**（第 11 章第 1 节）来验证建议。
+3. **核对扩展名**：模型偶尔会编造听起来很合理的 Vulkan 扩展名。任何 `VK_EXT_*` 或 `VK_KHR_*` 建议，在加入构建之前都要与 https://registry.khronos.org/vulkan/[Khronos Vulkan 注册表] 交叉核对。
+
+== 闭环
+
+只有当你的心智模型已经足够强、能评估输出时，AI 辅助才最有价值。本系列所讲的技术——子组操作、内存模型、发散分析、验证层——正是你有效提问、并在模型出错时发现错误所需要的词汇。下一章我们会把这些基础带到部署最广泛的 Vulkan 硬件上——移动与嵌入式设备。
+
+xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc[上一篇：计算验证与 GPU 辅助调试] | xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc[下一篇：移动与嵌入式计算：简介]

@@ -1,0 +1,530 @@
+:pp: {plus}{plus}
+
+= 使用 Vulkan 进行多线程编程
+
+== 简介
+
+本章将探讨如何在 Vulkan 中利用多线程来提升应用性能。现代 CPU 拥有多个核心，高效利用这些核心能显著改善应用性能，对计算密集型任务尤其如此。Vulkan 的显式设计使其非常适合多线程架构，让你能对同步和资源访问进行细粒度控制。
+
+== 概览
+
+Vulkan 在设计时就考虑了多线程，相比更早的 API 带来几项优势：
+
+1. *线程安全的命令缓冲区录制*：多个线程可以同时向不同的命令缓冲区录制命令。
+2. *显式同步*：Vulkan 要求显式同步，让你能精确控制跨线程的资源访问。
+3. *基于队列的架构*：不同的操作可以提交到不同的队列，从而可能并行执行。
+
+不过，在 Vulkan 中使用多线程需要仔细考虑：
+
+1. *资源共享*：确保跨线程安全地访问共享资源。
+2. *同步*：在正确的位置同步线程之间的操作。
+3. *工作分配*：有效地分配工作，以最大化并行度。
+
+本章将实现一个多线程渲染系统，它建立在我们之前计算着色器工作的基础上。我们要创建一个粒子系统，其中：
+
+1. 一个线程负责窗口事件与呈现
+2. 多个工作线程为不同的粒子组录制命令缓冲区
+3. 一个专用线程向 GPU 提交工作
+
+== 实现
+
+下面逐一介绍在 Vulkan 应用中实现多线程所需的关键组件：
+
+=== 线程安全的资源管理
+
+首先，需要确保资源能跨线程安全访问。我们将组合使用多种技术：
+
+[,c{pp}]
+----
+// Thread-safe resource manager
+class ThreadSafeResourceManager {
+private:
+    std::mutex resourceMutex;
+    // Resources that need thread-safe access
+    std::vector<vk::raii::CommandPool> commandPools;
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
+
+public:
+    // Create a command pool for each worker thread
+    void createThreadCommandPools(vk::raii::Device& device, uint32_t queueFamilyIndex, uint32_t threadCount) {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+
+        commandPools.clear();
+        for (uint32_t i = 0; i < threadCount; i++) {
+            vk::CommandPoolCreateInfo poolInfo{
+                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+                .queueFamilyIndex = queueFamilyIndex
+            };
+            commandPools.emplace_back(device, poolInfo);
+        }
+    }
+
+    // Get a command pool for a specific thread
+    vk::raii::CommandPool& getCommandPool(uint32_t threadIndex) {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+        return commandPools[threadIndex];
+    }
+
+    // Allocate command buffers for each thread
+    void allocateCommandBuffers(vk::raii::Device& device, uint32_t threadCount, uint32_t buffersPerThread) {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+
+        commandBuffers.clear();
+        for (uint32_t i = 0; i < threadCount; i++) {
+            vk::CommandBufferAllocateInfo allocInfo{
+                .commandPool = *commandPools[i],
+                .level = vk::CommandBufferLevel::ePrimary,
+                .commandBufferCount = buffersPerThread
+            };
+            auto threadBuffers = device.allocateCommandBuffers(allocInfo);
+            for (auto& buffer : threadBuffers) {
+                commandBuffers.emplace_back(std::move(buffer));
+            }
+        }
+    }
+
+    // Get a command buffer
+    vk::raii::CommandBuffer& getCommandBuffer(uint32_t index) {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+        return commandBuffers[index];
+    }
+};
+----
+
+=== 工作线程实现
+
+接下来，实现为不同粒子组录制命令缓冲区的工作线程：
+
+[,c{pp}]
+----
+class MultithreadedApplication {
+private:
+    // Thread-related members
+    uint32_t threadCount;
+    std::vector<std::thread> workerThreads;
+    std::atomic<bool> shouldExit{false};
+    std::vector<std::atomic<bool>> threadWorkReady;
+    std::vector<std::atomic<bool>> threadWorkDone;
+
+    // Synchronization primitives
+    std::mutex queueSubmitMutex;
+    std::condition_variable workCompleteCv;
+
+    // Resource manager
+    ThreadSafeResourceManager resourceManager;
+
+    // Particle system data
+    struct ParticleGroup {
+        uint32_t startIndex;
+        uint32_t count;
+    };
+    std::vector<ParticleGroup> particleGroups;
+
+    // ... other Vulkan resources ...
+
+public:
+    void initThreads() {
+        // Determine the number of threads to use (leave one core for the main thread)
+        threadCount = std::max(1u, std::thread::hardware_concurrency() - 1);
+
+        // Initialize synchronization primitives
+        threadWorkReady.resize(threadCount);
+        threadWorkDone.resize(threadCount);
+
+        for (uint32_t i = 0; i < threadCount; i++) {
+            threadWorkReady[i] = false;
+            threadWorkDone[i] = true;
+        }
+
+        // Create command pools for each thread
+        resourceManager.createThreadCommandPools(device, graphicsQueueFamilyIndex, threadCount);
+
+        // Divide particles into groups, one for each thread
+        const uint32_t particlesPerThread = PARTICLE_COUNT / threadCount;
+        particleGroups.resize(threadCount);
+
+        for (uint32_t i = 0; i < threadCount; i++) {
+            particleGroups[i].startIndex = i * particlesPerThread;
+            particleGroups[i].count = (i == threadCount - 1) ?
+                (PARTICLE_COUNT - i * particlesPerThread) : particlesPerThread;
+        }
+
+        // Start worker threads
+        for (uint32_t i = 0; i < threadCount; i++) {
+            workerThreads.emplace_back(&MultithreadedApplication::workerThreadFunc, this, i);
+        }
+    }
+
+    void workerThreadFunc(uint32_t threadIndex) {
+        while (!shouldExit) {
+            // Wait for work to be ready
+            if (!threadWorkReady[threadIndex]) {
+                std::this_thread::yield();
+                continue;
+            }
+
+            // Get the particle group for this thread
+            const ParticleGroup& group = particleGroups[threadIndex];
+
+            // Get the command buffer for this thread
+            vk::raii::CommandBuffer& cmdBuffer = resourceManager.getCommandBuffer(threadIndex);
+
+            // Record commands for this particle group
+            recordComputeCommandBuffer(cmdBuffer, group.startIndex, group.count);
+
+            // Mark work as done
+            threadWorkDone[threadIndex] = true;
+            threadWorkReady[threadIndex] = false;
+
+            // Notify main thread
+            workCompleteCv.notify_one();
+        }
+    }
+
+    void recordComputeCommandBuffer(vk::raii::CommandBuffer& cmdBuffer, uint32_t startIndex, uint32_t count) {
+        cmdBuffer.reset();
+        cmdBuffer.begin({});
+
+        // Bind compute pipeline and descriptor sets
+        cmdBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
+        cmdBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *computePipelineLayout, 0, {*computeDescriptorSets[frameIndex]}, {});
+
+        // Add a push constant to specify the particle range for this thread
+        struct PushConstants {
+            uint32_t startIndex;
+            uint32_t count;
+        } pushConstants{startIndex, count};
+
+        cmdBuffer.pushConstants<PushConstants>(*computePipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, pushConstants);
+
+        // Dispatch compute work
+        uint32_t groupCount = (count + 255) / 256;
+        cmdBuffer.dispatch(groupCount, 1, 1);
+
+        cmdBuffer.end();
+    }
+
+    void signalThreadsToWork() {
+        // Signal all threads to start working
+        for (uint32_t i = 0; i < threadCount; i++) {
+            threadWorkDone[i] = false;
+            threadWorkReady[i] = true;
+        }
+    }
+
+    void waitForThreadsToComplete() {
+        // Wait for all threads to complete their work
+        std::unique_lock<std::mutex> lock(queueSubmitMutex);
+        workCompleteCv.wait(lock, [this]() {
+            for (uint32_t i = 0; i < threadCount; i++) {
+                if (!threadWorkDone[i]) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
+    void cleanup() {
+        // Signal threads to exit and join them
+        shouldExit = true;
+        for (auto& thread : workerThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+
+        // ... cleanup other resources ...
+    }
+};
+----
+
+=== 修改计算着色器
+
+需要修改计算着色器，让它能处理由推送常量指定的粒子范围：
+
+[,c{pp}]
+----
+// In the compute shader (31_shader_compute.slang)
+[[vk::push_constant]]
+struct PushConstants {
+    uint startIndex;
+    uint count;
+};
+
+[[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
+[[vk::binding(1, 0)]] RWStructuredBuffer<Particle> particlesIn;
+[[vk::binding(2, 0)]] RWStructuredBuffer<Particle> particlesOut;
+PushConstants pushConstants;
+
+[numthreads(256,1,1)]
+void compMain(uint3 threadId : SV_DispatchThreadID)
+{
+    uint index = threadId.x;
+
+    // Only process particles within our assigned range
+    if (index >= pushConstants.count) {
+        return;
+    }
+
+    // Adjust index to start from our assigned start index
+    uint globalIndex = pushConstants.startIndex + index;
+
+    // Process the particle
+    Particle particle = particlesIn[globalIndex];
+
+    // Update particle position based on velocity and delta time
+    particle.position += particle.velocity * ubo.deltaTime;
+
+    // Simple boundary check with velocity inversion
+    if (abs(particle.position.x) > 1.0) {
+        particle.velocity.x *= -1.0;
+    }
+    if (abs(particle.position.y) > 1.0) {
+        particle.velocity.y *= -1.0;
+    }
+
+    // Write the updated particle to the output buffer
+    particlesOut[globalIndex] = particle;
+}
+----
+
+=== 更新主循环
+
+最后，更新主循环来协调工作线程：
+
+[,c{pp}]
+----
+void drawFrame() {
+    // Wait for the previous frame to finish
+    auto fenceResult = device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
+    if (fenceResult != vk::Result::eSuccess)
+    {
+        throw std::runtime_error("failed to wait for fence!");
+    }
+
+    // Acquire the next image
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *imageAvailableSemaphores[frameIndex], nullptr);
+
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
+
+    // Update uniform buffers
+    updateUniformBuffer(frameIndex);
+
+    // Signal worker threads to start recording compute command buffers
+    signalThreadsToWork();
+
+    // While worker threads are busy, record the graphics command buffer on the main thread
+    recordGraphicsCommandBuffer(imageIndex);
+
+    // Wait for all worker threads to complete
+    waitForThreadsToComplete();
+
+    // Collect command buffers from all threads
+    std::vector<vk::CommandBuffer> computeCmdBuffers;
+    for (uint32_t i = 0; i < threadCount; i++) {
+        computeCmdBuffers.push_back(*resourceManager.getCommandBuffer(i));
+    }
+
+    // Submit compute work
+    vk::SubmitInfo computeSubmitInfo{
+        .commandBufferCount = static_cast<uint32_t>(computeCmdBuffers.size()),
+        .pCommandBuffers = computeCmdBuffers.data()
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(queueSubmitMutex);
+        computeQueue.submit(computeSubmitInfo, nullptr);
+    }
+
+    // Wait for compute to finish before graphics
+    vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eVertexInput};
+
+    // Submit graphics work
+    vk::SubmitInfo graphisSubmitInfo{.waitSemaphoreCount   = 1,
+                                      .pWaitSemaphores      = &*imageAvailableSemaphores[frameIndex],
+                                      .pWaitDstStageMask    = &waitDestinationStageMask,
+                                      .commandBufferCount   = 1,
+                                      .pCommandBuffers      = &*graphicsCommandBuffers[frameIndex],
+                                      .signalSemaphoreCount = 1,
+                                      .pSignalSemaphores    = &*renderFinishedSemaphores[imageIndex]};
+
+    {
+        std::lock_guard<std::mutex> lock(queueSubmitMutex);
+        device.resetFences(*inFlightFences[frameIndex]);
+        graphicsQueue.submit(graphicsSubmitInfo, *inFlightFences[frameIndex]);
+    }
+
+    // Present the image
+    vk::PresentInfoKHR presentInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*renderFinishedSemaphores[frameIndex],
+        .swapchainCount = 1,
+        .pSwapchains = &*swapChain,
+        .pImageIndices = &imageIndex
+    };
+
+    result = presentQueue.presentKHR(presentInfo);
+
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapChain();
+    } else if (result != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to present swap chain image!");
+    }
+
+    frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+----
+
+== 高级多线程技术
+
+在上述基本实现之外，还有几种高级技术可用于进一步优化你的多线程 Vulkan 应用：
+
+=== 次级命令缓冲区
+
+次级命令缓冲区可以并行录制，然后由主命令缓冲区执行：
+
+[,c{pp}]
+----
+// In worker thread:
+vk::CommandBufferInheritanceInfo inheritanceInfo{
+    .renderPass = *renderPass,
+    .subpass = 0,
+    .framebuffer = *framebuffers[imageIndex]
+};
+
+vk::CommandBufferBeginInfo beginInfo{
+    .flags = vk::CommandBufferUsageFlagBits::eRenderPassContinue,
+    .pInheritanceInfo = &inheritanceInfo
+};
+
+secondaryCommandBuffer.begin(beginInfo);
+// Record rendering commands...
+secondaryCommandBuffer.end();
+
+// In main thread:
+primaryCommandBuffer.begin({});
+primaryCommandBuffer.beginRenderPass(...);
+primaryCommandBuffer.executeCommands(secondaryCommandBuffers);
+primaryCommandBuffer.endRenderPass();
+primaryCommandBuffer.end();
+----
+
+=== 用于动态工作分配的线程池
+
+与其给每个线程分配固定工作，不如用线程池动态分配工作：
+
+[,c{pp}]
+----
+class ThreadPool {
+private:
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queueMutex;
+    std::condition_variable condition;
+    bool stop;
+
+public:
+    ThreadPool(size_t threads) : stop(false) {
+        for (size_t i = 0; i < threads; ++i) {
+            workers.emplace_back([this] {
+                while (true) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lock(queueMutex);
+                        condition.wait(lock, [this] { return stop || !tasks.empty(); });
+                        if (stop && tasks.empty()) {
+                            return;
+                        }
+                        task = std::move(tasks.front());
+                        tasks.pop();
+                    }
+                    task();
+                }
+            });
+        }
+    }
+
+    template<class F>
+    void enqueue(F&& f) {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            tasks.emplace(std::forward<F>(f));
+        }
+        condition.notify_one();
+    }
+
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            stop = true;
+        }
+        condition.notify_all();
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
+    }
+};
+----
+
+=== 异步资源加载
+
+你可以用多线程异步加载资源：
+
+[,c{pp}]
+----
+std::future<TextureData> loadTextureAsync(const std::string& filename) {
+    return std::async(std::launch::async, [filename]() {
+        TextureData data;
+        // Load texture data from file
+        return data;
+    });
+}
+
+// Later in your code:
+auto textureDataFuture = loadTextureAsync("texture.ktx");
+// Do other work...
+TextureData textureData = textureDataFuture.get(); // Wait for completion if needed
+// Create Vulkan texture from the loaded data
+----
+
+== 性能考量
+
+在 Vulkan 中实现多线程时，请留意以下性能考量：
+
+1. *线程创建开销*：创建线程是有开销的，因此应在启动时创建一次，而不是每帧创建。
+2. *工作粒度*：确保每个线程有足够的工作量，以抵偿线程化带来的开销。
+3. *伪共享*：多个线程访问相邻内存时，要留意缓存行争用。
+4. *队列提交*：队列提交需要同步，以避免竞态条件。
+5. *内存屏障*：正确使用内存屏障，确保内存操作跨线程可见。
+6. *每线程一个命令池*：每个线程应拥有自己的命令池，以避免同步开销。
+7. *测量性能*：始终进行测量，确认多线程确实提升了性能。
+
+== 调试多线程 Vulkan 应用
+
+调试多线程应用可能颇为棘手。以下是一些提示：
+
+1. *验证层*：启用 Vulkan 验证层，以捕获同步问题。
+2. *线程检查器*：使用 ThreadSanitizer 之类的工具检测数据竞争。
+3. *日志*：实现线程安全的日志，以跟踪执行流程。
+4. *简化*：从较简单的线程模型开始，逐步增加复杂度。
+5. *原子操作*：对线程安全的计数器和标志使用原子操作。
+
+== 结语
+
+本章探讨了如何利用 Vulkan 的多线程来提升性能。我们实现了一个多线程粒子系统，其中：
+
+1. 多个工作线程并行录制命令缓冲区
+2. 主线程协调工作并处理呈现
+3. 恰当的同步保证了线程安全
+
+通过在多个 CPU 核心之间分配工作，我们可以显著提升性能，对计算密集型应用尤其如此。Vulkan 的显式设计使其非常适合多线程架构，让你能对同步和资源访问进行细粒度控制。
+
+在你继续开发 Vulkan 应用的过程中，想一想多线程如何帮助你充分发挥现代 CPU 的能力，并记住始终测量性能，确认你的线程模型对具体用例确实有帮助。
+
+link:/attachments/37_multithreading.cpp[C{pp} 代码]

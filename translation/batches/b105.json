@@ -1,0 +1,54 @@
+{
+  "id": "b105",
+  "words": 5718,
+  "files": [
+    {
+      "source": "en/Synchronization/Anatomy_of_a_Dependency/01_introduction.adoc",
+      "target": "zh/Synchronization/Anatomy_of_a_Dependency/01_introduction.adoc",
+      "words": 315,
+      "title": "Anatomy of a Dependency: Introduction"
+    },
+    {
+      "source": "en/Synchronization/Anatomy_of_a_Dependency/02_execution_vs_memory.adoc",
+      "target": "zh/Synchronization/Anatomy_of_a_Dependency/02_execution_vs_memory.adoc",
+      "words": 1188,
+      "title": "Execution vs. Memory Dependencies"
+    },
+    {
+      "source": "en/Synchronization/Anatomy_of_a_Dependency/03_sync2_advantage.adoc",
+      "target": "zh/Synchronization/Anatomy_of_a_Dependency/03_sync2_advantage.adoc",
+      "words": 1435,
+      "title": "The Synchronization 2 Advantage"
+    },
+    {
+      "source": "en/Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc",
+      "target": "zh/Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc",
+      "words": 696,
+      "title": "Refined Pipeline Stages: Precision is Performance"
+    },
+    {
+      "source": "en/Synchronization/Anatomy_of_a_Dependency/05_conclusion.adoc",
+      "target": "zh/Synchronization/Anatomy_of_a_Dependency/05_conclusion.adoc",
+      "words": 227,
+      "title": "Anatomy of a Synchronization Dependency: Conclusion"
+    },
+    {
+      "source": "en/Synchronization/Async_Compute_Overlap/01_introduction.adoc",
+      "target": "zh/Synchronization/Async_Compute_Overlap/01_introduction.adoc",
+      "words": 378,
+      "title": "Asynchronous Compute & Execution Overlap: Parallelizing the GPU"
+    },
+    {
+      "source": "en/Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc",
+      "target": "zh/Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc",
+      "words": 829,
+      "title": "Maximizing Throughput: Identifying Overlap Candidates"
+    },
+    {
+      "source": "en/Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc",
+      "target": "zh/Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc",
+      "words": 650,
+      "title": "Async Post-Processing: Parallelizing Frame End and Start"
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+= 阴影：光线查询集成
+
+阴影不只是地面上的一块暗斑，它对人们感知 3D 空间的方式至关重要。阴影提供了关于物体位置、形状和尺度，以及照亮它们的光源性质的关键视觉线索。在本节中，我们会从简单的「平面」光照转向更真实的模型，用 **Vulkan Ray Query** 实现硬件加速的阴影。
+
+== 理解阴影
+
+在物理世界中，当不透明物体挡住从光源到表面的光路时，阴影就出现了。要在计算机图形学中模拟这一点，我们必须解决**可见性问题**：对于表面上的任意一点，它到光源之间是否存在无遮挡的视线？
+
+=== 阴影的构成
+
+现实世界的光源很少是无限小的点。由于光源具有物理尺寸（面光源），阴影通常由两个不同的区域组成：
+
+*   **本影**：阴影中最暗的部分，光源在这里被完全遮挡。
+*   **半影**：阴影的「软」边缘，光源在这里只被部分遮挡。
+
+虽然我们最初的实现聚焦于「硬」阴影（一个点要么 100% 处于阴影中，要么 100% 受光），但这里使用的技术通过把光源当作面而非点来采样，支持高级的**软阴影**。
+
+=== 阴影贴图与光线追踪阴影
+
+几十年来，**阴影贴图**一直是行业标准做法。它把场景从光源视角的深度渲染到一张纹理中，然后在主渲染通道中比较距离。然而阴影贴图伴随着不小的挑战：
+
+*   **分辨率与走样**：如果阴影贴图分辨率太低，阴影看起来会「成块」。
+*   **偏置问题**：找到合适的「偏置」来消除*阴影痤疮*（自遮挡）和*彼得潘效应*（阴影与物体脱离）是一场持续的斗争。
+*   **内存开销**：每个光源都需要自己的深度纹理。
+
+**光线追踪（Ray Query）**通过执行精确的几何求交解决了这些问题。我们不再去查一张低分辨率的纹理，而是直接问 GPU：「这条光线在点 A 和点 B 之间是否击中任何三角形？」这样就能做到像素级精确，并且无需管理几十张深度图就能简化多种光源类型（点光源、聚光灯、平行光）的处理。
+
+== 光线追踪基础
+
+为了高效地执行光线追踪，我们不能对每个像素都遍历场景中的每个三角形。相反，我们使用**加速结构**。
+
+1.  **底层加速结构（BLAS）**：存储单个网格的原始几何数据（顶点和索引）。可以把它看作单个物体的空间索引。
+2.  **顶层加速结构（TLAS）**：包含 BLAS 的*实例*。每个实例都有自己的变换矩阵，让我们能以最小的内存开销把同一个网格在世界中放置多次。
+
+=== 前提条件与设置
+
+Ray Query 需要硬件支持和特定的 Vulkan 扩展。在我们的引擎中，要确保在创建逻辑设备时启用它们：
+
+*   `VK_KHR_acceleration_structure`
+*   `VK_KHR_ray_query`
+
+=== 构建加速结构
+
+在我们的引擎中，由 `renderer_ray_query.cpp` 里的 `Renderer::buildAccelerationStructures` 方法负责创建。我们为每个唯一网格构建一个 BLAS，然后构建一个引用它们的 TLAS。
+
+[source,cpp]
+----
+bool Renderer::buildAccelerationStructures(const std::vector<Entity *> &entities)
+{
+    // 1. Create BLAS for each unique mesh
+    for (auto &mesh : uniqueMeshes) {
+        buildBlas(mesh); // Compiles mesh data into a GPU-optimized format
+    }
+
+    // 2. Create TLAS by instancing BLASs
+    std::vector<vk::AccelerationStructureInstanceKHR> instances;
+    for (auto &entity : entities) {
+        auto mesh = entity->getComponent<MeshComponent>();
+        auto transform = entity->getComponent<TransformComponent>();
+
+        vk::AccelerationStructureInstanceKHR instance{};
+        instance.transform = toVkTransform(transform->getMatrix());
+        instance.accelerationStructureReference = getBufferDeviceAddress(mesh->blas.buffer);
+        instance.mask = 0xFF; // Allows filtering objects during ray tests
+        instances.push_back(instance);
+    }
+    buildTlas(instances);
+
+    return true;
+}
+----
+
+== 在着色器中实现光线查询
+
+TLAS 构建完成并绑定到描述符集之后，我们就可以直接在我们的 PBR 片元着色器（`pbr.slang`）中执行可见性测试。
+
+=== 可见性测试
+
+我们实现一个辅助函数 `traceShadowOccluded`。它初始化一个 `RayQuery` 对象，追踪一条光线，并检查它在到达光源之前是否击中任何几何体。
+
+[source,slang]
+----
+[[vk::binding(11, 0)]] RaytracingAccelerationStructure tlas;
+
+static const float RASTER_SHADOW_EPS = 0.002;
+
+bool traceShadowOccluded(float3 origin, float3 direction, float tMin, float tMax)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = tMin;
+    ray.TMax = tMax;
+
+    RayQuery<RAY_FLAG_NONE> q;
+    q.TraceRayInline(
+        tlas,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, // Optimization: any hit is enough to shadow
+        0xFF,
+        ray
+    );
+
+    while (q.Proceed()) {
+        // q.Proceed() steps through potential hits.
+        // For simple opaque shadows, we don't need logic here.
+    }
+
+    return (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+}
+----
+
+=== 与 PBR 光照集成
+
+在主光照循环中，我们在叠加某个光源的贡献之前先判断它的遮挡状态。
+
+[source,slang]
+----
+// Inside the fragment shader lighting loop
+float3 L = normalize(light.position.xyz - input.WorldPos);
+float distToLight = length(light.position.xyz - input.WorldPos);
+
+// Important: Move the origin slightly along the normal to prevent the ray
+// from immediately hitting the surface it started from.
+float3 shadowOrigin = input.WorldPos + N * RASTER_SHADOW_EPS;
+
+bool occluded = traceShadowOccluded(shadowOrigin, L, RASTER_SHADOW_EPS, distToLight);
+
+if (!occluded) {
+    // Add diffuse and specular contributions if not in shadow
+    directLighting += calculatePBR(L, V, N, ...);
+}
+----
+
+== 从硬阴影到软阴影
+
+我们引擎在 `ray_query.slang` 中的 Ray Query 实现超越了简单的硬阴影，实现了**随机软阴影**。我们把光源视为具有确定半径的面光源，而不是单个点。
+
+=== 面光源近似
+
+我们通过对每个阴影光线抖动光源位置来模拟面光源。使用稳定的随机数生成器和圆盘采样，我们在光源的「半径」范围内选取随机点。
+
+[source,slang]
+----
+// Generate a random sample on a disk to simulate light area
+float2 diskSample = rqSampleDisk(rngState);
+float3 samplePos = lightPos + (T * diskSample.x + B * diskSample.y) * lightRadius;
+
+float3 L = normalize(samplePos - worldPos);
+float distToLight = length(samplePos - worldPos);
+
+// Trace a ray toward the sampled point on the light
+bool occluded = traceShadowOccluded(shadowOrigin, L, RASTER_SHADOW_EPS, distToLight);
+----
+
+=== 对多个样本取平均
+
+把多条光线（`shadowSampleCount`）射向面光源上的不同点并对结果取平均，我们就能在受光区与阴影区之间产生平滑过渡（半影）。
+
+[source,slang]
+----
+float visibilityAcc = 0.0;
+for (int i = 0; i < shadowSampleCount; ++i) {
+    // ... calculate jittered L ...
+    visibilityAcc += traceShadowOccluded(...) ? 0.0 : 1.0;
+}
+float finalVisibility = visibilityAcc / float(shadowSampleCount);
+
+// Use visibility to scale the light's contribution
+directLighting += calculatePBR(...) * finalVisibility;
+----
+
+== 挑战与最佳实践
+
+1.  **自阴影（阴影痤疮）**：即使使用光线追踪，浮点精度也可能让光线击中它自己的起始三角形。始终使用一个小的 `EPSILON` 偏移或一个 `TMin` 值。
+2.  **Alpha 遮罩与透射**：对于植被或玻璃，简单的二值命中测试并不够。我们的引擎这样处理：
+    *   **手动 Alpha 测试**：在 `while(q.Proceed())` 循环中，我们获取材质的纹理并丢弃透明命中。
+    *   **透射绕过**：我们可以把某些材质（如玻璃）标记为不遮挡阴影光线，这样它们就不会投下漆黑的阴影。
+3.  **性能**：光线追踪开销很大。虽然对于简单的可见性测试，Ray Query 比完整的光线追踪管线更快，但它仍然带来额外成本。在高性能场景中，可以考虑：
+    *   **降噪**：如果为软阴影使用多条光线，你需要一个降噪器来清理颗粒感。
+    *   **剔除**：不要为太远或位于表面背后的光源追踪光线。
+
+== 总结与对比
+
+Ray Query 为在现代引擎中实现阴影提供了强大而灵活的方式。虽然它需要硬件支持，但相比传统阴影贴图具有显著优势：
+
+[cols="1,2,2"]
+|===
+| 特性 | 阴影贴图 | 光线查询
+
+| **精度** | 受纹理分辨率限制（走样） | 像素级精确（几何求交）
+| **复杂度** | 高（偏置、多光源管理） | 低（直接可见性测试）
+| **内存** | 高（每个光源一张深度图） | 低（加速结构）
+| **软阴影** | 复杂（PCSS、模糊） | 原生（面光源采样）
+|===
+
+== 下一步与延伸阅读
+
+阴影是一个很深的话题。现在你已经了解如何用 Ray Query 实现基本阴影和软阴影，可以进一步探索这些领域：
+
+*   **PCSS（Percentage Closer Soft Shadows）**：一种基于光栅化的技术，用于可变半影阴影（阴影随着与遮挡物距离的增加而变得更软）。
+*   **环境光遮蔽（RTAO）**：用光线追踪在法线周围的半球内追踪光线，计算有多少环境光到达某个点。
+*   **Vulkan 光线追踪教程**：link:https://nvpro-samples.github.io/vk_raytracing_tutorial_KHR/[NVIDIA Vulkan 光线追踪教程]是深入研究这些扩展的优秀资源。
+
+下一章我们会看看如何添加图形用户界面（GUI），用它实时调整这些光照与阴影参数。
+
+xref:Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc[上一篇：与 Vulkan 集成] | xref:Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc[下一篇：结语]

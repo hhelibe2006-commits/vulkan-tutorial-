@@ -1,0 +1,66 @@
+{
+  "id": "b099",
+  "words": 4269,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc",
+      "words": 575,
+      "title": "Late Latching Implementation"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/04_incorporating_into_the_engine.adoc",
+      "words": 334,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc",
+      "words": 268,
+      "title": "Action Spaces and Input-to-Pipeline Flow"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc",
+      "words": 518,
+      "title": "The OpenXR Action System"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc",
+      "words": 562,
+      "title": "Space Manifolds"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc",
+      "words": 238,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc",
+      "words": 340,
+      "title": "Slang for Spatial Shaders: Single-Pass Stereo and Beyond"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc",
+      "words": 555,
+      "title": "Native Multiview"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc",
+      "words": 548,
+      "title": "Slang Architecture for N-View Shaders"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc",
+      "words": 331,
+      "title": "Incorporating into the Engine"
+    }
+  ]
+}

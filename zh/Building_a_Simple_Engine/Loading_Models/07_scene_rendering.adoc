@@ -1,0 +1,705 @@
+:pp: {plus}{plus}
+
+= 加载模型：渲染场景
+
+== 渲染场景
+
+=== 场景渲染简介
+
+场景渲染是把 3D 场景描述转换成可显示在屏幕上的 2D 图像的过程。在我们的引擎中，这涉及遍历场景图、应用变换、设置材质属性，以及向 GPU 发出绘制命令。
+
+场景渲染过程是渲染管线中至关重要的一环，因为到目前为止我们构建的所有组件都在这里汇合：
+
+* 模型系统提供场景图结构与网格数据
+* 材质系统定义对象的外观
+* 相机系统决定视点
+* 光照系统照亮场景
+
+本章将探讨这些组件如何协同工作，渲染出完整的场景。
+
+=== 场景图遍历
+
+场景图是一种层级树状结构，用于组织场景中的对象。树中的每个节点都可以带有一个变换（位置、旋转、缩放），并且可能包含要渲染的网格。节点还可以有子节点，子节点会继承父节点的变换。
+
+要渲染场景图，我们需要以深度优先的方式遍历它，计算每个节点的全局变换矩阵，并渲染途中遇到的网格：
+
+[source,cpp]
+----
+void renderScene(const vk::raii::CommandBuffer& commandBuffer, Model& model, const glm::mat4& viewMatrix, const glm::mat4& projectionMatrix) {
+    // Start traversal from the root nodes with an identity matrix
+    glm::mat4 rootMatrix = glm::mat4(1.0f);
+    renderNode(commandBuffer, model.nodes, rootMatrix);
+}
+----
+
+`renderNode` 函数是场景渲染系统的核心。它递归遍历场景图，计算每个节点的全局变换矩阵，并渲染节点包含的网格：
+
+=== 节点遍历与变换计算
+
+渲染过程从系统地遍历场景图开始：每个节点的变换由其局部变换与父节点累积的变换矩阵组合而成。
+
+[source,cpp]
+----
+void renderNode(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const glm::mat4& parentMatrix) {
+    for (const auto node : nodes) {
+        // Calculate the cumulative transformation from root to current node
+        // This combines the parent's world transformation with this node's local transformation
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+----
+
+变换计算是层级场景图渲染的核心。每个节点的 `getLocalMatrix()` 返回它相对于父节点的变换，我们再用矩阵乘法把它与累积的父变换组合起来。这一数学运算实际上把变换沿层级“串接”起来，确保移动父节点时其所有子节点在世界空间中自动一起移动。
+
+这里的乘法顺序至关重要：`parentMatrix * nodeLocalMatrix` 确保先执行节点自身的局部变换（在节点的局部坐标空间中），再执行父变换把结果放入世界空间。这一顺序保持了子节点相对于父节点定位的层级关系。
+
+=== 网格校验与渲染准备
+
+渲染之前，我们必须确认该节点包含有效的网格数据，并且已正确上传到 GPU 缓冲区，从而保证渲染足够健壮，能应对不完整或无效的场景图节点。
+
+[source,cpp]
+----
+        // Validate that this node has complete, renderable mesh data
+        // All conditions must be met for safe GPU rendering
+        if (!node->mesh.vertices.empty() && !node->mesh.indices.empty() &&
+            node->vertexBufferIndex >= 0 && node->indexBufferIndex >= 0) {
+----
+
+这一步校验可以避免因场景图节点不完整而引发的渲染错误。场景图中的节点并不一定都包含可渲染的几何体——有些节点纯粹用于组织层次，或作为子对象的变换锚点。通过检查顶点与索引数组非空，并确认缓冲区索引有效，我们能保证只去渲染那些已经准备好 GPU 资源的节点。
+
+缓冲区索引检查（>= 0）确认网格数据已成功上传到 GPU 缓冲区，并在我们的缓冲区管理系统中分配到了有效索引（0 或更大）。注意 0 是有效的缓冲区索引——负值（通常是 -1）表示缓冲区尚未初始化或分配失败。
+
+=== 材质属性配置
+
+这一步材质设置把高层的材质描述转换为可直接供 GPU 使用的推送常量，用来控制被渲染几何体的外观与光照属性。
+
+[source,cpp]
+----
+            // Initialize push constants structure for material data transfer
+            PushConstantBlock pushConstants{};
+
+            // Configure material properties if a valid material is assigned
+            if (node->mesh.materialIndex >= 0 && node->mesh.materialIndex < static_cast<int>(model.materials.size())) {
+                const auto& material = model.materials[node->mesh.materialIndex];
+
+                // Set PBR material factors that control surface appearance
+                pushConstants.baseColorFactor = material.baseColorFactor;      // Surface color tint
+                pushConstants.metallicFactor = material.metallicFactor;        // Metallic vs. dielectric
+                pushConstants.roughnessFactor = material.roughnessFactor;      // Surface roughness
+
+                // Configure texture binding indices (-1 indicates no texture)
+                pushConstants.baseColorTextureSet = material.baseColorTextureIndex >= 0 ? 1 : -1;
+                pushConstants.physicalDescriptorTextureSet = material.metallicRoughnessTextureIndex >= 0 ? 2 : -1;
+                pushConstants.normalTextureSet = material.normalTextureIndex >= 0 ? 3 : -1;
+                pushConstants.occlusionTextureSet = material.occlusionTextureIndex >= 0 ? 4 : -1;
+                pushConstants.emissiveTextureSet = material.emissiveTextureIndex >= 0 ? 5 : -1;
+            } else {
+                // Apply sensible default material properties for unassigned materials
+                pushConstants.baseColorFactor = glm::vec4(1.0f);               // White base color
+                pushConstants.metallicFactor = 1.0f;                           // Fully metallic (safe default)
+                pushConstants.roughnessFactor = 1.0f;                          // Fully rough (safe default)
+                pushConstants.baseColorTextureSet = -1;                        // No texture for default material
+                pushConstants.physicalDescriptorTextureSet = -1;               // No metallic/roughness texture
+                pushConstants.normalTextureSet = -1;                           // No normal map
+                pushConstants.occlusionTextureSet = -1;                        // No ambient occlusion
+                pushConstants.emissiveTextureSet = -1;                         // No emissive texture
+            }
+----
+
+材质配置系统在美术人员编写的材质与 GPU 着色器参数之间架起了桥梁。推送常量是更新逐对象材质数据最快的方式，因为它们绕过了 GPU 的内存层级，可被着色器核心直接访问。因此，对于在绘制调用之间频繁变化的材质属性，推送常量是理想选择。
+
+纹理索引映射机制（-1 表示未使用，正整数表示有效绑定）让着色器可以根据纹理是否存在来决定是否采样。这种做法提供了灵活性：有些材质带法线贴图，另一些没有，却不必为此准备不同的着色器变体或编写复杂的分支逻辑。
+
+默认材质属性选择得比较保守，以免在材质缺失或配置不当时出现渲染瑕疵。金属度与粗糙度取 1.0 时，在不同光照条件下通常都能得到视觉上可接受的结果，尽管这可能并不代表材质原本想要的外观。
+
+=== GPU 资源绑定与绘制命令执行
+
+渲染的最后阶段绑定 GPU 资源，并发出真正的绘制命令，把场景图节点变成屏幕上的像素。
+
+[source,cpp]
+----
+            // Upload material properties to GPU via push constants
+            // This provides fast, per-draw-call material parameter updates
+            commandBuffer.pushConstants(*pipelineLayout, vk::ShaderStageFlagBits::eFragment,
+                                      0, sizeof(PushConstantBlock), &pushConstants);
+
+            // Bind geometry data buffers for GPU access
+            // Vertex buffer contains position, normal, texture coordinate data
+            commandBuffer.bindVertexBuffers(0, *vertexBuffers[node->vertexBufferIndex], {0});
+            // Index buffer defines triangle connectivity and enables vertex reuse
+            commandBuffer.bindIndexBuffer(*indexBuffers[node->indexBufferIndex], 0, vk::IndexType::eUint32);
+
+            // Execute the draw command to render this mesh
+            // GPU processes indices to generate triangles and runs vertex/fragment shaders
+            commandBuffer.drawIndexed(static_cast<uint32_t>(node->mesh.indices.size()), 1, 0, 0, 0);
+        }
+----
+
+资源绑定顺序遵循 Vulkan 的显式绑定模型：每种资源都必须先绑定再使用。顶点缓冲区提供逐顶点的属性数据（位置、法线、纹理坐标），索引缓冲区则定义顶点如何连接成三角形。这种索引渲染方式允许多个三角形复用顶点，从而减少内存占用。
+
+`drawIndexed` 命令会触发 GPU 对这个网格执行整个图形管线。GPU 处理每个索引以获取顶点数据，运行顶点着色器变换几何体，光栅化三角形生成片元，再执行片元着色器确定最终的像素颜色。在此过程中，我们通过推送常量配置的所有材质属性都对片元着色器可用。
+
+=== 层级递归
+
+最后，用累积的变换矩阵递归处理子节点，完成对整个场景图的遍历，并在整个渲染过程中保持层级结构。
+
+[source,cpp]
+----
+        // Recursively process child nodes with accumulated transformation
+        // This maintains the hierarchical transformation chain down the scene graph
+        if (!node->children.empty()) {
+            renderNode(commandBuffer, node->children, nodeMatrix);
+        }
+    }
+}
+----
+
+这种遍历方式保证了：
+
+1. 每个节点的变换都与其父节点的变换正确组合
+2. 子节点以正确的全局变换渲染
+3. 渲染过程中场景图的层级关系得到保持
+
+=== 理解渲染过程
+
+让我们更细致地拆解渲染过程：
+
+==== 变换计算
+
+渲染一个节点的第一步是计算它的全局变换矩阵：
+
+[source,cpp]
+----
+// Calculate global matrix for this node
+glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+----
+
+这把节点的局部变换（位置、旋转、缩放）与父节点的全局变换组合起来。结果是能把节点从局部空间变换到世界空间的矩阵。
+
+`getLocalMatrix` 方法（定义在 `Node` 类中）会组合节点的平移、旋转和缩放属性：
+
+[source,cpp]
+----
+glm::mat4 getLocalMatrix() {
+    return glm::translate(glm::mat4(1.0f), translation) *
+           glm::toMat4(rotation) *
+           glm::scale(glm::mat4(1.0f), scale) *
+           matrix;
+}
+----
+
+==== 材质设置
+
+[NOTE]
+====
+我们已在 xref:Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc[加载模型：为 glTF 模型实现 PBR] 中讲过 PBR 材质理论与着色器细节，这里不再重复。本节聚焦于“接线”：在本章的语境下，材质属性如何打包进推送常量，又如何被绘制调用消费。
+====
+
+如果节点带有网格，我们需要在渲染前设置它的材质属性：
+
+[source,cpp]
+----
+// Set up push constants for material properties
+PushConstantBlock pushConstants{};
+
+if (node->mesh.materialIndex >= 0 && node->mesh.materialIndex < static_cast<int>(model.materials.size())) {
+    const auto& material = model.materials[node->mesh.materialIndex];
+    pushConstants.baseColorFactor = material.baseColorFactor;
+    pushConstants.metallicFactor = material.metallicFactor;
+    pushConstants.roughnessFactor = material.roughnessFactor;
+    pushConstants.baseColorTextureSet = material.baseColorTextureIndex >= 0 ? 1 : -1;
+    pushConstants.physicalDescriptorTextureSet = material.metallicRoughnessTextureIndex >= 0 ? 2 : -1;
+    pushConstants.normalTextureSet = material.normalTextureIndex >= 0 ? 3 : -1;
+    pushConstants.occlusionTextureSet = material.occlusionTextureIndex >= 0 ? 4 : -1;
+    pushConstants.emissiveTextureSet = material.emissiveTextureIndex >= 0 ? 5 : -1;
+} else {
+    // Default material properties
+    pushConstants.baseColorFactor = glm::vec4(1.0f);
+    pushConstants.metallicFactor = 1.0f;
+    pushConstants.roughnessFactor = 1.0f;
+    pushConstants.baseColorTextureSet = -1;
+    pushConstants.physicalDescriptorTextureSet = -1;
+    pushConstants.normalTextureSet = -1;
+    pushConstants.occlusionTextureSet = -1;
+    pushConstants.emissiveTextureSet = -1;
+}
+
+// Update push constants
+commandBuffer.pushConstants(*pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstantBlock), &pushConstants);
+----
+
+这段代码：
+
+1. 取出与该网格关联的材质
+2. 用材质属性填充推送常量
+3. 通过推送常量把这些属性传给片元着色器
+
+材质属性包括：
+
+* 基础颜色因子（albedo）
+* 金属度因子
+* 粗糙度因子
+* 各类材质贴图（基础颜色、金属度-粗糙度、法线、环境光遮蔽、自发光）的纹理集索引
+
+==== 网格渲染
+
+变换与材质都设置好之后，就可以渲染网格了：
+
+[source,cpp]
+----
+// Bind vertex and index buffers
+commandBuffer.bindVertexBuffers(0, *vertexBuffers[node->vertexBufferIndex], {0});
+commandBuffer.bindIndexBuffer(*indexBuffers[node->indexBufferIndex], 0, vk::IndexType::eUint32);
+
+// Draw the mesh
+commandBuffer.drawIndexed(static_cast<uint32_t>(node->mesh.indices.size()), 1, 0, 0, 0);
+----
+
+这段代码：
+
+1. 绑定包含网格顶点的顶点缓冲区
+2. 绑定包含网格索引的索引缓冲区
+3. 发出绘制命令渲染该网格
+
+==== 递归遍历
+
+渲染完当前节点后，我们递归遍历它的子节点：
+
+[source,cpp]
+----
+// Recursively render children
+if (!node->children.empty()) {
+    renderNode(commandBuffer, node->children, nodeMatrix);
+}
+----
+
+这样就能保证场景图中的所有节点都被访问，并以正确的变换渲染。
+
+=== 在主循环中集成场景渲染
+
+要在主渲染循环中使用我们的场景渲染系统，需要设置好必要的 Vulkan 状态并调用 `renderScene` 函数。为了便于理解，可以把一帧看作五个步骤：
+
+1) 开始并描述附件（动态渲染的输入）
+2) 开始渲染，绑定管线，设置视口/剪刀矩形
+3) 更新相机 UBO（视图/投影）
+4) 遍历场景图，对每个网格发出绘制
+5) 结束渲染并呈现
+
+[source,cpp]
+----
+void drawFrame() {
+    // ... (standard Vulkan frame setup)
+
+    // Begin command buffer recording
+    commandBuffer.begin({});
+
+    // Transition image layout for rendering
+    transition_image_layout(
+        imageIndex,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput
+    );
+
+    // Set up rendering attachments
+    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+
+    vk::RenderingAttachmentInfo colorAttachmentInfo = {
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearColor
+    };
+
+    vk::RenderingAttachmentInfo depthAttachmentInfo = {
+        .imageView = depthImageView,
+        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearDepth
+    };
+
+    vk::RenderingInfo renderingInfo = {
+        .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachmentInfo,
+        .pDepthAttachment = &depthAttachmentInfo
+    };
+
+    // Begin dynamic rendering
+    commandBuffer.beginRendering(renderingInfo);
+
+    // Bind pipeline
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+
+    // Set viewport and scissor
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+    // Bind descriptor set with uniform buffer and textures
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        pipelineLayout,
+        0,
+        1,
+        &descriptorSets[currentFrame],
+        0,
+        nullptr
+    );
+
+    // Update view and projection in uniform buffer
+    UniformBufferObject ubo{};
+    ubo.view = camera.getViewMatrix();
+    ubo.proj = camera.getProjectionMatrix(swapChainExtent.width / (float)swapChainExtent.height);
+    ubo.proj[1][1] *= -1;  // Vulkan's Y coordinate is inverted
+
+    // Copy to uniform buffer (per frame-in-flight)
+    memcpy(uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+
+    // Render the scene
+    renderScene(commandBuffer, model, ubo.view, ubo.proj);
+
+    // End dynamic rendering
+    commandBuffer.endRendering();
+
+    // Transition image layout for presentation
+    transition_image_layout(
+        imageIndex,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eBottomOfPipe
+    );
+
+    // End command buffer recording
+    commandBuffer.end();
+
+    // ... (submit command buffer and present)
+}
+----
+
+这段代码：
+
+1. 设置 Vulkan 渲染状态（命令缓冲区、图像布局转换、渲染附件）
+2. 绑定图形管线与描述符集
+3. 更新统一缓冲区中的视图矩阵与投影矩阵
+4. 调用 `renderScene` 渲染整个场景
+5. 结束渲染并呈现结果
+
+=== 性能考量
+
+渲染复杂场景可能很耗性能。以下是一些优化场景渲染的技术：
+
+==== 视锥剔除
+
+视锥剔除是指跳过渲染位于相机视锥之外的对象。它通过减少绘制调用次数，可以显著提升性能：
+
+[source,cpp]
+----
+bool isNodeVisible(const Node* node, const glm::mat4& viewProjection) {
+    // Calculate the node's bounding sphere in world space
+    glm::vec3 center = glm::vec3(node->getGlobalMatrix() * glm::vec4(node->boundingSphere.center, 1.0f));
+    float radius = node->boundingSphere.radius * glm::length(glm::vec3(node->getGlobalMatrix()[0])); // Scale radius by the largest scale factor
+
+    // Check if the bounding sphere is visible in the view frustum
+    for (int i = 0; i < 6; i++) {
+        // Extract frustum planes from the view-projection matrix
+        glm::vec4 plane = getFrustumPlane(viewProjection, i);
+
+        // Calculate the signed distance from the sphere center to the plane
+        float distance = glm::dot(glm::vec4(center, 1.0f), plane);
+
+        // If the sphere is completely behind the plane, it's not visible
+        if (distance < -radius) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void renderNodeWithCulling(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const glm::mat4& parentMatrix, const glm::mat4& viewProjection) {
+    for (const auto node : nodes) {
+        // Calculate global matrix for this node
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+
+        // Check if the node is visible
+        if (isNodeVisible(node, viewProjection)) {
+            // Render the node (same as before)
+            // ...
+
+            // Recursively render children
+            if (!node->children.empty()) {
+                renderNodeWithCulling(commandBuffer, node->children, nodeMatrix, viewProjection);
+            }
+        }
+    }
+}
+----
+
+==== 细节层次（LOD）
+
+细节层次（LOD）是指对距离相机较远的对象使用更简单的模型版本：
+
+[source,cpp]
+----
+void renderNodeWithLOD(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const glm::mat4& parentMatrix, const glm::vec3& cameraPosition) {
+    for (const auto node : nodes) {
+        // Calculate global matrix for this node
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+
+        // Calculate distance to camera
+        glm::vec3 nodePosition = glm::vec3(nodeMatrix[3]);
+        float distanceToCamera = glm::distance(nodePosition, cameraPosition);
+
+        // Select LOD level based on distance
+        int lodLevel = 0;
+        if (distanceToCamera > 50.0f) {
+            lodLevel = 2; // Low detail
+        } else if (distanceToCamera > 20.0f) {
+            lodLevel = 1; // Medium detail
+        }
+
+        // Render the node with the selected LOD level
+        // ...
+
+        // Recursively render children
+        if (!node->children.empty()) {
+            renderNodeWithLOD(commandBuffer, node->children, nodeMatrix, cameraPosition);
+        }
+    }
+}
+----
+
+==== 遮挡剔除
+
+遮挡剔除是指跳过渲染被其他对象遮住的对象：
+
+[source,cpp]
+----
+void renderNodeWithOcclusion(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const glm::mat4& parentMatrix) {
+    // Sort nodes by distance to camera (front to back)
+    std::vector<std::pair<Node*, float>> sortedNodes;
+    for (const auto node : nodes) {
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+        glm::vec3 nodePosition = glm::vec3(nodeMatrix[3]);
+        float distanceToCamera = glm::length(nodePosition - cameraPosition);
+        sortedNodes.push_back({node, distanceToCamera});
+    }
+    std::sort(sortedNodes.begin(), sortedNodes.end(), [](const auto& a, const auto& b) {
+        return a.second < b.second;
+    });
+
+    // Render nodes from front to back
+    for (const auto& [node, distance] : sortedNodes) {
+        // Calculate global matrix for this node
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+
+        // Begin occlusion query
+        vk::QueryPool occlusionQueryPool = createOcclusionQueryPool();
+        commandBuffer.beginQuery(occlusionQueryPool, 0, {});
+
+        // Render the node's bounding box with depth write but no color write
+        renderBoundingBox(commandBuffer, node, nodeMatrix);
+
+        // End occlusion query
+        commandBuffer.endQuery(occlusionQueryPool, 0);
+
+        // Check if the node is visible
+        uint64_t occlusionResult = getOcclusionQueryResult(occlusionQueryPool);
+        if (occlusionResult > 0) {
+            // Node is visible, render it
+            // ...
+
+            // Recursively render children
+            if (!node->children.empty()) {
+                renderNodeWithOcclusion(commandBuffer, node->children, nodeMatrix);
+            }
+        }
+    }
+}
+----
+
+==== 实例化渲染
+
+对于包含大量相同对象的场景，实例化渲染可以显著提升性能：
+
+[source,cpp]
+----
+void renderInstanced(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const std::vector<glm::mat4>& instanceMatrices) {
+    for (const auto node : nodes) {
+        // If this node has a mesh, render it with instancing
+        if (!node->mesh.vertices.empty() && !node->mesh.indices.empty() &&
+            node->vertexBufferIndex >= 0 && node->indexBufferIndex >= 0) {
+
+            // Set up material properties (same as before)
+            // ...
+
+            // Bind vertex and index buffers
+            commandBuffer.bindVertexBuffers(0, *vertexBuffers[node->vertexBufferIndex], {0});
+            commandBuffer.bindIndexBuffer(*indexBuffers[node->indexBufferIndex], 0, vk::IndexType::eUint32);
+
+            // Create and bind instance buffer
+            vk::raii::Buffer instanceBuffer = createInstanceBuffer(instanceMatrices);
+            commandBuffer.bindVertexBuffers(1, *instanceBuffer, {0});
+
+            // Draw the mesh with instancing
+            commandBuffer.drawIndexedInstanced(
+                static_cast<uint32_t>(node->mesh.indices.size()),
+                static_cast<uint32_t>(instanceMatrices.size()),
+                0, 0, 0
+            );
+        }
+
+        // Recursively render children
+        if (!node->children.empty()) {
+            renderInstanced(commandBuffer, node->children, instanceMatrices);
+        }
+    }
+}
+----
+
+=== 高级场景渲染技术
+
+在基本的场景渲染之外，还有几种高级技术可以提升渲染器的画质与性能：
+
+==== 层级剔除
+
+层级剔除是指利用场景图结构来加速剔除操作：
+
+[source,cpp]
+----
+bool isNodeAndChildrenVisible(const Node* node, const glm::mat4& viewProjection, const glm::mat4& parentMatrix) {
+    // Calculate global matrix for this node
+    glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+
+    // Check if the node's bounding volume is visible
+    if (!isNodeVisible(node, viewProjection, nodeMatrix)) {
+        // If the node is not visible, none of its children are visible either
+        return false;
+    }
+
+    // Node is visible, check if it has a mesh to render
+    bool hasVisibleContent = !node->mesh.vertices.empty() && !node->mesh.indices.empty();
+
+    // Recursively check children
+    for (const auto child : node->children) {
+        hasVisibleContent |= isNodeAndChildrenVisible(child, viewProjection, nodeMatrix);
+    }
+
+    return hasVisibleContent;
+}
+
+void renderNodeHierarchical(const vk::raii::CommandBuffer& commandBuffer, const std::vector<Node*>& nodes, const glm::mat4& parentMatrix, const glm::mat4& viewProjection) {
+    for (const auto node : nodes) {
+        // Calculate global matrix for this node
+        glm::mat4 nodeMatrix = parentMatrix * node->getLocalMatrix();
+
+        // Check if the node and its children are visible
+        if (isNodeAndChildrenVisible(node, viewProjection, glm::mat4(1.0f))) {
+            // Render the node if it has a mesh
+            if (!node->mesh.vertices.empty() && !node->mesh.indices.empty() &&
+                node->vertexBufferIndex >= 0 && node->indexBufferIndex >= 0) {
+                // Render the node (same as before)
+                // ...
+            }
+
+            // Recursively render children
+            if (!node->children.empty()) {
+                renderNodeHierarchical(commandBuffer, node->children, nodeMatrix, viewProjection);
+            }
+        }
+    }
+}
+----
+
+[NOTE]
+====
+这里给出的层级剔除算法是正确的，但相对朴素。以目前的形态，它不太可能比更简单的剔除方式带来明显的性能提升。要在生产环境中获得真正的性能收益，需要更高效、更复杂的处理方式，例如：
+
+* 使用带有高效空间数据结构的包围体层级（BVH）
+* 用计算着色器实现基于 GPU 的剔除
+* 利用时间一致性在帧之间缓存可见性结果
+* 用遮挡查询跳过被其他几何体遮住的整棵子树
+====
+
+==== 延迟渲染
+
+延迟渲染把几何处理与光照处理拆成两个阶段，对于光源众多的场景可以提升性能：
+
+[source,cpp]
+----
+void renderSceneDeferred(const vk::raii::CommandBuffer& commandBuffer, Model& model) {
+    // Geometry pass: render scene to G-buffer
+    beginGeometryPass(commandBuffer);
+    renderNode(commandBuffer, model.nodes, glm::mat4(1.0f));
+    endGeometryPass(commandBuffer);
+
+    // Lighting pass: apply lighting to G-buffer
+    beginLightingPass(commandBuffer);
+    for (const auto& light : lights) {
+        renderLight(commandBuffer, light);
+    }
+    endLightingPass(commandBuffer);
+}
+----
+
+==== 聚簇渲染
+
+聚簇渲染把视锥切分成三维单元，从而高效处理大量光源：
+
+[source,cpp]
+----
+void setupLightClusters() {
+    // Divide the view frustum into a 3D grid of clusters
+    const int clusterCountX = 16;
+    const int clusterCountY = 9;
+    const int clusterCountZ = 24;
+
+    // Assign lights to clusters based on their position and radius
+    for (const auto& light : lights) {
+        for (int x = 0; x < clusterCountX; x++) {
+            for (int y = 0; y < clusterCountY; y++) {
+                for (int z = 0; z < clusterCountZ; z++) {
+                    if (lightAffectsCluster(light, x, y, z)) {
+                        lightClusters[x][y][z].push_back(light.index);
+                    }
+                }
+            }
+        }
+    }
+
+    // Upload light cluster data to GPU
+    updateLightClusterBuffer();
+}
+
+void renderSceneClustered(const vk::raii::CommandBuffer& commandBuffer, Model& model) {
+    // Bind light cluster buffer
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        pipelineLayout,
+        1,
+        1,
+        &lightClusterDescriptorSet,
+        0,
+        nullptr
+    );
+
+    // Render scene normally
+    renderNode(commandBuffer, model.nodes, glm::mat4(1.0f));
+}
+----
+
+=== 结语
+
+本章我们探讨了用场景图渲染场景的过程。我们看到了如何遍历场景图、计算变换、应用材质并渲染网格，也讨论了多种提升性能的优化技术。
+
+我们构建的场景渲染系统灵活且可扩展，能够渲染包含多个对象、多种材质以及不同光照条件的复杂场景。下一章我们将在这个基础上实现动画，让场景活起来。
+
+xref:Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc[上一篇：加载模型：管理多个对象] | xref:Building_a_Simple_Engine/Loading_Models/08_animations.adoc[下一篇：加载模型：更新动画]

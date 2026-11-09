@@ -1,0 +1,36 @@
+{
+  "id": "b035",
+  "words": 5229,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc",
+      "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc",
+      "words": 1481,
+      "title": "The Engine Expansion: Optimizing the Scene Graph"
+    },
+    {
+      "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc",
+      "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc",
+      "words": 1666,
+      "title": "Physics Syncing: The Animation-Physics Link"
+    },
+    {
+      "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc",
+      "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc",
+      "words": 887,
+      "title": "Metadata & Physics Extras: Automating the Pipeline"
+    },
+    {
+      "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc",
+      "words": 349,
+      "title": "Conclusion: A Foundation for Characters"
+    },
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/01_introduction.adoc",
+      "words": 846,
+      "title": "Advanced Skeletal & Compute Skinning"
+    }
+  ]
+}

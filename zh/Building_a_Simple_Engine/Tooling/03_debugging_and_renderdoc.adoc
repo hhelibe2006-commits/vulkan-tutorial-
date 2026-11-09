@@ -1,0 +1,363 @@
+:pp: {plus}{plus}
+
+= 工具链：使用 VK_KHR_debug_utils 与 RenderDoc 调试
+
+== 调试 Vulkan 应用
+
+图形应用调试起来可能很有挑战，因为它们复杂、并行，而且大量处理都发生在 GPU 上。Vulkan 的设计非常显式，提供了强大的调试工具，能帮助你发现并修复应用中的问题。本节将介绍两种调试 Vulkan 应用的关键方法：
+
+1. 使用 VK_KHR_debug_utils 扩展在应用内调试
+2. 使用 RenderDoc 等外部工具进行帧捕获与分析
+
+=== 使用 VK_KHR_debug_utils
+
+VK_KHR_debug_utils 扩展提供了一整套调试 Vulkan 应用的工具。它允许你：
+
+* 为对象设置有意义的名称
+* 标记命令缓冲区区域的开始与结束
+* 插入调试标记
+* 设置调试信使以接收验证层消息
+
+下面看看如何结合 C++20 模块与 vk::raii 使用这些特性。
+
+==== 设置调试消息传递
+
+首先，设置一个调试信使来接收验证层消息：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+// Debug callback function
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
+    VkDebugUtilsMessageTypeFlagsEXT message_type,
+    const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
+    void* user_data) {
+
+    // Convert severity to string
+    std::string severity;
+    if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
+        severity = "VERBOSE";
+    } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
+        severity = "INFO";
+    } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        severity = "WARNING";
+    } else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        severity = "ERROR";
+    }
+
+    // Convert type to string
+    std::string type;
+    if (message_type & VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT) {
+        type = "GENERAL";
+    } else if (message_type & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
+        type = "VALIDATION";
+    } else if (message_type & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) {
+        type = "PERFORMANCE";
+    }
+
+    // Log the message
+    std::cerr << "[" << severity << ": " << type << "] "
+              << callback_data->pMessage << std::endl;
+
+    // Return false to indicate the Vulkan call should not be aborted
+    return VK_FALSE;
+}
+
+// Create a debug messenger using vk::raii
+vk::raii::DebugUtilsMessengerEXT create_debug_messenger(vk::raii::Instance& instance) {
+    vk::DebugUtilsMessengerCreateInfoEXT create_info{};
+    create_info.setMessageSeverity(
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+    );
+    create_info.setMessageType(
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+    );
+    create_info.setPfnUserCallback(debug_callback);
+
+    return vk::raii::DebugUtilsMessengerEXT(instance, create_info);
+}
+----
+
+==== 对象命名
+
+VK_KHR_debug_utils 最有用的特性之一，就是可以为 Vulkan 对象指定有意义的名称。这会让调试轻松许多，因为你能在验证层消息以及 RenderDoc 之类的工具中识别出各个对象：
+
+[source,cpp]
+----
+// Helper function to set a name on any Vulkan handle
+template<typename T>
+void set_object_name(vk::raii::Device& device, T handle, const std::string& name) {
+    vk::DebugUtilsObjectNameInfoEXT name_info{};
+    name_info.setObjectType(get_object_type<T>());
+    name_info.setObjectHandle(reinterpret_cast<uint64_t>(static_cast<T>(handle)));
+    name_info.setPObjectName(name.c_str());
+
+    device.setDebugUtilsObjectNameEXT(name_info);
+}
+
+// Example usage
+void name_vulkan_objects(vk::raii::Device& device) {
+    // Name the device itself
+    set_object_name(device, *device, "Main Device");
+
+    // Name a buffer
+    vk::BufferCreateInfo buffer_info{};
+    // ... set buffer creation parameters
+    vk::raii::Buffer buffer(device, buffer_info);
+    set_object_name(device, *buffer, "Vertex Buffer");
+
+    // Name a pipeline
+    vk::raii::Pipeline pipeline = create_graphics_pipeline(device);
+    set_object_name(device, *pipeline, "Main Render Pipeline");
+}
+----
+
+==== 命令缓冲区标签
+
+你还可以为命令缓冲区的执行区域添加标签，这有助于定位渲染过程中问题出现的位置：
+
+[source,cpp]
+----
+void record_command_buffer(vk::raii::CommandBuffer& cmd_buffer) {
+    cmd_buffer.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+    // Begin a labeled region
+    vk::DebugUtilsLabelEXT label_info{};
+    label_info.setPLabelName("Shadow Pass");
+    label_info.setColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}); // Black for shadow pass
+    cmd_buffer.beginDebugUtilsLabelEXT(label_info);
+
+    // Record shadow pass commands
+    // ...
+
+    // End the labeled region
+    cmd_buffer.endDebugUtilsLabelEXT();
+
+    // Begin another labeled region
+    label_info.setPLabelName("Main Render Pass");
+    label_info.setColor(std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f}); // Green for main pass
+    cmd_buffer.beginDebugUtilsLabelEXT(label_info);
+
+    // Record main render pass commands
+    // ...
+
+    // Insert a marker within this region
+    cmd_buffer.insertDebugUtilsLabelEXT({
+        "Drawing Opaque Objects",
+        std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}
+    });
+
+    // More rendering commands
+    // ...
+
+    // End the labeled region
+    cmd_buffer.endDebugUtilsLabelEXT();
+
+    cmd_buffer.end();
+}
+----
+
+==== 队列标签
+
+同样，你也可以为提交到队列的操作添加标签：
+
+[source,cpp]
+----
+void submit_work(vk::raii::Queue& queue, vk::raii::CommandBuffer& cmd_buffer) {
+    // Begin a labeled region for the queue submission
+    vk::DebugUtilsLabelEXT label_info{};
+    label_info.setPLabelName("Frame Rendering");
+    label_info.setColor(std::array<float, 4>{0.0f, 0.5f, 1.0f, 1.0f}); // Blue for frame
+    queue.beginDebugUtilsLabelEXT(label_info);
+
+    // Submit the command buffer
+    vk::SubmitInfo submit_info{};
+    submit_info.setCommandBufferCount(1);
+    submit_info.setPCommandBuffers(&(*cmd_buffer));
+    queue.submit(submit_info, nullptr);
+
+    // End the labeled region
+    queue.endDebugUtilsLabelEXT();
+}
+----
+
+=== 使用 RenderDoc
+
+RenderDoc 是一款图形帧调试器，也是捕获与分析工具（不是编译器）。它让你可以捕获应用中的帧并做细致分析。由于它对 API 的支持非常全面，对 Vulkan 应用尤其有用。
+
+
+==== 将 RenderDoc 集成到应用中
+
+你可以使用 RenderDoc 的应用内 API 把它直接集成到应用中：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+#include <renderdoc_app.h>
+
+// Load the RenderDoc API
+RENDERDOC_API_1_4_1* renderdoc_api = nullptr;
+
+bool load_renderdoc_api() {
+    #if defined(_WIN32)
+    HMODULE renderdoc_module = LoadLibraryA("renderdoc.dll");
+    #else
+    void* renderdoc_module = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD);
+    #endif
+
+    if (!renderdoc_module) {
+        std::cerr << "RenderDoc not loaded in this application" << std::endl;
+        return false;
+    }
+
+    #if defined(_WIN32)
+    pRENDERDOC_GetAPI get_api = (pRENDERDOC_GetAPI)GetProcAddress(renderdoc_module, "RENDERDOC_GetAPI");
+    #else
+    pRENDERDOC_GetAPI get_api = (pRENDERDOC_GetAPI)dlsym(renderdoc_module, "RENDERDOC_GetAPI");
+    #endif
+
+    if (!get_api) {
+        std::cerr << "Failed to get RenderDoc API function" << std::endl;
+        return false;
+    }
+
+    int ret = get_api(eRENDERDOC_API_Version_1_4_1, (void**)&renderdoc_api);
+    if (ret != 1) {
+        std::cerr << "Failed to initialize RenderDoc API" << std::endl;
+        return false;
+    }
+
+    std::cout << "RenderDoc API initialized successfully" << std::endl;
+    return true;
+}
+
+// Trigger a capture
+void capture_frame() {
+    if (renderdoc_api) {
+        renderdoc_api->TriggerCapture();
+    }
+}
+----
+
+==== 分析捕获
+
+捕获一帧之后，你可以在 RenderDoc 应用中分析它。下面是一些值得关注的关键特性：
+
+1. *管线状态*：检查每个绘制调用完整的图形管线状态
+2. *资源检查*：查看缓冲区、纹理及其他资源的内容
+3. *着色器调试*：针对特定像素单步跟踪着色器的执行
+4. *计时信息*：分析帧内不同部分的性能
+
+==== RenderDoc 最佳实践
+
+要充分发挥 RenderDoc 的作用：
+
+1. *使用对象名称*：如前所述，为 Vulkan 对象命名能让它们在 RenderDoc 中容易识别得多（你会在资源检查器和管线状态视图中看到这些名称）。
+2. *使用命令缓冲区标签*：它们会出现在 RenderDoc 的事件浏览器中，帮助你快速跳转到相关的绘制/派发。
+3. *捕获出问题的帧*：在问题发生时精确触发捕获（通过热键或应用内 API），以尽量减少无关事件和噪声。
+4. *缩减为最小复现*：创建最小可复现场景，或关闭某些特性来隔离问题。如果降低分辨率，要确保这不会以某种方式改变执行顺序/时序，从而把 bug 藏起来。
+
+=== 结合使用 VK_KHR_debug_utils 与 RenderDoc
+
+真正的威力来自把这些方法结合起来：
+
+1. 用 VK_KHR_debug_utils 为应用添加丰富的调试信息
+2. 用 RenderDoc 捕获并分析带有这些信息的帧
+3. 用验证层捕获 API 使用错误
+
+下面是一个结合这些方法搭建调试环境的示例：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+class DebugManager {
+public:
+    DebugManager() {
+        // Try to load RenderDoc API
+        load_renderdoc_api();
+    }
+
+    void setup_instance_debugging(vk::raii::Context& context, vk::InstanceCreateInfo& create_info) {
+        // Add validation layers
+        std::vector<const char*> validation_layers = {"VK_LAYER_KHRONOS_validation"};
+        create_info.setPEnabledLayerNames(validation_layers);
+
+        // Add debug utils extension
+        std::vector<const char*> extensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
+        // Add any existing extensions
+        if (create_info.enabledExtensionCount > 0) {
+            for (uint32_t i = 0; i < create_info.enabledExtensionCount; i++) {
+                extensions.push_back(create_info.ppEnabledExtensionNames[i]);
+            }
+        }
+        create_info.setPEnabledExtensionNames(extensions);
+
+        // Store debug messenger create info for instance creation
+        debug_create_info.setMessageSeverity(
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+        );
+        debug_create_info.setMessageType(
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+        );
+        debug_create_info.setPfnUserCallback(debug_callback);
+
+        // Add to pNext chain
+        debug_create_info.pNext = create_info.pNext;
+        create_info.pNext = &debug_create_info;
+    }
+
+    void setup_debug_messenger(vk::raii::Instance& instance) {
+        debug_messenger = vk::raii::DebugUtilsMessengerEXT(instance, debug_create_info);
+    }
+
+    template<typename T>
+    void set_name(vk::raii::Device& device, T handle, const std::string& name) {
+        try {
+            vk::DebugUtilsObjectNameInfoEXT name_info{};
+            name_info.setObjectType(get_object_type<T>());
+            name_info.setObjectHandle(reinterpret_cast<uint64_t>(static_cast<T>(handle)));
+            name_info.setPObjectName(name.c_str());
+
+            device.setDebugUtilsObjectNameEXT(name_info);
+        } catch (vk::SystemError& err) {
+            std::cerr << "Failed to set object name: " << err.what() << std::endl;
+        }
+    }
+
+    void capture_next_frame() {
+        if (renderdoc_api) {
+            renderdoc_api->TriggerCapture();
+        }
+    }
+
+private:
+    vk::DebugUtilsMessengerCreateInfoEXT debug_create_info{};
+    vk::raii::DebugUtilsMessengerEXT debug_messenger{nullptr};
+    RENDERDOC_API_1_4_1* renderdoc_api = nullptr;
+};
+----
+
+=== 结语
+
+有效的调试对于开发复杂的 Vulkan 应用至关重要。把 VK_KHR_debug_utils 的应用内调试能力与 RenderDoc 的帧捕获和分析能力结合起来，你就能快速定位并修复渲染管线中的问题。
+
+下一节我们将探讨崩溃处理与 minidump，它们对于诊断生产环境中出现的问题至关重要。
+
+xref:Building_a_Simple_Engine/Tooling/02_cicd.adoc[上一篇：工具链：Vulkan 项目的 CI/CD] | xref:Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc[下一篇：工具链：崩溃处理与 GPU 崩溃转储]

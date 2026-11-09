@@ -1,0 +1,18 @@
+{
+  "id": "b079",
+  "words": 3006,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/01_introduction.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/01_introduction.adoc",
+      "words": 1506,
+      "title": "ML Inference Pipeline: Introduction"
+    },
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/02_what_is_machine_learning.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/02_what_is_machine_learning.adoc",
+      "words": 1500,
+      "title": "What Is Machine Learning?"
+    }
+  ]
+}

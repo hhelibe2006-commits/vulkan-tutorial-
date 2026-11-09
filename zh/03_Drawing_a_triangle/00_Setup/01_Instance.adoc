@@ -1,0 +1,225 @@
+:pp: {plus}{plus}
+
+= 实例
+
+== 创建实例
+
+你需要做的第一件事，是通过创建一个*实例*来初始化 Vulkan 库。
+实例是应用程序与 Vulkan 库之间的连接，创建它需要向驱动指定一些关于应用程序的细节。
+
+先添加一个 `createInstance` 函数，并在 `initVulkan` 函数中调用它。
+
+[,c++]
+----
+void initVulkan() {
+    createInstance();
+}
+----
+
+此外，添加数据成员来保存实例的句柄和 RAII 上下文：
+
+[,c++]
+----
+private:
+vk::raii::Context  context;
+vk::raii::Instance instance = nullptr;
+----
+
+现在，要创建实例，我们首先得填写一个结构体，放入一些关于应用程序的信息。
+这些数据在技术上可选，但它可以为驱动提供一些有用信息，以便针对我们的具体应用进行优化
+（例如，因为该应用使用了某个有特定特殊行为的知名图形引擎）。这个结构体叫 `vk::ApplicationInfo`：
+
+[,c++]
+----
+void createInstance()
+{
+    constexpr vk::ApplicationInfo appInfo{.pApplicationName   = "Hello Triangle",
+                                          .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+                                          .pEngineName        = "No Engine",
+                                          .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+                                          .apiVersion         = vk::ApiVersion14};
+}
+----
+
+虽然 vk::ApiVersion10 或 Vulkan 1.0 确实存在，但有些功能比较老旧，与 RAII 配合得不好，
+或者——正如我们
+xref:../../03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc[稍后]
+会谈到的那样——与 Slang 语言配合得不好，所以我们以 1.4 作为基线。
+如果用 C 的 API，我们就得指定 stype 和 pnext，啰嗦过头。
+你在其它使用 C API 的 Vulkan 项目中很可能会看到这种写法。
+使用现代 c{pp} 模块后，这些都会替你处理。
+
+Vulkan 中很多信息都是通过结构体而不是函数参数传递的，
+我们还得再填一个结构体，才能提供创建实例所需的足够信息。
+接下来这个结构体不是可选的，它告诉 Vulkan 驱动我们想使用哪些全局扩展和验证层。
+这里的「全局」意味着它们作用于整个程序而非特定设备，这一点在接下来几章会变得清楚。
+
+[,c++]
+----
+vk::InstanceCreateInfo createInfo{
+    .pApplicationInfo = &appInfo
+};
+----
+
+这个结构体有一个名为 flags 的成员，我们会在本章后面处理它。
+pApplicationInfo 成员指向我们刚创建的 appInfo。
+接下来是请求的层数组，最后是所需的全局扩展数组。
+正如概述章节提到的，Vulkan 是与平台无关的 API，这意味着你需要一个扩展来与窗口系统对接。
+GLFW 有一个方便的内置函数，返回它为此所需的扩展，我们可以把它传给结构体：
+
+[,c++]
+----
+// Get the required instance extensions from GLFW.
+uint32_t glfwExtensionCount = 0;
+auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+// Check if the required GLFW extensions are supported by the Vulkan implementation.
+auto extensionProperties = context.enumerateInstanceExtensionProperties();
+for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+{
+    if (std::ranges::none_of(extensionProperties,
+                             [glfwExtension = glfwExtensions[i]](auto const& extensionProperty)
+                             { return strcmp(extensionProperty.extensionName, glfwExtension) == 0; }))
+    {
+        throw std::runtime_error("Required GLFW extension not supported: " + std::string(glfwExtensions[i]));
+    }
+}
+
+vk::InstanceCreateInfo createInfo{
+    .pApplicationInfo = &appInfo,
+    .enabledExtensionCount = glfwExtensionCount,
+    .ppEnabledExtensionNames = glfwExtensions};
+----
+
+另一处缺失的内容是要启用的层。这里本该讨论如何启用验证层，
+它是任何项目中最有用也最重要、应当启用的层之一。
+我们会在下一章更深入地讨论，所以现在先留空。
+
+现在我们已经指定了 Vulkan 创建实例所需的一切，终于可以创建 vk::raii::Instance 了：
+
+[,c++]
+----
+instance = vk::raii::Instance(context, createInfo);
+----
+
+你会看到，Vulkan 中对象创建函数的参数大致遵循这样的模式：
+
+* 指向构造函数所依赖的设备、实例或上下文的指针
+* 指向包含创建信息的结构体的指针
+* 指向自定义分配器回调的指针，本教程中始终忽略，因为使用默认分配器时它是可选的。
+* 返回指向 RAII 构造出的对象的指针。
+
+如果一切顺利，就返回了实例的句柄。我们可以通过 C{pp} 异常来检查一切是否正常。
+如果你无法使用 C{pp} 异常，可以通过定义 VULKAN_HPP_NO_EXCEPTIONS 关闭它。
+这样调用会返回一个包含 VKResult 和所返回对象的 std::tuple。下面是一个检查 Vulkan 调用中错误的例子：
+
+[,c++]
+----
+    try
+    {
+        vk::raii::Context context;
+        vk::raii::Instance instance(context, vk::InstanceCreateInfo{});
+        vk::raii::PhysicalDevice physicalDevice = instance.enumeratePhysicalDevices().front();
+        vk::raii::Device device(physicalDevice, vk::DeviceCreateInfo{});
+
+        // Use Vulkan objects
+        vk::raii::Buffer buffer(device, vk::BufferCreateInfo{});
+    }
+    catch (const vk::SystemError& err)
+    {
+        std::cerr << "Vulkan error: " << err.what() << std::endl;
+        return 1;
+    }
+    catch (const std::exception& err)
+    {
+        std::cerr << "Error: " << err.what() << std::endl;
+        return 1;
+    }
+----
+
+或者使用 tuple：
+
+[,c++]
+----
+    vk::raii::Context context;
+    ...
+    auto instanceRV = context.createInstance(...);
+    if (!instanceRV.has_value())
+    {
+        std::cerr << "Error: Instance creation failed with " << vk::to_string(instanceVR.result) << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    vk::raii::Instance instance = std::move(instanceRV.value);
+    ...
+    auto physicalDevicesRV = instance.enumeratePhysicalDevices();
+    if (!physicalDevicesRV.hasValue())
+    {
+        std::cerr << "Error: Enumerating PhysicalDevices failed with " << vk::to_string(physicalDevicesRV) << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    vk::raii::PhysicalDevice physicalDevice = std::move(physicalDevicesRV.value.front());
+    ...
+----
+
+这个例子来自本教程后面的部分，它只是用来说明如何检查你所有调用中的错误。
+
+== 遇到 vk::Result::eErrorIncompatibleDriver：
+如果在 macOS 上使用最新的 MoltenVK SDK，你可能会遇到 `vk::Result::eErrorIncompatibleDriver`，
+它从 `vk::raii::createInstance` 或 vk::raii::Instance 构造函数中抛出。根据
+https://vulkan.lunarg.com/doc/sdk/1.3.216.0/mac/getting_started.html[入门说明]，
+从 1.3.216 版 Vulkan SDK 开始，`VK_KHR_PORTABILITY_subset` 扩展是必需的。
+
+要绕过这个错误，首先把 `vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR` 位
+加到 `vk::InstanceCreateInfo` 结构体的 flags 中，然后把 `vk::KHRPortabilityEnumerationExtensionName`
+加入实例启用的扩展列表。
+
+通常代码可能像这样：
+
+[,c++]
+----
+constexpr vk::ApplicationInfo appInfo{.pApplicationName   = "Hello Triangle",
+                                      .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+                                      .pEngineName        = "No Engine",
+                                      .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+                                      .apiVersion         = vk::ApiVersion14};
+vk::InstanceCreateInfo createInfo{
+    .flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
+    .pApplicationInfo = &appInfo,
+    .ppEnabledExtensionNames = { vk::KHRPortabilityEnumerationExtensionName }
+};
+instance = vk::raii::Instance(m_context, createInfo);
+----
+
+== 检查扩展支持
+
+如果你查看 `vkCreateInstance` 的文档，会看到可能的错误码之一是 `VK_ERROR_EXTENSION_NOT_PRESENT`。
+我们可以直接指定所需的扩展，如果返回这个错误码就终止。
+对于窗口系统接口这类必需扩展来说这是合理的，但如果我们想检查可选功能呢？
+
+要在创建实例之前获取受支持扩展的列表，可以使用
+`vk::raii::Context::enumerateInstanceExtensionProperties` 函数。
+它返回一个可用扩展的 vector，让我们可以按特定的验证层筛选扩展，这一点我们暂时忽略。
+
+[,c++]
+----
+auto extensions = context.enumerateInstanceExtensionProperties();
+----
+
+每个 `vk::ExtensionProperties` 结构体包含扩展的名称和版本。
+我们可以用一个简单的 for 循环把它们列出来（`\t` 是用于缩进的制表符）：
+
+[,c++]
+----
+std::cout << "available extensions:\n";
+
+for (const auto& extension : extensions) {
+    std::cout << '\t' << extension.extensionName << '\n';
+}
+----
+
+如果你想提供一些关于 Vulkan 支持情况的细节，可以把这段代码加到 `createInstance` 函数中。
+
+在继续实例创建之后更复杂的步骤之前，
+该看看我们的调试选项了：了解一下 xref:./02_Validation_layers.adoc[验证层]。
+
+link:/attachments/01_instance_creation.cpp[C{pp} 代码]

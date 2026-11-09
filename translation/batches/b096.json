@@ -1,0 +1,30 @@
+{
+  "id": "b096",
+  "words": 5861,
+  "files": [
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc",
+      "words": 2021,
+      "title": "Vector Addition Example"
+    },
+    {
+      "source": "en/ML_Inference/glossary.adoc",
+      "target": "zh/ML_Inference/glossary.adoc",
+      "words": 1687,
+      "title": "Glossary: Machine Learning Inference"
+    },
+    {
+      "source": "en/ML_Inference/introduction.adoc",
+      "target": "zh/ML_Inference/introduction.adoc",
+      "words": 1797,
+      "title": "Machine Learning Inference with Vulkan: Introduction"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc",
+      "words": 356,
+      "title": "The OpenXR-Vulkan 1.3 Handshake: Introduction"
+    }
+  ]
+}

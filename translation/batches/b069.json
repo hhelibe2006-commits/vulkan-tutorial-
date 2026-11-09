@@ -1,0 +1,30 @@
+{
+  "id": "b069",
+  "words": 5294,
+  "files": [
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc",
+      "words": 1097,
+      "title": "Model Representation"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc",
+      "words": 1626,
+      "title": "Model Formats as Input"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc",
+      "words": 1310,
+      "title": "NNEF Introduction"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc",
+      "words": 1261,
+      "title": "Putting It Together"
+    }
+  ]
+}

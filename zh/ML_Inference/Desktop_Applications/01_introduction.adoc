@@ -1,0 +1,102 @@
+= 桌面应用
+
+== 从理论到实践
+
+你已经构建出推理引擎，加载过 ONNX 模型并在 GPU 上运行，还验证了结果与 PyTorch 输出在浮点精度范围内一致。这非常棒——你已经掌握了基础。
+
+现在，让我们构建真正能用的东西。
+
+本章从教学练习转向实用的桌面应用。我们将构建完整的程序：实时对图像分类、把 ML 推理与图形渲染集成在一起，并展示 Vulkan 的显式控制在哪些地方比高层框架更有实际优势。
+
+与 MNIST 示例相比，这里的不同之处在于：我们不只是在验证推理能跑通，而是在构建带真实用户界面、能处理任意输入、并针对交互性能做优化的应用。目标不是证明你理解了卷积——而是在图形管线渲染结果的同时，用实时摄像头输入跑出 60 FPS。
+
+== 我们将构建什么
+
+本章会构建一个完整的桌面图像分类应用，演示如何把 ML 推理实际集成进 Vulkan。我们先从静态图像分类入手，再扩展到实时摄像头输入，向你展示如何构建响应迅速的交互式应用。
+
+该应用使用 MobileNetV2 把图像分到 1000 个 ImageNet 类别之一。你将学到完整的工作流：加载预训练模型、预处理输入（缩放、归一化、颜色转换）、高效运行推理、后处理输出（softmax、top-k 选择）以及可视化结果。
+
+更重要的是，你会看到如何在不牺牲性能的前提下把 ML 推理集成进 Vulkan 图形应用。我们会讲异步计算来让传输与计算重叠、高效的 CPU-GPU 同步，以及用实时摄像头输入维持 30+ FPS 同时渲染结果所需的管线设计。
+
+本章沿用我们在 MNIST 中建立的教学节奏：先提出问题，再一步步走完解决方案，并在概念真正需要时再解释。我们不会一上来就堆理论——而是在你需要时教你所需的内容。
+
+== 章节结构
+
+本节被组织成几个聚焦、实用的章节：
+
+**xref:ML_Inference/Desktop_Applications/02_image_classification.adoc[图像分类：从 MNIST 到 CNN]**：理解为什么全连接网络处理图像会失败，以及 CNN 如何解决这个问题。你将学习卷积运算、构建卷积层、池化以及现代架构模式。这一章建立在你已有的 MNIST 知识之上，用恰当的 CNN 架构处理真实世界的图像分类。
+
+**xref:ML_Inference/Desktop_Applications/03_practical_implementation.adoc[CPU 基准实现]**：用 ONNX Runtime 构建一个可用的图像分类器。加载模型、正确预处理、运行推理、对照 PyTorch 验证。这是你的参考实现。
+
+**xref:ML_Inference/Desktop_Applications/04_ci_render_validation.adoc[CI/CD 渲染验证]**：在持续集成中用 ML 验证 Vulkan 渲染。训练分类器来检测渲染缺陷、接入 GitHub Actions、度量语义相似度、校验 UI 布局——用 ML 解决工程问题。
+
+**xref:ML_Inference/Desktop_Applications/05_real_time_camera.adoc[实时相机集成]**：把分类器扩展为以 30+ FPS 处理摄像头输入。GPU 加速的预处理、异步计算管线、为响应性做多线程，以及面向交互应用的性能调优。
+
+**xref:ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc[用于自动化探索的强化学习]**：用强化学习自动探索和测试 Vulkan 应用。由好奇心驱动的智能体、随机网络蒸馏、自动缺陷发现、基准测试，以及面向 CI 及更多场景的 GUI 自动化。
+
+**xref:ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc[光线追踪优化：降噪与自适应采样]**：用 AI 优化高性能光线追踪。你将了解 AI 驱动的降噪、用自适应采样最大化你的光线预算，以及用 ML 检测需要时间性更新的区域。
+
+**xref:ML_Inference/Desktop_Applications/08_future_directions.adoc[未来方向：GAN、DLSS 与更多]**：探索桌面应用的高级改进方向。学习如何用 GAN 做风格迁移、用 RAG 做智能工程诊断。
+
+每章聚焦一个实用主题，从静态图像逐步推进到实时交互应用，再到自动化测试与智能探索。
+
+== 三路径方法
+
+还记得引言里的三路径教学法吗？它贯穿这些章节：
+
+**路径 1 - ONNX Runtime**（务实路径）：用 ONNX Runtime 做神经网络推理，同时用 Vulkan 处理预处理和可视化。这正是你在生产环境中实际会做的事。ONNX Runtime 提供了经过实战检验的数百个算子实现、自动优化和广泛的硬件支持。你的 Vulkan 代码则专注于它最擅长的事：图像处理与图形。
+
+**路径 2 - 自定义 Vulkan**（教学路径）：用 Vulkan 计算着色器实现整条管线，包括神经网络各层。这条路径帮你理解底层到底发生了什么，也让你体会到 ONNX Runtime 自动处理了多少复杂度。它还演示了在实现自定义算子或与渲染管线紧密集成时会用到的技术。
+
+**路径 3 - ML 编译器**（编译器驱动路径）：用 ML 编译器（IREE、Apache TVM、OpenXLA、MAX/Mojo）把模型下沉为优化后的内核，配上极小的运行时，通常通过 SPIR‑V 面向 Vulkan。相比通用库，这能以更好的可移植性和更小的运行时占用达到接近手写水平的性能——而且不需要你写着色器。
+
+在实践中，大多数应用采用混合方案。你可能会用 ONNX Runtime 跑主网络，在 ML 编译器的性能与体积平衡更好时用它编译部分模型，同时仍在 Vulkan 里实现自定义的前处理/后处理以获得紧密集成。理解这三条路径，能让你有灵活度做出有依据的架构决策。
+
+== 前置要求
+
+在进入这些应用之前，请确认你熟悉：
+
+- Vulkan 计算管线（在「Vulkan Compute for ML」一章中讲过）
+- 加载和解析 ONNX 模型（在「构建推理引擎」一章中讲过）
+- 用计算着色器实现基本的神经网络层（同样在「构建推理引擎」一章中）
+- 上一章的 MNIST 示例
+
+我们会基于这些基础继续，不再重讲入门内容。如果哪里感觉陌生，就回那些章节查阅详细解释。
+
+你还需要安装 ONNX Runtime（如果还没装）。「第三方库」一章讲了安装，这里先给一个 Linux 上的快速版本：
+
+[source,bash]
+----
+# Download ONNX Runtime
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-1.17.0.tgz
+tar xzf onnxruntime-linux-x64-1.17.0.tgz
+
+# Add to your CMakeLists.txt:
+# set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/third_party/onnxruntime-linux-x64-1.17.0")
+----
+
+Windows 和 macOS 请从 ONNX Runtime 的 releases 页面下载对应的包。各平台的 API 完全一致。
+
+== 关于性能预期
+
+让我们把预期定得现实一些。当我们谈「实时」性能时，含义会随应用而不同：
+
+**图像分类**：在中端 GPU 上处理单张 224×224 图像应在 20ms 以内完成。对于按需分类图像的交互式应用来说，这已经足够快。
+
+**摄像头分类**：我们的目标是 30+ FPS，也就是每帧预算 33ms。在现代硬件上配合恰当的流水线设计，60 FPS（16ms 预算）是可以达到的。
+
+**批处理**：如果你要离线分类成千上万张图像，吞吐量比延迟更重要。充分利用 GPU 的批量推理每秒可以处理数百张图像。
+
+这些数字的前提是使用优化过的模型（如 MobileNetV2）和合理的输入尺寸。如果你想在集成显卡上以 1024×1024 分辨率跑 ResNet-152，那注定要失望。部署 ML 推理的一部分工作，就是选择与你的硬件和性能需求相匹配的模型。
+
+我们会在构建每个应用时测量真实的性能数字，并在性能不达预期时讨论优化策略。但请记住：目标是构建能演示概念的可运行应用，而不是刷出最先进的基准分数。一旦你理解了管线，优化就会变成一项工程练习，而不是什么玄学。
+
+== 开始动手
+
+下一章，我们将构建第一个真正的应用：用 MobileNetV2 做图像分类器。你会从简单处入手——从磁盘加载图像、分类、打印结果——然后逐步加入预处理、GUI 和实时性能。
+
+这里正是教程从「它是怎么工作的」转向「我该怎么把它做出来」的转折点。语气会稍有变化：少一点理论，多一点代码，多一点实际问题的解决。我们仍会解释概念，但总是在解决真实问题的语境中，而不是当作抽象知识。
+
+准备好了吗？让我们做点真东西。
+
+xref:ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc[上一篇：整合起来] | xref:ML_Inference/Desktop_Applications/02_image_classification.adoc[下一篇：图像分类：从 MNIST 到 CNN]

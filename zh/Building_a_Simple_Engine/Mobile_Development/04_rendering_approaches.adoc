@@ -1,0 +1,378 @@
+:pp: {plus}{plus}
+
+= 移动端开发：渲染方案
+
+== 移动 GPU 的渲染方案
+
+移动 GPU 通常采用与桌面 GPU 不同的渲染架构。理解这些差异，对针对移动平台优化 Vulkan 应用至关重要。本节中，我们会探索两种主要的渲染方案：基于瓦片的渲染（TBR）与立即模式渲染（IMR）。
+
+=== 基于瓦片的渲染（TBR）
+
+大多数现代移动 GPU 采用基于瓦片的渲染架构，在某些实现中也称为基于瓦片的延迟渲染（TBDR）。
+
+==== TBR 的工作方式
+
+1. *分块阶段*：屏幕被划分为小块瓦片（通常是 16x16 或 32x32 像素）。
+
+2. *分箱阶段*：GPU 确定哪些图元（三角形）影响每个瓦片。
+
+3. *渲染阶段*：对每个瓦片：
+   a. 把影响该瓦片的图元加载到片上内存。
+   b. 把图元渲染到该瓦片。
+   c. 把渲染完成的瓦片写回主内存。
+
+==== TBR 的优势
+
+1. *降低内存带宽*：由于渲染在片上内存中进行，发往主内存的流量更少。
+
+2. *能效*：更低的内存带宽意味着更低的功耗，这对靠电池供电的设备至关重要。
+
+3. *隐藏表面消除*：许多 TBR GPU 在分箱阶段就进行早期深度测试，从而减少过度绘制。
+
+==== 针对 TBR 优化
+
+要让 TBR GPU 发挥最佳性能，可以考虑以下优化：
+
+* *瞬态附件*：对仅在渲染通道内使用的渲染目标使用瞬态附件：
+
+[source,cpp]
+----
+vk::AttachmentDescription depth_attachment{};
+depth_attachment.setFormat(depth_format);
+depth_attachment.setSamples(vk::SampleCountFlagBits::e1);
+depth_attachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+depth_attachment.setStoreOp(vk::AttachmentStoreOp::eDontCare);  // Don't store the result
+depth_attachment.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+depth_attachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
+depth_attachment.setInitialLayout(vk::ImageLayout::eUndefined);
+depth_attachment.setFinalLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+// When creating the image, mark the attachment as transient
+vk::ImageCreateInfo image_info{};
+image_info.setImageType(vk::ImageType::e2D);
+image_info.setExtent(vk::Extent3D(width, height, 1));
+image_info.setMipLevels(1);
+image_info.setArrayLayers(1);
+image_info.setFormat(depth_format);
+image_info.setTiling(vk::ImageTiling::eOptimal);
+image_info.setInitialLayout(vk::ImageLayout::eUndefined);
+image_info.setUsage(vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eTransientAttachment);
+image_info.setSamples(vk::SampleCountFlagBits::e1);
+// Prefer lazily allocated memory for transient attachments when supported
+// Choose memory with vk::MemoryPropertyFlagBits::eLazilyAllocated
+----
+
+* *渲染通道结构*：设计渲染通道时要利用基于瓦片的渲染：
+   - 使用子通道把渲染操作保持在瓦片内存内。
+   - 使用恰当的加载/存储操作，尽量减少内存流量。
+
+[source,cpp]
+----
+// Create a render pass with multiple subpasses
+vk::SubpassDescription subpass1{};
+subpass1.setPipelineBindPoint(vk::PipelineBindPoint::eGraphics);
+subpass1.setColorAttachments(color_attachment_refs);
+subpass1.setDepthStencilAttachment(&depth_attachment_ref);
+
+vk::SubpassDescription subpass2{};
+subpass2.setPipelineBindPoint(vk::PipelineBindPoint::eGraphics);
+subpass2.setInputAttachments(input_attachment_refs);  // Use output from subpass1 as input
+subpass2.setColorAttachments(final_color_attachment_refs);
+
+// Create a dependency to ensure proper ordering
+vk::SubpassDependency dependency{};
+dependency.setSrcSubpass(0);
+dependency.setDstSubpass(1);
+dependency.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+dependency.setDstStageMask(vk::PipelineStageFlagBits::eFragmentShader);
+dependency.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
+dependency.setDstAccessMask(vk::AccessFlagBits::eInputAttachmentRead);
+
+// Create the render pass
+vk::RenderPassCreateInfo render_pass_info{};
+render_pass_info.setAttachments(attachments);
+render_pass_info.setSubpasses({subpass1, subpass2});
+render_pass_info.setDependencies(dependency);
+
+vk::RenderPass render_pass = device.createRenderPass(render_pass_info);
+----
+
+==== TBR 最佳实践
+
+* *避免外部帧缓冲区读取*：避免读取那些需要把瓦片刷写到外部内存再重新加载的图像；这在 TBR 上开销很大。
+  - 从片上/瓦片内存进行同像素的本地读取没有问题，而且在基于瓦片的 GPU 上是被鼓励的做法。
+  - 在 Vulkan 中，可以使用子通道内的输入附件，或 `VK_KHR_dynamic_rendering_local_read` 能力，在不离开瓦片内存的情况下完成瓦片内本地读取。在基于瓦片的架构上，这通常被称为像素本地存储（PLS）。
+
+* *针对瓦片尺寸优化*：设计渲染算法时考虑瓦片尺寸。例如，如果你知道瓦片尺寸是 16x16，可以据此组织数据或算法，让它们在这样的尺寸下高效工作。
+
+===== 基于瓦片的 GPU 上的附件加载/存储操作
+
+在基于瓦片的 GPU 上，正确使用 loadOp 和 storeOp 是影响最大的优化之一：
+
+- 当不需要之前的内容时，用 loadOp = CLEAR 和 initialLayout = UNDEFINED 清除附件。这能避免对该瓦片的外部内存读取。
+- 对渲染通道结束后不再需要结果的附件（例如瞬态深度或中间颜色目标）使用 storeOp = DONT_CARE。这可以避免把瓦片刷回主内存。
+- 对交换链图像（或任何之后要采样/传输的图像），使用 storeOp = STORE，并恰当地设置 finalLayout（例如交换链用 PRESENT_SRC_KHR）。
+- 对 MSAA，要在同一个渲染通道内完成解析，这样硬件可以从瓦片内存解析，只把解析后的图像存储到外部内存。
+
+[source,cpp]
+----
+// Color attachment that we clear and present
+vk::AttachmentDescription color_attachment{};
+color_attachment.setFormat(swapchain_format);
+color_attachment.setSamples(vk::SampleCountFlagBits::e1);
+color_attachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+color_attachment.setStoreOp(vk::AttachmentStoreOp::eStore); // we need to present
+color_attachment.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+color_attachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
+color_attachment.setInitialLayout(vk::ImageLayout::eUndefined); // no need to load previous contents
+color_attachment.setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
+
+// Depth attachment used only within the pass
+vk::AttachmentDescription depth_attachment{};
+depth_attachment.setFormat(depth_format);
+depth_attachment.setSamples(vk::SampleCountFlagBits::e1);
+depth_attachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+depth_attachment.setStoreOp(vk::AttachmentStoreOp::eDontCare); // don't flush depth to memory
+depth_attachment.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+depth_attachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
+depth_attachment.setInitialLayout(vk::ImageLayout::eUndefined);
+depth_attachment.setFinalLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
+----
+
+[NOTE]
+====
+如果使用动态渲染，同样的规则通过 vk::RenderingAttachmentInfo 的 loadOp/storeOp 字段生效。
+背景资料参见 Vulkan Guide 的 Render Passes and Subpasses、Tile-based GPUs。
+====
+
+===== 基于瓦片的 GPU 上的流水线化：子通道依赖与 BY_REGION
+
+基于瓦片的 GPU 受益于细粒度同步，它能把工作和数据留在片内：
+
+- 优先使用带输入附件的子通道，把生产者/消费者留在同一个渲染通道内，从而实现瓦片内本地读取。
+- 使用 vk::DependencyFlagBits::eByRegion 把冒险限制在实际写入/读取的像素区域，避免不必要的瓦片刷写。
+- 避免过宽的屏障（例如 ALL_COMMANDS、MEMORY_READ/WRITE），它们会串行化流水线，并可能强制产生外部内存流量。要使用精确的阶段/访问掩码。
+
+示例：从写颜色的子通道到把该颜色作为输入附件读取的子通道的依赖。
+
+[source,cpp]
+----
+vk::SubpassDependency dep{};
+dep.setSrcSubpass(0);
+dep.setDstSubpass(1);
+dep.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+dep.setDstStageMask(vk::PipelineStageFlagBits::eFragmentShader);
+dep.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
+dep.setDstAccessMask(vk::AccessFlagBits::eInputAttachmentRead);
+dep.setDependencyFlags(vk::DependencyFlagBits::eByRegion);
+----
+
+示例：到渲染通道第一个子通道的外部依赖，允许与前一个通道流水线化，同时按区域限制作用范围。
+
+[source,cpp]
+----
+vk::SubpassDependency externalDep{};
+externalDep.setSrcSubpass(VK_SUBPASS_EXTERNAL);
+externalDep.setDstSubpass(0);
+externalDep.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+externalDep.setDstStageMask(vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eColorAttachmentOutput);
+externalDep.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
+externalDep.setDstAccessMask(vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eColorAttachmentWrite);
+externalDep.setDependencyFlags(vk::DependencyFlagBits::eByRegion);
+----
+
+[NOTE]
+====
+使用 Synchronization2（vkCmdPipelineBarrier2 等）时，避免 ALL_COMMANDS，优先选择能覆盖你所处理冒险的最小阶段/访问集合。尽可能使用渲染通道/子通道结构——这是表达流水线化时最贴合瓦片式架构的方式。
+====
+
+更多指导参见 xref:https://docs.vulkan.org/guide/latest/[Vulkan Guide] 中关于 Tile-based GPUs、Render Passes 和 Synchronization 的主题。
+
+===== 内存管理
+
+要提升 TBR 架构中内存分配的效率：
+
+* *选择最优内存类型*：调用 vkAllocateMemory 时选择最匹配的内存类型（配合恰当的 VkMemoryPropertyFlags）。
+
+* *批量分配*：对每一类资源（例如索引缓冲区、顶点缓冲区和统一缓冲区），尽可能一次性分配一大段指定大小的内存。
+
+* *复用内存资源*：让多个通道通过时间分片轮流使用已分配的内存。
+
+* *在合适时使用缓存内存*：考虑使用 VK_MEMORY_PROPERTY_HOST_CACHED_BIT，并在内存可能被 CPU 访问时手动刷新。这通常比 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT 更高效，因为驱动可以一次性刷新一大块内存。
+
+* *尽量减少分配调用*：避免频繁调用 vkAllocateMemory。内存分配次数受 maxMemoryAllocationCount 限制。
+
+===== 着色器优化
+
+针对 TBR 架构优化着色器可以显著提升性能：
+
+* *向量化内存访问*：以向量化的方式访问内存，以减少访问周期和带宽。例如：
+
+[source,glsl]
+----
+// Recommended: Vectorized access
+struct TileStructSample {
+    vec4 data;
+};
+
+void main() {
+    uint idx = 0u;
+    TileStructSample ts[3];
+    while (idx < 3u) {
+        ts[int(idx)].data = a;
+        idx++;
+    }
+}
+
+// Not recommended: Non-vectorized access
+struct TileStructSample {
+    float data1;
+    float data2;
+    float data3;
+    float data4;
+};
+
+void main() {
+    uint idx = 0u;
+    TileStructSample ts[3];
+    while (idx < 3u) {
+        ts[int(idx)].data1 = a;
+        ts[int(idx)].data2 = b;
+        ts[int(idx)].data3 = c;
+        ts[int(idx)].data4 = d;
+        idx++;
+    }
+}
+----
+
+* *优化统一缓冲区*：对小数据，考虑用推送常量或宏常量代替统一缓冲区。尽可能避免动态索引。
+
+* *尽量减少分支*：减少复杂的分支结构、分支嵌套和循环结构，因为它们会损害并行性。
+
+* *使用半精度*：在合适的地方使用半精度浮点数，以降低带宽和功耗。在 SPIR-V 中，对变量或结果使用 relaxed-precision 装饰。
+
+===== 深度测试优化
+
+恰当的深度测试对 TBR 性能至关重要：
+
+* *启用深度测试与深度写入*：这让 GPU 能剔除被遮挡的图元，减少过度绘制。
+
+* *避免会禁用 Early-Z 的操作*：以下操作会使早期深度测试失效：
+  - 在片元着色器中使用 discard 指令
+  - 显式写入 gl_FragDepth（GLSL）或 SV_Depth（slang）
+  - 使用存储图像或存储缓冲区
+  - 使用 gl_SampleMask（GLSL 中显式开关特定像素的方式）
+  - 同时启用深度边界和深度写入
+  - 同时启用混合和深度写入
+
+* *一致的比较操作*：使用 compareOp 时，尽量让渲染通道内每次绘制的取值保持一致。
+
+* *正确清除附件*：应在渲染通道开始时清除附件，或者在之前的绘制调用没有分配有效 compareOp 值时清除。
+
+=== 立即模式渲染（IMR）
+
+传统桌面 GPU 和一些较老的移动 GPU 采用立即模式渲染架构。
+
+==== IMR 的工作方式
+
+1. *顶点处理*：处理顶点并组装图元。
+
+2. *光栅化*：把图元转换为片元。
+
+3. *片元处理*：处理每个片元，并把结果直接写入主内存中的帧缓冲区。
+
+==== IMR 的优势
+
+1. *简单*：渲染模型更直白，与传统的图形管线一致。
+
+2. *灵活*：一些需要读取帧缓冲区的算法更容易实现。
+
+==== 针对 IMR 优化
+
+如果你的目标设备使用 IMR，可以考虑以下优化：
+
+1. *从前到后渲染*：不透明物体按从前到后的顺序渲染，以尽量减少过度绘制。
+
+2. *Early-Z*：利用深度测试在管线早期就拒绝片元。
+
+3. *遮挡剔除*：实现遮挡剔除，避免渲染不可见的物体。
+
+=== 检测渲染架构
+
+Vulkan 没有提供直接判断 GPU 使用 TBR 还是 IMR 的方法。不过，你可以根据设备厂商和型号做出有根据的推测：
+
+[source,cpp]
+----
+bool is_likely_tbr_gpu(vk::PhysicalDevice physical_device) {
+    vk::PhysicalDeviceProperties props = physical_device.getProperties();
+
+    // Most mobile GPUs from these vendors use TBR
+    if (props.vendorID == 0x5143) {  // Qualcomm
+        return true;
+    }
+    if (props.vendorID == 0x1010) {  // PowerVR (Imagination Technologies)
+        return true;
+    }
+    if (props.vendorID == 0x13B5) {  // ARM Mali
+        return true;
+    }
+    if (props.vendorID == 0x19E5) {  // Huawei
+        return true;
+    }
+
+    // Apple GPUs are also TBR
+    if (props.vendorID == 0x106B) {  // Apple
+        return true;
+    }
+
+    // For other vendors, you might need to maintain a list of known TBR GPUs
+    // or just assume desktop GPUs are IMR and mobile GPUs are TBR
+
+    return false;
+}
+----
+
+=== 同时适配两种架构
+
+最好的做法是让引擎在 TBR 和 IMR 架构上都能良好工作：
+
+* *检测架构*：用启发式规则检测可能的架构。
+
+* *条件优化*：根据检测到的架构应用不同的优化：
+
+[source,cpp]
+----
+void configure_rendering_pipeline(vk::PhysicalDevice physical_device) {
+    bool is_tbr = is_likely_tbr_gpu(physical_device);
+
+    if (is_tbr) {
+        // TBR optimizations
+        use_transient_attachments = true;
+        prioritize_subpass_dependencies = true;
+        avoid_framebuffer_reads = true;
+    } else {
+        // IMR optimizations
+        use_front_to_back_sorting = true;
+        prioritize_early_z = true;
+        implement_occlusion_culling = true;
+    }
+}
+----
+
+* *回退策略*：如果无法判断架构，就按 TBR 来优化，因为这类优化一般不会明显损害 IMR 性能。
+
+=== 两种架构通用的最佳实践
+
+无论采用哪种渲染架构，以下做法都有助于优化性能：
+
+1. *尽量减少状态变更*：按材质对绘制调用分组，以减少状态变更。
+
+2. *批处理相似物体*：使用实例化或批处理来降低绘制调用的开销。
+
+3. *使用恰当的同步*：只使用保证正确渲染所需的最小同步。
+
+4. *在目标设备上做性能分析*：一定要在实际的目标设备上测试你的优化。
+
+下一节中，我们会探索能帮你在移动设备上优化性能的 Vulkan 扩展，尤其是那些利用基于瓦片架构的扩展。
+
+xref:Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc[上一篇：移动端开发：性能优化] | xref:Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc[下一篇：移动端开发：Vulkan 扩展]

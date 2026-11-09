@@ -1,0 +1,36 @@
+{
+  "id": "b092",
+  "words": 5868,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/12_iree.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/12_iree.adoc",
+      "words": 2625,
+      "title": "IREE (OpenXLA): Ahead‑of‑Time and JIT Compilation for ML"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc",
+      "words": 1141,
+      "title": "Apache TVM: End‑to‑End Compiler Stack"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/14_mojo_max.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/14_mojo_max.adoc",
+      "words": 793,
+      "title": "Mojo / MAX: Compiler‑Driven Inference from Modular"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/15_openxla.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/15_openxla.adoc",
+      "words": 611,
+      "title": "OpenXLA: XLA, StableHLO, and Where Vulkan Fits"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc",
+      "words": 698,
+      "title": "Choosing the Right ML Compiler"
+    }
+  ]
+}

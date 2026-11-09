@@ -1,0 +1,143 @@
+= 性能分析：精通 Roofline 模型
+:pp: ++
+:stem: latexmath
+
+你的 Vulkan ML 实现已经正确——输出在浮点容差范围内与 PyTorch 一致。现在你想让它变快。可从哪儿下手？
+
+没有测量就没有优化，那只是**瞎猜**。你可能花好几天手工调优一个 ReLU 激活，最后才发现它占不到总运行时间的 1%。与此同时，卷积内核里一个内存布局问题正在无声地浪费 80% 的 GPU 带宽。
+
+本章我们要学会看穿 GPU 这个「黑盒」。我们将从基础计时走向深入的硬件性能分析，用 **Roofline 模型**精确理解代码为什么慢、现实中它最快还能快多少。
+
+== 性能思维：三大瓶颈
+
+在现代 GPU 上，算术几乎是「免费」的。真正的成本是**数据移动**。典型的 GPU 做上千次加法的时间，只够从显存里取一个浮点数。
+
+分析 ML 内核时，你要判断自己处在三种状态中的哪一种：
+
+1.  **内存受限**：计算单元闲着，因为内存总线已经饱和。你在等权重或激活值从显存运来。
+2.  **计算受限**：你的数学运算量太大（例如一个庞大的 7x7 卷积），反而是内存总线在等你。
+3.  **延迟受限**：你启动的线程不够多，无法隐藏内存访问的代价。哪怕内存总线没满，单个线程也在等数据而停顿。
+
+性能分析会告诉你处于哪种状态。如果内存受限，增加数学运算（比如更复杂的激活）实际上是免费的。如果计算受限，你就需要简化算法，或者改用更快的硬件指令。
+
+== 为性能分析做好准备
+
+在拿出重型工具之前，必须确保环境适合精确测量。
+
+*   **Release 模式**：绝不要对 Debug 构建做性能分析。Debug 构建常常加入额外的同步，并关闭对 GPU 性能至关重要的编译器优化。
+*   **GPU「预热」**：最初几次推理总是偏慢，原因包括着色器编译、内存分配和驱动开销。计时之前先跑 10 到 20 次。
+*   **固定时钟频率**：做专业基准测试时，用 `nvidia-smi -lgc` 之类的工具锁住 GPU 频率。这样能避免「温度降频」让结果变得不确定。
+
+== 工具 1：Vulkan 时间戳查询（秒表）
+
+最基础的性能分析方式是使用 Vulkan 内置的**时间戳查询**。它让你精确测量命令缓冲区中任意两点之间经过了多少个 GPU 周期。
+
+=== 实现时间戳
+要用时间戳，你需要一个**查询池**。
+
+[source,cpp]
+----
+// 1. Create a Query Pool
+vk::QueryPoolCreateInfo poolInfo{
+    .queryType = vk::QueryType::eTimestamp,
+    .queryCount = 2 // One for start, one for end
+};
+auto queryPool = device.createQueryPool(poolInfo);
+
+// 2. Record the timestamps in your command buffer
+cmd.resetQueryPool(queryPool, 0, 2);
+
+// We use 'eBottomOfPipe' to ensure the work is actually FINISHED
+cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, queryPool, 0);
+
+// ... Dispatch your compute shader ...
+
+cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, queryPool, 1);
+
+// 3. Retrieve the results after the fence wait
+uint64_t results[2];
+device.getQueryPoolResults(queryPool, 0, 2, sizeof(results), results,
+                           sizeof(uint64_t), vk::QueryResultFlagBits::e64);
+
+// 4. Convert cycles to milliseconds
+// 'timestampPeriod' is from VkPhysicalDeviceLimits
+float ms = (results[1] - results[0]) * physicalDeviceLimits.timestampPeriod / 1e6f;
+----
+
+**好处**：开销极低。你可以把它留在应用里，做一个实时的「性能 HUD」，或者把每一层的耗时写进 CI 日志。
+
+== 工具 2：Roofline 模型（地图）
+
+怎么判断一个内核是否「足够快」？我们用 **Roofline 模型**。它把性能（GFLOPS）画在纵轴，把**算术强度**（每字节的运算次数）画在横轴。
+
+=== 数学基础
+每块 GPU 都有两个物理极限：
+1.  **峰值算力**：每秒能执行的最大浮点运算次数（GFLOPS）。
+2.  **峰值带宽**：每秒能从内存读取的最大字节数（GB/s）。
+
+[latexmath]
+++++
+\text{Arithmetic Intensity} (I) = \frac{\text{Total FLOPs}}{\text{Total Bytes Transferred}}
+++++
+
+「Roofline」定义为：
+[latexmath]
+++++
+\text{Attainable Performance} = \min(\text{Peak Compute}, \text{Peak Bandwidth} \times I)
+++++
+
+=== 案例：3x3 卷积
+想象一个作用于 224x224x64 张量的 3x3 卷积。
+
+*   **FLOPs**：latexmath:[224 \times 224 \times 64 \times (3 \times 3 \times 64 \times 2) \approx 3.6 \text{ Billion FLOPs}]，约 36 亿次浮点运算
+*   **字节数**：加载权重、输入并写出输出，latexmath:[\approx 50 \text{ Megabytes}]
+*   **强度**：latexmath:[3.6 \text{ GB} / 50 \text{ MB} \approx 72 \text{ FLOPs/Byte}]
+
+如果你的 GPU 峰值内存带宽是 **500 GB/s**，那么这个内核的「理论天花板」就是：
+[latexmath]
+++++
+500 \text{ GB/s} \times 72 \text{ FLOPs/Byte} = 36,000 \text{ GFLOPS (36 TFLOPS)}
+++++
+
+如果你 GPU 的峰值算力只有 **15 TFLOPS**，那你就处于**计算受限**状态。再怎么优化内存都不会让它更快！你必须使用更快的数学（比如 FP16 或 Tensor Core）把「屋顶」抬高。
+
+== 工具 3：NVIDIA Nsight Compute（显微镜）
+
+如果说时间戳告诉你内核*慢*，Nsight Compute 则告诉你*为什么*慢。它能深入硬件的内部计数器。
+
+=== 需要关注的关键指标：
+*   **DRAM 吞吐量**：如果 > 80%，说明你**内存受限**。你需要更有效地复用数据（分块）。
+*   **计算（SM）吞吐量**：如果 > 80%，说明你**计算受限**。
+*   **占用率**：告诉你有多少百分比的 GPU「线程槽位」被占满。
+    *   **低占用率（< 20%）**：通常意味着你的着色器用了太多寄存器或太多共享内存。GPU 无法启动足够多的线程来隐藏内存延迟。
+    *   **高占用率（> 50%）**：很好！你的 GPU 已经被工作「喂饱」了。
+
+== Vulkan ML 中的常见瓶颈
+
+=== 1. 非合并内存访问
+当一个 **Warp**（32 个线程）读取内存时，它希望读取**连续的 128 字节块**。如果线程 0 读索引 0，线程 1 读索引 1000，GPU 就必须执行两次独立的内存事务。
+
+*   **修法**：确保你的 `pixelIdx` 计算让相邻线程读取相邻的内存地址。这也是 **NCHW** 布局在计算中往往比 **NHWC** 更快的原因。
+
+=== 2. 寄存器压力
+每个 GPU 计算单元都有固定数量的**寄存器**（最快的内存）。如果你的着色器每线程用 128 个寄存器，GPU 可能一次只能跑 256 个线程。如果能降到 64 个寄存器，就能跑 512 个线程。
+
+*   **修法**：避免在 GLSL 代码里使用巨大的数组。让编译器去管理变量。
+
+=== 3. Warp 分歧
+如果你的着色器里有 `if` 语句，一半线程走一条路、另一半走另一条路，那么 GPU 必须为整个 warp **顺序执行两条路径**。
+
+*   **修法**：让着色器保持「扁平」。尽量用 `clamp()` 或 `max()` 替代 `if` 语句。
+
+== 小结：数据驱动的优化
+
+性能分析决定了你是「在黑暗中乱戳」，还是在做外科手术式的精密工程。借助这里讨论的工具和指标，你能把优化变成一个可预测的过程。
+
+*   用**时间戳**测量，找出最慢的层。
+*   用 **Nsight** 或 **RGP** 分析，找出硬件瓶颈。
+*   **计算**算术强度，看清你的理论天花板。
+*   只把精力**集中**在那 20% 却占用 80% 时间的代码上。
+
+下一章我们会把这些洞察应用到实际的**优化技巧**上，学习那些能把慢着色器变成高性能 ML 引擎的模式。
+
+xref:ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc[上一篇：验证 ML 正确性：追寻数值真相] | xref:ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc[下一篇：优化技巧：压榨芯片性能]

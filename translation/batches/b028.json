@@ -1,0 +1,18 @@
+{
+  "id": "b028",
+  "words": 4444,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc",
+      "words": 3161,
+      "title": "Compute on Android"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc",
+      "words": 1283,
+      "title": "Optimizing for Mobile GPUs"
+    }
+  ]
+}

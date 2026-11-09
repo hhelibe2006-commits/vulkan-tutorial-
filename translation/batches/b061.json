@@ -1,0 +1,30 @@
+{
+  "id": "b061",
+  "words": 4567,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc",
+      "words": 512,
+      "title": "Mobile Development: Introduction"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc",
+      "words": 958,
+      "title": "Mobile Development: Platform Considerations"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc",
+      "words": 1264,
+      "title": "Mobile Development: Performance Optimizations"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc",
+      "words": 1833,
+      "title": "Mobile Development: Rendering Approaches"
+    }
+  ]
+}

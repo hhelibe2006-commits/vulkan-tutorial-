@@ -1,0 +1,81 @@
+:pp: {plus}{plus}
+
+= JetBrains CLion 与 Android Studio
+
+== 简介：索引器的作用
+
+**CLion** 和 **Android Studio** 会为你的代码建立完整的语义模型，而不只是文本索引——一棵完整的抽象语法树，覆盖每一次宏展开和每一个从 Vulkan SDK 引入的头文件。对 AI 工具来说，这是 IDE 能提供的最有用的东西，因为它决定了一个助手是在文本上做模式匹配，还是能拿自己的答案与你的实际代码核对。
+
+== 为什么索引在这里很重要
+
+多数 AI 工具在无人约束时会把你的代码当作纯文本：它们看到 `VkImageCreateInfo`，就依据训练时学到的模式作答，而不管你的引擎里这个结构体的版本是否与内存中的一致。如果你的引擎对它做了不同的封装，或者你用的是较旧的 SDK，通用助手往往会给出你的构建里根本不存在的成员或标志。
+
+由于 CLion 和 Android Studio 会索引整个项目，能查询该索引的助手可以先核实 `VkImage` 究竟定义在哪里、`CMakeLists.txt` 中启用了哪些扩展、以及你是否在用 `vk::raii` 包装，然后再作答。这并不能让它万无一失，但确实意味着「重构我们的图像创建逻辑」这样的请求会被拿到你的代码上核对，而不是从训练数据的平均值里猜出来。
+
+== 配置 CLion
+
+=== JetBrains AI Assistant + MCP
+
+JetBrains AI Assistant 直接支持模型上下文协议，因此它可以调用 Vulkan 规范，而不只是依赖训练时见过的东西。
+
+**添加 Vulkan MCP 服务器：**
+
+这里假设你已经按照 xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc#_first_step_building_the_vulkan_mcp_server[环境搭建] 一章中的说明构建好了 `mcp-Vulkan`。
+
+1.  打开 **Settings**（`Ctrl+Alt+S` 或 `Cmd+,`）。
+2.  进入 **Tools > AI Assistant > MCP Servers**。
+3.  点击 **+**，选择 **Local Stdio**。
+4.  **Name：** `Vulkan-Spec`
+5.  **Command：** `node`（确保 Node.js 已在 PATH 中）。
+6.  **Arguments：** 已构建服务器的绝对路径：`/path/to/mcp-Vulkan/vulkan/build/index.js`。
+7.  **Environment Variables：** 可选，仅在其它服务器需要时填写。
+
+配置完成后，AI 聊天窗口里的工具图标会显示当前活跃的 MCP 连接。向它询问 `VkVideoProfileInfoKHR` 这类具体结构体，助手就能从当前注册表里取得定义，而不是从过时的训练数据里取。
+
+**示例：** 假设你在实现动态渲染，不确定 `vkCmdBeginRendering` 是否需要在创建实例时启用某个扩展。接上 Vulkan 规范 MCP 之后，你可以直接问助手，而不必自己去翻规范——它会查询注册表和你的项目的 `init.cpp`，给出一个同时基于两者的明确答案。
+
+=== Junie
+
+**Junie** 是 JetBrains 的自主代理——它能对你的项目采取行动，而不只是在侧边面板里建议代码片段。
+
+默认情况下，Junie 使用 **Gemini 3.1 Flash**，选它是因为速度快、上下文窗口大，可以一次读入项目的大部分内容。
+
+**为更难的任务切换模型：** Gemini 3.1 Flash 是合理的默认选择，但对于设计多线程帧图这样的任务，在 Junie 的设置里切换到 **Gemini 3.1 Pro**、**Claude 4.6** 或 **GPT-5.3** 通常能得到更好的结果，代价是更高的成本。你可以在 Junie 工具窗口的下拉菜单中切换，也可以在 `Settings > Tools > Junie` 下切换。许多开发者把 Flash 留作日常工作的默认模型（着色器接口、单元测试），只在 Junie 需要推理真正棘手的 bug 或子系统设计时才换成更强的模型。
+
+由于 Junie 运行在 IDE 内部，它能直接访问索引器、调试器和构建系统。你可以交给它「用 VMA 实现一个同时处理暂存内存和设备本地内存的 `Buffer` 类」这样的任务，它会创建头文件和源文件、接入 `CMakeLists.txt` 并尝试构建，同时修掉自己引入的语法错误。它也更容易复用现有的 `Device` 包装，而不是直接实例化一个裸 `VkDevice`，因为它能在你的代码里看到那个包装。
+
+=== 通过 JetBrains IDE MCP 接入外部代理
+
+对于大型、跨文件的重构，你可能想让 **Goose** 这样的外部代理像 CLion 一样看到项目。**JetBrains IDE MCP** 插件为此开放了 IDE 的内部 API。这样「找出 `VkFramebuffer` 的所有用法并把它们迁移到新的 `AttachmentBuilder` 类」这样的请求就会经过真正的索引器，而不是文本搜索，这对捕捉藏在模板代码里的用法很关键。
+
+== 在云端模型与本地模型之间选择
+
+并非每个任务都需要大型云端模型——写一个 `VkImageView` 创建循环与设计一个考虑同步的渲染图，所需的模型并不相同。
+
+JetBrains AI Assistant 可以连接多个后端，许多开发者还会用 **Continue** 插件接入其它后端。一个合理的分工是：把推理能力强的云端模型（**Claude 4.6**、**GPT-5.3**）用于架构工作和复杂的 C{pp} 抽象，把本地模型（**Qwen 3-Coder 30B**、**Llama 4**）通过 **Ollama** 用于样板代码、测试和简单重构。本地方案免费、没有网络延迟，而且引擎代码留在你自己的机器上——如果这对你的项目重要，这一点值得纳入考虑。
+
+两者都可以从同一个 JetBrains AI 任务窗口访问，所以切换只是选一个不同的模型，而不是换一个工具。
+
+=== 继续之前
+
+本教程余下部分假设你至少配置了两个端点：一个用于架构规划和复杂调试的云端模型，以及一个用于实现的本地模型。把它们接入 IDE 之后（通过 AI Assistant、Junie 或 Continue），请继续阅读 xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[Goose：自主代理与本地智能]，搭建自主代理与本地推理。
+
+== Android Studio 的特有之处
+
+Android Studio 增加了 **Gemini**，针对 Android NDK 和移动 GPU 架构（Adreno、Mali）做了调优。由于 Android Studio 与 CLion 基于同一平台，Junie 以及上文大部分 CLion 专属工具在这里的工作方式相同。
+
+`VK_ANDROID_external_memory_android_hardware_buffer` 这类 Android 专属扩展是 API 中公认的粗糙之处。由于 Android Studio 中的 Gemini 既能访问你的 `AndroidManifest.xml`，也能访问你的 C{pp} 源码，「如何把一个 `AHardwareBuffer` 导入我们的 Vulkan 渲染器？」这样的问题就会针对你实际的清单权限和 NDK 版本进行核对，并给出跨 Java/Kotlin 与 JNI/Vulkan 两侧的方案，而不是一段可能不匹配你目标 API 级别的通用代码。
+
+== 取舍
+
+**索引成本。** JetBrains 这种深度理解并非免费——在大型引擎上，初始索引和 AI Assistant 的开销会相当明显，尤其是在内存不宽裕的机器上。这笔成本是一次性付出的；一旦索引完成，查找和重构都更快、更准。
+
+**它真正有用的地方：语义化重构。** 如果你在迁移一个核心抽象（比如把一个自定义 `Buffer` 类迁到更新的实现），拥有 AST 意味着 AI 能比基于文本的工具更安全地在整个项目范围内重命名、更新签名和修正调用点。这是为索引成本买单最有力的理由。
+
+== 小结
+
+CLion 和 Android Studio 在 AI 辅助 Vulkan 工作中的主要优势，是 AI 能拿自己的答案与编译器真正看到的内容核对，而不是凭模式猜测。这缩小了上一章描述的上下文鸿沟，代价则是索引开销——在大型项目上你要为此留出预算。
+
+下一章是 xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[Goose：自主代理与本地智能]。如果你在 Windows 上，也可以对比阅读 xref:AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc[Visual Studio：Windows 原生开发] 一章。
+
+xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[上一篇：环境搭建] | xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[下一篇：Goose：自主代理与本地智能]

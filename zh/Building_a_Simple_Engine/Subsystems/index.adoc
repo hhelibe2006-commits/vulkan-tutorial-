@@ -1,0 +1,14 @@
+:pp: {plus}{plus}
+
+= 子系统
+
+本章讲解引擎中两个关键子系统的实现——音频与物理——重点在于利用 Vulkan 的计算能力来提升性能。
+
+* xref:Building_a_Simple_Engine/Subsystems/01_introduction.adoc[子系统：简介]
+* xref:Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc[子系统：音频基础]
+* xref:Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc[子系统：用 Vulkan 做音频处理]
+* xref:Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc[子系统：物理基础]
+* xref:Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc[子系统：用 Vulkan 做物理模拟]
+* xref:Building_a_Simple_Engine/Subsystems/06_conclusion.adoc[子系统：结语]
+
+xref:Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc[上一页：加载模型：结语] | xref:../index.adoc[返回：构建简易引擎：简介]

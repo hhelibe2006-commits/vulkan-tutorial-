@@ -1,0 +1,97 @@
+:pp: {plus}{plus}
+
+= 间接派发：在 GPU 上构建参数
+
+== GPU 自主的核心
+
+在传统的计算管线里，CPU 调用 `vkCmdDispatch(x, y, z)`。`x, y, z` 的值在录制命令缓冲区的那一刻就固定下来了。
+
+但如果所需的工作组数量取决于前一个计算着色器的结果呢？举例来说，当你在剔除一组对象时，只有 GPU 知道有多少对象存活了下来。
+
+**间接派发**（`vkCmdDispatchIndirect`）解决了这个问题：它从**Vulkan 缓冲区**（一个 `VkBuffer`）而不是从命令缓冲区里读取工作组数量。
+
+== 工作原理
+
+1.  **准备**：创建一个用途包含 `VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT` 的缓冲区。
+2.  **GPU 更新**：运行一个「剔除」或「分析」计算着色器。该着色器算出下一步需要的工作组数量，并把该值写进间接缓冲区。
+3.  **派发**：CPU 录制一次对 `vkCmdDispatchIndirect(myIndirectBuffer, offset)` 的调用。
+
+[source,cpp]
+----
+// The layout of the data in the indirect buffer (matching vk::DispatchIndirectCommand)
+struct IndirectCommand {
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+};
+----
+
+== 从着色器写入间接命令
+
+要使用这套机制，你的计算着色器（「生产者」）必须写入一个与 `VkDispatchIndirectCommand` 布局相匹配的缓冲区。
+
+[source,slang]
+----
+// Slang example: Writing the dispatch counts
+struct IndirectCommand {
+    uint3 x;
+};
+
+[[vk::binding(0, 0)]]
+RWStructuredBuffer<IndirectCommand> cmdBuffer;
+
+[numthreads(1, 1, 1)]
+void main() {
+    uint numWorkgroups = calculateRequiredWorkgroups();
+    cmdBuffer[0].x = uint3(numWorkgroups, 1, 1);
+}
+----
+
+=== GLSL：手动控制缓冲区布局
+
+在 GLSL 里，你要定义一个 `buffer` 块，与期望的结构相匹配。关键在于使用正确的对齐方式（`std430`），以确保 GPU 在正确的偏移处读取各个值。
+
+[source,glsl]
+----
+layout(std430, binding = 0) buffer IndirectBuffer {
+    uint x;
+    uint y;
+    uint z;
+} cmd;
+
+void main() {
+    uint numWorkgroups = calculateRequiredWorkgroups();
+    cmd.x = numWorkgroups;
+    cmd.y = 1;
+    cmd.z = 1;
+}
+----
+
+这里的「赢面」在于：只要你在 `vkCmdDispatchIndirect` 调用中使用同一个缓冲区，GPU 就能在没有任何 CPU 干预的情况下自主决定自己的工作负载大小。
+
+== 同步是关键
+
+因为 GPU 要写入的缓冲区，正是它稍后要读取的那个，所以你必须确保这次写入已经完成，并且对间接派发硬件**可见**。
+
+这需要一个设置了以下参数的 **Vulkan 屏障**：
+
+*   `srcStage`: `VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT`
+*   `dstStage`: `VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT`
+*   `srcAccess`: `VK_ACCESS_SHADER_WRITE_BIT`
+*   `dstAccess`: `VK_ACCESS_INDIRECT_COMMAND_READ_BIT`
+
+漏掉这个屏障，GPU 就会读到「垃圾」或过期的数据，导致派发错误，甚至设备崩溃。
+
+== 实战示例：可变大小的工作负载
+
+设想你有一个粒子系统，粒子每帧都可能死亡或新生。
+
+1.  **派发 1（剔除）**：一个计算着色器遍历所有粒子，算出哪些还活着，并把它们的 ID 存入一个「存活」缓冲区。它同时递增一个原子计数器。
+2.  **屏障**：等待剔除完成，并让计数器对间接硬件可见。
+3.  **派发 2（更新）**：调用 `vkCmdDispatchIndirect`。GPU 读取计数器，派发恰好足够的工作组，只更新那些存活下来的粒子。
+
+相比总是按粒子的「最大」数量派发（那会产生成千上万个空闲线程），这种做法高效得多。
+
+下一节我们来看 GPU 如何超越仅仅改变派发尺寸，开始生成自己的**命令链**。
+
+xref:Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc[上一节：间接派发与 GPU 驱动管线] | xref:Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc[下一节：GPU 侧命令生成：自主执行]

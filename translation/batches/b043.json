@@ -1,0 +1,18 @@
+{
+  "id": "b043",
+  "words": 5579,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc",
+      "words": 634,
+      "title": "Camera & Transformations: Transformation Matrices"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc",
+      "words": 4945,
+      "title": "Camera & Transformations: Camera Implementation"
+    }
+  ]
+}

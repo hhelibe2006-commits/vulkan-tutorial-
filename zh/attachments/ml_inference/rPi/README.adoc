@@ -1,0 +1,116 @@
+= 嵌入式野生动物相机（Raspberry Pi）
+:cpp: C++
+
+本示例演示一条为 Raspberry Pi（rPi）4 和 5 设计的、集成式实时 ML 管线。它使用无头 Vulkan 进行预处理，并通过 MobileNetV2 支持 IREE、NNEF（自定义 Vulkan）和 TensorFlow Lite 后端。
+
+== 概览
+
+本应用遵循"嵌入式应用"章节的架构：
+
+1.  **相机采集**：使用 OpenCV 从 CSI 或 USB 相机采集帧。
+2.  **Vulkan 预处理**：使用计算着色器在 GPU 上缩放并归一化图像。
+3.  **推理**：使用 IREE（SPIR-V）、NNEF（通过自定义优化 Vulkan 引擎）或 TFLite 执行 MobileNetV2。
+4.  **日志**：将稳态性能指标（FPS、延迟）输出到控制台。
+
+== 前提条件
+
+*   **硬件**：Raspberry Pi 4 或 5（推荐 64 位操作系统）。
+*   **操作系统**：Raspberry Pi OS（基于 Debian）。
+*   **Vulkan 驱动**：已安装 `mesa-vulkan-drivers`。
+
+== 快速开始
+
+=== 1. 配置环境
+运行配置脚本以安装系统依赖并下载 ML 运行时/模型：
+
+[source,bash]
+----
+chmod +x rPi/setup_rpi.sh
+./rPi/setup_rpi.sh
+----
+
+=== 2. 构建应用
+创建一个构建目录并使用 CMake。你可以在 **NNEF**、**IREE**、**TFLITE** 或 **AUTO**（同时启用所有可用后端）之间选择。
+
+[source,bash]
+----
+mkdir build && cd build
+# Option A: Auto-detect and enable all (Recommended)
+cmake -DML_BACKEND=AUTO ..
+
+# Option B: Specific backends
+# cmake -DML_BACKEND=NNEF ..
+# cmake -DML_BACKEND=IREE ..
+# cmake -DML_BACKEND=TFLITE ..
+
+cmake --build . --target embedded_wildlife_cam_app
+----
+
+=== 3. 运行
+应用会根据模型文件的扩展名自动选择后端。
+
+[source,bash]
+----
+# Run with NNEF (Directory)
+./rPi/embedded_wildlife_cam_app --model models/mobilenetv2_nnef_optimized --labels data/imagenet_classes.txt
+
+# Run with LiteRT/TFLite (.tflite)
+# Note: Ensure LD_LIBRARY_PATH includes the LiteRT shared libraries
+LD_LIBRARY_PATH=../third_party/tensorflow-lite-2.14.0/lib ./rPi/embedded_wildlife_cam_app --model models/mobilenetv2.tflite --labels data/imagenet_classes.txt
+
+# Run with IREE (.vmfb)
+./rPi/embedded_wildlife_cam_app --model models/mobilenetv2.vmfb --labels data/imagenet_classes.txt
+----
+
+== 模型准备
+
+在运行应用之前，必须为你选择的后端准备模型。
+
+=== NNEF 与 TFLite
+使用转换脚本从基础 ONNX 模型生成优化后的 NNEF 和 LiteRT/TFLite 模型：
+
+[source,bash]
+----
+./scripts/convert_mobilenet.py --input models/mobilenetv2-12.onnx
+----
+
+*   **NNEF 输出**：`models/mobilenetv2_nnef_optimized/`
+*   **TFLite 输出**：`models/mobilenetv2.tflite`
+
+=== IREE
+把模型编译为面向 Vulkan 目标的 IREE VM FlatBuffer（`.vmfb`）。
+
+首先，使用提供的脚本导出兼容的 ONNX 模型（它使用较新的 ONNX opset 以避免合法化错误）：
+
+[source,bash]
+----
+./venv/bin/python3 scripts/export_mobilenet_iree.py
+----
+
+然后，把导出的模型编译为 `.vmfb`：
+
+[source,bash]
+----
+./scripts/compile_iree.sh models/mobilenetv2_iree.onnx -o models/mobilenetv2.vmfb --target vulkan-spirv
+----
+
+*注意：来自外部来源的某些 ONNX 模型可能会在 IREE 导入器中遇到合法化错误。使用上面的导出脚本可以确保兼容性。*
+
+== 关键特性
+
+*   **无头设计**：不需要运行 X11 或 Wayland 窗口服务器。
+*   **零拷贝（概念）**：演示把相机帧转移到 Vulkan 纹理的数据流。
+*   **双后端**：在厂商中立的编译器（IREE）、自定义优化 Vulkan 引擎（NNEF）和标准移动端运行时（TFLite）之间切换，以比较性能。
+
+== 桌面测试（模拟）
+
+如果未检测到 Raspberry Pi，本示例默认会在桌面环境中作为模拟构建。
+
+[source,bash]
+----
+cmake -DML_BACKEND=NNEF ..
+cmake --build . --target embedded_wildlife_cam_app
+./rPi/embedded_wildlife_cam_app --model models/mobilenetv2_nnef_optimized --labels data/imagenet_classes.txt
+----
+
+在模拟模式下，如果未检测到相机，应用会生成一路虚拟视频流。

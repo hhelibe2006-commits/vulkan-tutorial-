@@ -1,0 +1,40 @@
+:pp: {plus}{plus}
+
+= 移动端开发：简介
+
+== 移动端开发概述
+
+在前面的章节中，我们已经为简易引擎打下了坚实的基础，实现了渲染管线、相机系统、模型加载、必要子系统和工具链等核心组件。现在，我们准备好探索如何让引擎适配移动平台，具体来说就是 Android 和 iOS。
+
+移动开发为 Vulkan 应用带来了独特的挑战与机遇。移动硬件的限制——有限的功耗、内存和散热能力——要求你仔细优化，并考虑平台特有的特性。与此同时，移动平台也提供了激动人心的可能，让你的应用触达更广泛的用户。
+
+=== 本章内容
+
+本章将带你走过移动 Vulkan 开发这片复杂的地带，在这里桌面端的假设往往并不成立。我们先考察 Android 与 iOS 的平台特定要求，它们在环境搭建、生命周期管理和输入处理上都带来了独特的挑战。移动应用会面临桌面应用很少遇到的限制——突然中断、电量顾虑以及参差不齐的硬件能力，都需要在引擎设计中仔细考量。
+
+在移动环境中，性能优化变得至关重要，每一瓦功耗、每一毫秒帧时间都会影响用户体验。我们会探索高效纹理格式这类关键技术，以及移动特有的优化手段——它们往往决定了是流畅运行，还是让用户抓狂。
+
+要让优化真正有效，理解移动 GPU 与桌面 GPU 在架构上的根本差异就变得必不可少。我们会比较基于瓦片的渲染（TBR）与立即模式渲染（IMR）两种方案，帮你理解为什么在桌面上表现良好的技术到了移动端可能性能很差，以及如何设计能发挥移动 GPU 优势的渲染策略。
+
+最后，我们会探索专为移动平台设计的 Vulkan 扩展。诸如 VK_KHR_dynamic_rendering_local_read、VK_KHR_dynamic_rendering 和 VK_EXT_shader_tile_image 这样的扩展释放了性能机会，能大幅提升应用在移动硬件上的效率，把勉强可接受的性能变成出色的用户体验。
+
+=== 前提条件
+
+本章是前面各章所构建成果的集大成者，因为移动开发需要与所有引擎系统深度集成。你需要扎实掌握 Vulkan 基础和我们开发的引擎架构，因为移动优化常常需要在每个层面微调——从资源管理和渲染管线，到内存分配和同步。
+
+现代 {cpp} 技能在移动开发中尤其宝贵，因为性能限制要求代码高效、资源管理谨慎。像 constexpr、结构化绑定和 concepts 这样的 {cpp}17 与 {cpp}20 特性，有助于编写在严格功耗与散热限制下依然表现良好的移动优化代码。
+
+理解基本的移动开发概念，能为我们接下来要做的平台特定决策提供关键背景。移动应用运行在桌面应用很少面对的限制之下——应用生命周期事件、变化的屏幕密度、触摸输入范式，以及保住电量的需求，都会影响我们为移动平台设计和实现 Vulkan 引擎的方式。
+
+你还应该熟悉主教程中的以下章节：
+
+* 基础 Vulkan 概念：
+** xref:03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc[命令缓冲区]
+** xref:03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc[图形管线]
+* xref:04_Vertex_buffers/00_Vertex_input_description.adoc[顶点] 与 xref:04_Vertex_buffers/03_Index_buffer.adoc[索引缓冲区]
+* xref:05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc[统一缓冲区]
+* xref:11_Compute_Shader.adoc[计算着色器]
+
+我们从 Android 与 iOS 的平台考量开始。
+
+xref:Building_a_Simple_Engine/Tooling/07_conclusion.adoc[上一篇：工具链：结语] | xref:Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc[下一篇：移动端开发：平台考量]

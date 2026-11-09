@@ -1,0 +1,100 @@
+:pp: {plus}{plus}
+
+= Android 与 iOS 部署
+
+== 引言
+
+移动端的 Vulkan 开发，意味着要在高性能渲染与电池限制、因发热而降频的 GPU，以及相当可观的一堆平台胶水代码之间做权衡。本章讲如何用 AI 起草这些胶水代码，并帮你针对基于瓦片的延迟渲染器（TBDR）优化渲染管线。
+
+== 胶水代码问题
+
+在移动端第一次调用 `vkCreateInstance` 之前，你需要平台相关的准备工作：生命周期处理，以及平台原生语言与你的 C{pp} 核心之间的桥接代码。这类代码机械、文档齐全，正是 AI 助手能快速起草的——但你仍然要通读它生成的内容，因为这里若对表面生命周期或线程做出错误假设，日后会很难调试。
+
+== 教程：构建移动端入口
+
+=== 第 1 步：JNI 桥接（Android）
+
+新建一个文件 `VulkanEntry.cpp`，然后让助手（Goose 或 IDE 的聊天）生成 JNI 样板代码。
+
+[source,cpp]
+----
+// Example JNI bridge for surface management
+#include <jni.h>
+#include <android/native_window_jni.h>
+#include "VulkanRenderer.hpp"
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_vulkan_MainActivity_onSurfaceCreated(JNIEnv* env, jobject thiz, jobject surface) {
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    VulkanRenderer::getInstance().initSurface(window);
+}
+----
+
+**示例提示词：** *“生成完整的 `VulkanEntry.cpp` JNI 桥接。我们需要处理 `onSurfaceCreated`、`onSurfaceChanged` 和 `onSurfaceDestroyed`。使用 `ANativeWindow_fromSurface`，并把它传给渲染器的 `initSurface` 方法。”*
+
+=== 第 2 步：iOS SwiftUI 桥接
+
+在 iOS 上，你需要把 Vulkan 表面包装成 SwiftUI 兼容的视图。让助手生成 `UIViewRepresentable` 桥接。
+
+[source,swift]
+----
+// Example SwiftUI wrapper for a Vulkan-ready CAMetalLayer
+import SwiftUI
+import MetalKit
+
+struct VulkanView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        let metalLayer = CAMetalLayer()
+        view.layer.addSublayer(metalLayer)
+        // Logic to pass this layer to C++ goes here
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+----
+
+**示例提示词：** *“生成一个 SwiftUI 的 `UIViewRepresentable`，为我们的 Vulkan 引擎提供 `CAMetalLayer`。我们需要同时支持 MoltenVK 和 KosmicKrisp，所以桥接要能处理不同的原生句柄类型。”*
+
+== 教程：针对瓦片内存做优化（TBDR）
+
+与桌面 GPU 不同，移动 GPU（Adreno、Mali、Apple）是基于瓦片的。要想获得好的性能，通常应该用子通道把 G-Buffer 数据留在片上，而不是在 VRAM 里来回倒腾。
+
+=== 第 1 步：子通道重构
+
+如果你的引擎目前为 G-Buffer 和光照各用一个渲染通道，就让助手把它们合并成一个带子通道的通道。
+
+[source,text]
+----
+Refactor our 'DeferredRenderer::createRenderPass' method.
+Combine the G-Buffer and Lighting passes into a single
+'VkRenderPass' with two subpasses. Use 'subpassLoad'
+in the fragment shader to read the G-Buffer data directly
+from tile memory.
+----
+
+=== 第 2 步：依赖逻辑
+
+让它生成所需的 `VkSubpassDependency` 结构，以免 GPU 过早地把瓦片数据写回 VRAM。
+
+[source,cpp]
+----
+// Subpass dependency for on-chip data flow
+VkSubpassDependency dependency = {};
+dependency.srcSubpass = 0; // G-Buffer
+dependency.dstSubpass = 1; // Lighting
+dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+dependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+dependency.dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+dependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+----
+
+把这些数据留在片上、而不是经 VRAM 来回搬运，能显著降低内存带宽占用，这对移动端的帧率和续航都有影响。
+
+== 小结
+
+移动端的 Vulkan 工作，很大程度上就是管理带宽和平台胶水。用 AI 起草 JNI/Objective-C{pp} 桥接代码、并协助围绕瓦片内存重构渲染通道，确实能省下不少时间——但审阅这一步在这里比在引擎的大多数其他部分都更重要，因为平台相关的 bug 往往要等你到真机上运行才会现形。
+
+下一篇：xref:AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc[嵌入式与安全关键系统]

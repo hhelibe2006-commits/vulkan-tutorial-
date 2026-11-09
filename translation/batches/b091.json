@@ -1,0 +1,18 @@
+{
+  "id": "b091",
+  "words": 3894,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/10_choosing_library.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/10_choosing_library.adoc",
+      "words": 2995,
+      "title": "Choosing the Right Library"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc",
+      "words": 899,
+      "title": "ML Compilers: Overview and When to Use Them"
+    }
+  ]
+}

@@ -1,0 +1,341 @@
+= ML 推理示例
+
+本目录包含 "使用 Vulkan 进行机器学习推理" 教程系列的示例代码。
+
+== 概览
+
+这些示例演示了使用 Vulkan 计算着色器实现 ML 推理的实用方案，与 `en/ML_Inference/` 中的教程章节互为补充。
+
+== 示例
+
+=== mnist
+带可绘制画布的交互式 MNIST 数字识别。支持多种后端：
+* **Vulkan Compute**：用 Slang 编写的自定义着色器（默认）。
+* **ONNX Runtime**：桌面端标准推理（如果可用）。
+* **IREE**：面向 Vulkan SPIR-V 的现代 ML 编译器运行时。
+* **NNEF**：以引擎为中心、使用 Khronos Neural Network Exchange Format 的路径。
+
+=== classification
+使用 MobileNetV2 和 ONNX Runtime 进行图像分类。演示基于 Vulkan 的图像预处理以及第三方 ML 框架集成。
+
+=== iree_vulkan_inference
+最小 C++ 示例，演示在 Vulkan 上使用 **IREE** 的编译器/运行时嵌入模式。展示如何加载预编译模型（`.vmfb`）并在 Vulkan HAL 上执行。
+
+=== nnef_inference
+无头 C++ 示例，演示自定义 NNEF 执行引擎。展示如何解析 NNEF 模型、加载二进制权重，并使用专用的 Vulkan 计算着色器（`nnef_ops.slang`）执行它们。
+
+=== nnef_pipeline
+用于把 NNEF 模型转换为 ONNX 并通过 IREE 编译到 Vulkan 的脚本和示例。演示面向嵌入式与桌面 ML 的跨格式互操作路径。
+
+=== latency_power_sampler
+一个小巧的基准测试工具，用于在命令执行期间测量 p50/p90/p99 延迟和系统关键指标（温度、时钟频率）。结果输出到 CSV 文件，便于分析或集成到 CI。
+
+=== embedded_wildlife_cam
+一个为 Raspberry Pi 设计的集成式嵌入式演示应用。演示一条实时管线：相机采集 → Vulkan 预处理 → ML 推理（IREE/NNEF/TFLITE）→ 叠加显示。使用 MobileNetV2 进行真实目标识别。支持自定义的 GPU 加速 NNEF 后端。以无头方式运行，并记录稳态 FPS。
+
+=== ci_validation
+无头 Vulkan 应用，演示使用 Google Test（GTest）进行 CI/CD 渲染验证。展示如何离屏捕获帧，并对真实的 MNIST 应用 UI 执行自动化感知、功能和语义检查。
+
+=== camera_inference
+使用摄像头视频流（OpenCV）和 ONNX Runtime 进行实时图像分类。演示面向交互式 ML 应用的多线程管线设计。
+
+=== rl_exploration
+使用强化学习（RL）与 GTest 的自主 QA 代理演示。使用随机网络蒸馏（RND）检测"新颖"的 UI 状态，展示好奇心驱动的代理如何自主发现缺陷或意外的应用行为。
+
+=== rt_optimization
+AI 驱动的光线追踪优化的交互式实时演示。实现一条多通道管线，包含 AI 引导的自适应采样（误差预测器）和 AI 降噪（U-Net），展示 Vulkan 光线追踪中显著的性能提升。
+
+== 结构
+
+* `common/renderer/` —— 用于 GUI 示例的共享 Vulkan 渲染器
+* `common/imgui/` —— 用于用户界面的 ImGui 集成
+* `common/preprocessing/` —— 用于图像预处理的 Vulkan 计算着色器
+* `shaders/` —— Slang 计算着色器
+* `data/` —— 模型数据与资产
+* `third_party/` —— 第三方库（ONNX Runtime，由配置脚本下载）
+* `models/` —— 预训练的 ML 模型（由配置脚本下载）
+
+== 前提条件
+
+=== 必需
+
+* Vulkan SDK 1.2 或更高版本
+* 兼容 C{pp}20 的编译器（GCC 10+、Clang 10+、MSVC 2019+）
+* CMake 3.20 或更高版本
+* Slang 着色器编译器（https://shader-slang.com/），用于编译着色器
+* GLFW 3.3+（用于交互式 MNIST GUI）
+* Python 3.8+，以及 PyTorch、torchvision、ONNX 和 numpy（用于训练模型）
+
+=== 可选
+
+* ONNX Runtime 1.23.2+（用于第三方 ONNX 集成示例）
+  - 提供对 **WebGPU（Dawn）** 和 **DirectML** 加速的支持。
+* IREE（Intermediate Representation Execution Environment，中间表示执行环境）
+  - 用于 `iree_vulkan_inference` 示例。
+  - 由配置脚本自动下载并打补丁。
+* TensorFlow Lite 2.14.0+（用于 TensorFlow Lite 集成示例）
+
+NOTE: CMake 会自动处理所有依赖安装。使用 `-DML_INSTALL_OPTIONAL_DEPS=ON` 以包含可选包，或者运行提供的配置脚本。
+
+== 硬件加速（GPU）
+
+对于 ONNX Runtime 推理，示例会自动检测并尝试按以下优先顺序使用 GPU 后端：
+
+*   **WebGPU**：现代跨平台 GPU API（如果官方构建版本支持则可用）。
+*   **DirectML**：Windows 上的标准高性能后端（DirectX 12）。
+*   **CUDA**：Linux 上的标准高性能后端（需要 NVIDIA GPU 和 CUDA 驱动）。
+*   **CPU**：未检测到 GPU 环境时的回退方案。
+
+NOTE: 按照项目要求，避免使用 Vulkan 或 OpenGL 这类臆造或非标准的提供程序，而优先使用官方的 ONNX Runtime Execution Provider。
+
+== 构建
+
+本教程使用贯穿整个 Vulkan 教程的**标准工作流**。
+
+=== 步骤 1：运行配置脚本（一次）
+
+你可以运行提供的脚本，或使用 CMake 的 `setup_venv` 目标：
+
+Linux/macOS：
+[source,bash]
+----
+cd attachments/ml_inference
+./setup_env.sh
+----
+
+Windows：
+[source,bash]
+----
+cd attachments\ml_inference
+setup_env.bat
+----
+
+这会下载所有依赖，包括 MobileNetV2 模型和 **ONNX Runtime 1.23.2**（它提供包括 WebGPU/Dawn 在内的高性能 GPU 后端）。
+
+=== 步骤 2：用 CMake 构建
+
+[source,bash]
+----
+mkdir build && cd build
+cmake ..
+cmake --build .
+----
+
+就是这样！CMake 会自动检测配置脚本下载的所有内容。
+
+=== CMake 选项（进阶）
+
+[options="header"]
+|===
+| 选项 | 默认值 | 说明
+| `ML_TRAIN_MODELS` | OFF | 在构建期间自动训练模型（对 CI 有用）
+|===
+
+NOTE: `ML_SETUP_PYTHON_ENV` 和 `ML_INSTALL_OPTIONAL_DEPS` 仅在 venv 不存在时的首次 CMake 配置阶段使用。对学生而言，请改用配置脚本。
+
+=== 训练 MNIST 模型
+
+使用 CMake 目标训练模型（可通过 IDE 或命令行）：
+
+**在你的 IDE 中：**
+
+* 构建 `train_mnist` 目标
+
+**从命令行：**
+
+[source,bash]
+----
+cd build
+make train_mnist  # Linux/macOS
+# or
+cmake --build . --target train_mnist  # Windows
+----
+
+这会生成：
+
+* `mnist_weights.bin`（1.7 MB）—— 供 C++ 推理使用的二进制权重
+* `mnist_model.pth` —— PyTorch 检查点
+* `mnist_model.onnx` —— ONNX 格式
+
+在 CPU 上训练约需 3-5 分钟，可达到 >99% 的准确率。
+
+=== 运行示例
+
+所有示例都由单个 CMakeLists.txt 构建。运行一次配置脚本后，正常使用 CMake 即可。
+
+==== MNIST 数字识别
+
+[source,bash]
+----
+cd build
+./mnist  # Linux/macOS
+mnist.exe  # Windows
+----
+
+应用会打开一个 GUI 窗口，你可以在其中绘制数字并看到实时识别结果。
+
+==== 图像分类
+
+[source,bash]
+----
+cd build
+./classification  # Linux/macOS
+classification.exe  # Windows
+----
+
+==== CI 渲染验证
+
+[source,bash]
+----
+cd build
+./ci_validation  # Linux/macOS
+ci_validation.exe  # Windows
+----
+
+==== 实时相机推理
+
+[source,bash]
+----
+cd build
+./camera_inference  # Linux/macOS
+camera_inference.exe  # Windows
+----
+
+==== RL 自动探索
+
+[source,bash]
+----
+cd build
+./rl_exploration  # Linux/macOS
+rl_exploration.exe  # Windows
+----
+
+==== 光线追踪优化
+
+[source,bash]
+----
+cd build
+./rt_optimization  # Linux/macOS
+rt_optimization.exe  # Windows
+----
+
+==== IREE Vulkan 推理
+
+[source,bash]
+----
+cd build
+./iree_vulkan_inference mnist_model.vmfb --input test_input.npy
+----
+
+==== NNEF 推理
+
+[source,bash]
+----
+cd build
+./nnef_inference --model ./models/mobilenetv2_nnef_optimized --input test_input.bin
+----
+
+==== 延迟与功耗采样器
+
+[source,bash]
+----
+cd build
+./latency_power_sampler --cmd "./iree_vulkan_inference mnist_model.vmfb --input test_input.npy" --iters 100 --out results.csv
+----
+
+NOTE: 配置脚本会自动下载 ONNX Runtime、IREE 运行时和 MobileNetV2 模型。CMake 会自动检测所有内容！
+
+NOTE: CMake 会自动管理整个工作流——Python 环境、依赖、着色器编译和模型训练！
+
+== 实现细节
+
+=== MNIST（`mnist`）
+
+MNIST 示例演示用于神经网络推理的自定义 Vulkan 计算着色器：
+
+* 可绘制的 280×280 画布（从 28×28 的网络输入放大 10×）
+* 数字 0-9 的实时概率分布
+* 用于矩阵运算和激活函数的自定义计算着色器
+* 纯 Vulkan 实现（不含第三方 ML 框架）
+
+*控制方式：*
+
+* *绘制*：在画布上按住鼠标左键拖动
+* *清除*：'C' 键
+* *退出*：'ESC' 键
+
+=== 图像分类（`classification`）
+
+classification 示例把 ONNX Runtime 与 Vulkan 集成：
+
+* 用于图像预处理（缩放、归一化）的 Vulkan 计算着色器
+* 使用 ONNX Runtime 进行模型推理（MobileNetV2）
+* ImageNet 1000 类分类
+* 带置信度分数的 Top-5 预测
+
+=== CI 渲染验证（`ci_validation`）
+
+演示使用 Google Test 对 Vulkan 渲染管线进行自动化验证：
+
+* **层级 1：感知相似度**：使用 `lpips_vgg.onnx` 验证渲染出的帧在感知上是正确的。
+* **层级 2：功能 UI 验证**：渲染真实的 MNIST 应用 UI，并使用 MNIST OCR 引擎"读取"以程序方式绘制的数字，同时验证 UI 布局是否贴合。
+* **层级 3：语义伪影检测**：扫描最终输出中是否有损坏的纹理或"品红色"错误颜色。
+
+=== 光线追踪优化（`rt_optimization`）
+
+多通道 AI 驱动性能管线的交互式实时演示：
+
+* **通道 1：探测通道（1spp）**：产生初始的含噪追踪结果，作为 AI 的输入。
+* **通道 2：AI 方差预测**：使用 `error_predictor.onnx` 模型生成方差热力图。
+* **通道 3：自适应定向追踪**：仅在预测为高方差的区域执行二次采样（最多 32spp）。
+* **通道 4：AI 降噪**：使用 U-Net `denoiser.onnx` 进行最终的高质量图像重建。
+* **指标**：实时性能报告，展示相对于暴力 1000spp 渲染的总加速比（通常 >40 倍）。
+
+=== RL 自动探索（`rl_exploration`）
+
+使用强化学习概念与 GTest 的自主 QA 代理演示：
+
+* **随机网络蒸馏（RND）**：使用固定的目标网络和可训练的预测器来计算"好奇心"奖励。
+* **自主发现**：演示代理如何在熟悉静态应用 UI 之后，检测到"新颖"的 UI 状态（例如用户在画布上绘制）。
+* **无头测试**：与 Vulkan 无头渲染器集成，在 CI 环境中执行自主探索。
+* **缺陷发现**：展示代理学习发现"令人意外"状态（如 UI 故障、布局溢出或应用崩溃）的基础。
+
+=== IREE Vulkan 推理（`iree_vulkan_inference`）
+
+最小 C++ 示例，演示编译器/运行时嵌入模式：
+
+* **IREE Vulkan HAL**：使用 IREE 的 Vulkan 驱动进行硬件加速。
+* **模型部署**：演示如何加载并运行预编译的 `.vmfb` 模块。
+* **灵活的入口点**：自动检测 `module.main` 或 `module.main_graph` 等常见入口点名称。
+* **Numpy I/O**：内置对 `.npy` 文件的支持，便于与 Python 参考结果进行验证。
+
+=== NNEF 推理（`nnef_inference`）
+
+演示自定义的高性能 ML 引擎路径：
+
+* **直接支持 NNEF**：加载并执行 Khronos Neural Network Exchange Format 格式的模型。
+* **自定义 Vulkan 后端**：使用专用的计算着色器（`nnef_ops.slang`）直接在 GPU 上实现核心 ML 算子（卷积、池化、线性等）。
+* **零开销**：相比通用 ML 框架，运行时占用极小，非常适合引擎集成。
+* **跨后端测试**：`embedded_wildlife_cam` 使用它，为 TFLite 和 IREE 提供原生的 GPU 替代方案。
+
+== 代码风格
+
+所有示例都遵循本教程的约定：
+
+* 使用 Slang 编写计算着色器
+* 使用 vk::raii（Vulkan HPP RAII 包装）管理资源
+* 使用 C++20 特性与现代 C++ 实践
+* 全面的错误检查与验证
+
+== 更多资源
+
+* 教程：`en/ML_Inference/`
+* Vulkan 教程：https://vulkan-tutorial.com
+* ONNX Runtime：https://onnxruntime.ai
+* NNEF（Khronos）：https://www.khronos.org/nnef
+* IREE：https://iree.dev
+* TensorFlow Lite：https://www.tensorflow.org/lite
+
+== 许可证
+
+参见主仓库的 LICENSE 文件。

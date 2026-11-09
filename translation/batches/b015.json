@@ -1,0 +1,18 @@
+{
+  "id": "b015",
+  "words": 3806,
+  "files": [
+    {
+      "source": "en/12_Ecosystem_Utilities_and_Compatibility.adoc",
+      "target": "zh/12_Ecosystem_Utilities_and_Compatibility.adoc",
+      "words": 2233,
+      "title": "Ecosystem Utilities and GPU Compatibility"
+    },
+    {
+      "source": "en/13_Vulkan_Profiles.adoc",
+      "target": "zh/13_Vulkan_Profiles.adoc",
+      "words": 1573,
+      "title": "Vulkan Profiles: Simplifying Feature Detection"
+    }
+  ]
+}

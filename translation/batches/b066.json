@@ -1,0 +1,36 @@
+{
+  "id": "b066",
+  "words": 4877,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc",
+      "words": 1801,
+      "title": "Tooling: Packaging and Distribution"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/07_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/07_conclusion.adoc",
+      "words": 1080,
+      "title": "Tooling: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/index.adoc",
+      "words": 69,
+      "title": "Tooling"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/introduction.adoc",
+      "words": 687,
+      "title": "Building a Simple Engine: Introduction"
+    },
+    {
+      "source": "en/ML_Inference/Advanced_Topics/01_introduction.adoc",
+      "target": "zh/ML_Inference/Advanced_Topics/01_introduction.adoc",
+      "words": 1240,
+      "title": "Advanced Topics: The Path to Production"
+    }
+  ]
+}

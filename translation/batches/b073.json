@@ -1,0 +1,18 @@
+{
+  "id": "b073",
+  "words": 5210,
+  "files": [
+    {
+      "source": "en/ML_Inference/Desktop_Applications/04_ci_render_validation.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/04_ci_render_validation.adoc",
+      "words": 3413,
+      "title": "CI/CD Render Validation"
+    },
+    {
+      "source": "en/ML_Inference/Desktop_Applications/05_real_time_camera.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/05_real_time_camera.adoc",
+      "words": 1797,
+      "title": "Real-Time Camera Integration"
+    }
+  ]
+}

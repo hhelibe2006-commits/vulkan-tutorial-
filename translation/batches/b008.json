@@ -1,0 +1,30 @@
+{
+  "id": "b008",
+  "words": 5394,
+  "files": [
+    {
+      "source": "en/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc",
+      "target": "zh/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc",
+      "words": 1105,
+      "title": "Frames in flight"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/04_Swap_chain_recreation.adoc",
+      "target": "zh/03_Drawing_a_triangle/04_Swap_chain_recreation.adoc",
+      "words": 1559,
+      "title": "Swap chain recreation"
+    },
+    {
+      "source": "en/04_Vertex_buffers/00_Vertex_input_description.adoc",
+      "target": "zh/04_Vertex_buffers/00_Vertex_input_description.adoc",
+      "words": 1117,
+      "title": "Vertex input description"
+    },
+    {
+      "source": "en/04_Vertex_buffers/01_Vertex_buffer_creation.adoc",
+      "target": "zh/04_Vertex_buffers/01_Vertex_buffer_creation.adoc",
+      "words": 1613,
+      "title": "Vertex buffer creation"
+    }
+  ]
+}

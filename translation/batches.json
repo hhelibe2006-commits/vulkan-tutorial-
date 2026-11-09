@@ -1,0 +1,1119 @@
+[
+  {
+    "id": "b001",
+    "files": [
+      "CODE_OF_CONDUCT.adoc",
+      "CONTRIBUTING.adoc",
+      "CONTRIBUTORS.adoc",
+      "README.adoc",
+      "attachments/android/README.adoc",
+      "attachments/ml_inference/README.adoc",
+      "attachments/ml_inference/rPi/README.adoc",
+      "attachments/openxr_engine/README.adoc",
+      "attachments/siggraph2026_vk_tutorial/README.adoc",
+      "attachments/simple_engine/Courses/README.adoc"
+    ],
+    "words": 4919
+  },
+  {
+    "id": "b002",
+    "files": [
+      "attachments/simple_engine/android/README.adoc",
+      "en/00_Introduction.adoc",
+      "en/01_Overview.adoc"
+    ],
+    "words": 4408
+  },
+  {
+    "id": "b003",
+    "files": [
+      "en/02_Development_environment.adoc",
+      "en/03_Drawing_a_triangle/00_Setup/00_Base_code.adoc",
+      "en/03_Drawing_a_triangle/00_Setup/01_Instance.adoc"
+    ],
+    "words": 5877
+  },
+  {
+    "id": "b004",
+    "files": [
+      "en/03_Drawing_a_triangle/00_Setup/02_Validation_layers.adoc",
+      "en/03_Drawing_a_triangle/00_Setup/03_Physical_devices_and_queue_families.adoc",
+      "en/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc"
+    ],
+    "words": 5032
+  },
+  {
+    "id": "b005",
+    "files": [
+      "en/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc",
+      "en/03_Drawing_a_triangle/01_Presentation/01_Swap_chain.adoc",
+      "en/03_Drawing_a_triangle/01_Presentation/02_Image_views.adoc",
+      "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc"
+    ],
+    "words": 5751
+  },
+  {
+    "id": "b006",
+    "files": [
+      "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc",
+      "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/02_Fixed_functions.adoc",
+      "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/03_Dynamic_rendering.adoc"
+    ],
+    "words": 5691
+  },
+  {
+    "id": "b007",
+    "files": [
+      "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/04_Conclusion.adoc",
+      "en/03_Drawing_a_triangle/03_Drawing/00_Dynamic_rendering.adoc",
+      "en/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc",
+      "en/03_Drawing_a_triangle/03_Drawing/02_Rendering_and_presentation.adoc"
+    ],
+    "words": 5427
+  },
+  {
+    "id": "b008",
+    "files": [
+      "en/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc",
+      "en/03_Drawing_a_triangle/04_Swap_chain_recreation.adoc",
+      "en/04_Vertex_buffers/00_Vertex_input_description.adoc",
+      "en/04_Vertex_buffers/01_Vertex_buffer_creation.adoc"
+    ],
+    "words": 5394
+  },
+  {
+    "id": "b009",
+    "files": [
+      "en/04_Vertex_buffers/02_Staging_buffer.adoc",
+      "en/04_Vertex_buffers/03_Index_buffer.adoc",
+      "en/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc"
+    ],
+    "words": 4462
+  },
+  {
+    "id": "b010",
+    "files": [
+      "en/05_Uniform_buffers/01_Descriptor_pool_and_sets.adoc",
+      "en/06_Texture_mapping/00_Images.adoc"
+    ],
+    "words": 5779
+  },
+  {
+    "id": "b011",
+    "files": [
+      "en/06_Texture_mapping/01_Image_view_and_sampler.adoc",
+      "en/06_Texture_mapping/02_Combined_image_sampler.adoc",
+      "en/07_Depth_buffering.adoc"
+    ],
+    "words": 5567
+  },
+  {
+    "id": "b012",
+    "files": [
+      "en/08_Loading_models.adoc",
+      "en/09_Generating_Mipmaps.adoc"
+    ],
+    "words": 4415
+  },
+  {
+    "id": "b013",
+    "files": [
+      "en/10_Multisampling.adoc"
+    ],
+    "words": 1614
+  },
+  {
+    "id": "b014",
+    "files": [
+      "en/11_Compute_Shader.adoc"
+    ],
+    "words": 5155
+  },
+  {
+    "id": "b015",
+    "files": [
+      "en/12_Ecosystem_Utilities_and_Compatibility.adoc",
+      "en/13_Vulkan_Profiles.adoc"
+    ],
+    "words": 3806
+  },
+  {
+    "id": "b016",
+    "files": [
+      "en/14_Android.adoc"
+    ],
+    "words": 3770
+  },
+  {
+    "id": "b017",
+    "files": [
+      "en/15_GLTF_KTX2_Migration.adoc",
+      "en/16_Multiple_Objects.adoc"
+    ],
+    "words": 4212
+  },
+  {
+    "id": "b018",
+    "files": [
+      "en/17_Multithreading.adoc",
+      "en/18_Ray_tracing.adoc",
+      "en/90_FAQ.adoc",
+      "en/AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/02_environment_setup/02_jetbrains_clion_android_studio.adoc",
+      "en/AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc",
+      "en/AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc"
+    ],
+    "words": 5799
+  },
+  {
+    "id": "b019",
+    "files": [
+      "en/AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc",
+      "en/AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc",
+      "en/AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/03_model_selection_specialization/02_base_models.adoc",
+      "en/AI_Assisted_Vulkan/03_model_selection_specialization/03_hardware_vram.adoc",
+      "en/AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc"
+    ],
+    "words": 5721
+  },
+  {
+    "id": "b020",
+    "files": [
+      "en/AI_Assisted_Vulkan/03_model_selection_specialization/05_fine_tuning_lora.adoc",
+      "en/AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/04_multimodal_ai/02_multimodal_models.adoc",
+      "en/AI_Assisted_Vulkan/04_multimodal_ai/03_visual_bug_diagnosis.adoc",
+      "en/AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc",
+      "en/AI_Assisted_Vulkan/05_workflow/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/05_workflow/02_phase_1_planning.adoc",
+      "en/AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc",
+      "en/AI_Assisted_Vulkan/05_workflow/04_phase_3_refactoring.adoc"
+    ],
+    "words": 5741
+  },
+  {
+    "id": "b021",
+    "files": [
+      "en/AI_Assisted_Vulkan/06_debugging/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc",
+      "en/AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc",
+      "en/AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc",
+      "en/AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc",
+      "en/AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc",
+      "en/AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc"
+    ],
+    "words": 5885
+  },
+  {
+    "id": "b022",
+    "files": [
+      "en/AI_Assisted_Vulkan/08_deployment/01_introduction.adoc",
+      "en/AI_Assisted_Vulkan/08_deployment/02_android_ios_mobile.adoc",
+      "en/AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc",
+      "en/AI_Assisted_Vulkan/09_faq.adoc",
+      "en/AI_Assisted_Vulkan/10_final_project.adoc",
+      "en/AI_Assisted_Vulkan/introduction.adoc",
+      "en/Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc"
+    ],
+    "words": 5217
+  },
+  {
+    "id": "b023",
+    "files": [
+      "en/Advanced_Vulkan_Compute/02_Compute_Architecture/02_workgroups_and_invocations.adoc",
+      "en/Advanced_Vulkan_Compute/02_Compute_Architecture/03_occupancy_and_latency_hiding.adoc",
+      "en/Advanced_Vulkan_Compute/02_Compute_Architecture/04_vulkan_1_4_scalar_layouts.adoc",
+      "en/Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/03_Memory_Models/02_vulkan_memory_model.adoc",
+      "en/Advanced_Vulkan_Compute/03_Memory_Models/03_shared_memory_lds.adoc",
+      "en/Advanced_Vulkan_Compute/03_Memory_Models/04_memory_consistency.adoc",
+      "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc"
+    ],
+    "words": 5813
+  },
+  {
+    "id": "b024",
+    "files": [
+      "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc",
+      "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc",
+      "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc"
+    ],
+    "words": 5069
+  },
+  {
+    "id": "b025",
+    "files": [
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc",
+      "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/07_clspv_for_production.adoc",
+      "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc",
+      "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/03_global_atomic_management.adoc",
+      "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc"
+    ],
+    "words": 5730
+  },
+  {
+    "id": "b026",
+    "files": [
+      "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/02_indirect_dispatch.adoc",
+      "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc",
+      "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/04_multi_draw_indirect_mdi.adoc",
+      "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc",
+      "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc",
+      "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc",
+      "en/Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc"
+    ],
+    "words": 5372
+  },
+  {
+    "id": "b027",
+    "files": [
+      "en/Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc",
+      "en/Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc",
+      "en/Advanced_Vulkan_Compute/10_Performance_Optimization/03_divergence_audit.adoc",
+      "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc",
+      "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc",
+      "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc",
+      "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc"
+    ],
+    "words": 4756
+  },
+  {
+    "id": "b028",
+    "files": [
+      "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc",
+      "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc"
+    ],
+    "words": 4444
+  },
+  {
+    "id": "b029",
+    "files": [
+      "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc",
+      "en/Advanced_Vulkan_Compute/conclusion.adoc",
+      "en/Advanced_Vulkan_Compute/introduction.adoc",
+      "en/Advanced_glTF/Debugging_Visual_Auditing/01_introduction.adoc"
+    ],
+    "words": 4616
+  },
+  {
+    "id": "b030",
+    "files": [
+      "en/Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc",
+      "en/Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc",
+      "en/Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc",
+      "en/Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc",
+      "en/Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc"
+    ],
+    "words": 5760
+  },
+  {
+    "id": "b031",
+    "files": [
+      "en/Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc",
+      "en/Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc",
+      "en/Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc",
+      "en/Advanced_glTF/Physics_Integration/01_introduction.adoc"
+    ],
+    "words": 5279
+  },
+  {
+    "id": "b032",
+    "files": [
+      "en/Advanced_glTF/Physics_Integration/02_bone_proxy_colliders.adoc",
+      "en/Advanced_glTF/Physics_Integration/03_constraints_and_joint_limits.adoc",
+      "en/Advanced_glTF/Physics_Integration/04_ragdoll_handoff.adoc",
+      "en/Advanced_glTF/Physics_Integration/05_self_collision_filtering.adoc"
+    ],
+    "words": 5981
+  },
+  {
+    "id": "b033",
+    "files": [
+      "en/Advanced_glTF/Physics_Integration/06_conclusion.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/01_introduction.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc"
+    ],
+    "words": 4634
+  },
+  {
+    "id": "b034",
+    "files": [
+      "en/Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc",
+      "en/Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc",
+      "en/Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc"
+    ],
+    "words": 5872
+  },
+  {
+    "id": "b035",
+    "files": [
+      "en/Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc",
+      "en/Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc",
+      "en/Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc",
+      "en/Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc",
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/01_introduction.adoc"
+    ],
+    "words": 5229
+  },
+  {
+    "id": "b036",
+    "files": [
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/02_skinning_math.adoc",
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc",
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/04_shared_vertex_buffer.adoc"
+    ],
+    "words": 5309
+  },
+  {
+    "id": "b037",
+    "files": [
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc",
+      "en/Advanced_glTF/Skeletal_Compute_Skinning/06_conclusion.adoc",
+      "en/Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc",
+      "en/Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc",
+      "en/Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc"
+    ],
+    "words": 5469
+  },
+  {
+    "id": "b038",
+    "files": [
+      "en/Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc",
+      "en/Advanced_glTF/Tooling_Production_Pipeline/05_conclusion.adoc",
+      "en/Advanced_glTF/appendix_types.adoc",
+      "en/Advanced_glTF/introduction.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Culling.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc"
+    ],
+    "words": 4654
+  },
+  {
+    "id": "b039",
+    "files": [
+      "en/Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc"
+    ],
+    "words": 5136
+  },
+  {
+    "id": "b040",
+    "files": [
+      "en/Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc",
+      "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc"
+    ],
+    "words": 5020
+  },
+  {
+    "id": "b041",
+    "files": [
+      "en/Building_a_Simple_Engine/Appendix/appendix.adoc",
+      "en/Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc"
+    ],
+    "words": 1600
+  },
+  {
+    "id": "b042",
+    "files": [
+      "en/Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc"
+    ],
+    "words": 5987
+  },
+  {
+    "id": "b043",
+    "files": [
+      "en/Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc",
+      "en/Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc"
+    ],
+    "words": 5579
+  },
+  {
+    "id": "b044",
+    "files": [
+      "en/Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc",
+      "en/Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Camera_Transformations/index.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/01_the_shadow_problem.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/02_why_alpha_testing_is_expensive.adoc"
+    ],
+    "words": 4935
+  },
+  {
+    "id": "b045",
+    "files": [
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/03_what_are_micromaps.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/04_hardware_traversal_with_omm.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/05_implementation_overview.adoc"
+    ],
+    "words": 5889
+  },
+  {
+    "id": "b046",
+    "files": [
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/06_results_guidance_and_tradeoffs.adoc",
+      "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/07_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Engine_Architecture/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.adoc",
+      "en/Building_a_Simple_Engine/Engine_Architecture/03_component_systems.adoc"
+    ],
+    "words": 5535
+  },
+  {
+    "id": "b047",
+    "files": [
+      "en/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc"
+    ],
+    "words": 5610
+  },
+  {
+    "id": "b048",
+    "files": [
+      "en/Building_a_Simple_Engine/Engine_Architecture/05_rendering_pipeline.adoc"
+    ],
+    "words": 8000
+  },
+  {
+    "id": "b049",
+    "files": [
+      "en/Building_a_Simple_Engine/Engine_Architecture/06_event_systems.adoc",
+      "en/Building_a_Simple_Engine/Engine_Architecture/conclusion.adoc",
+      "en/Building_a_Simple_Engine/GUI/01_introduction.adoc"
+    ],
+    "words": 3451
+  },
+  {
+    "id": "b050",
+    "files": [
+      "en/Building_a_Simple_Engine/GUI/02_imgui_setup.adoc",
+      "en/Building_a_Simple_Engine/GUI/03_input_handling.adoc"
+    ],
+    "words": 5582
+  },
+  {
+    "id": "b051",
+    "files": [
+      "en/Building_a_Simple_Engine/GUI/04_ui_elements.adoc"
+    ],
+    "words": 2489
+  },
+  {
+    "id": "b052",
+    "files": [
+      "en/Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc",
+      "en/Building_a_Simple_Engine/GUI/06_conclusion.adoc",
+      "en/Building_a_Simple_Engine/GUI/index.adoc"
+    ],
+    "words": 5447
+  },
+  {
+    "id": "b053",
+    "files": [
+      "en/Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc",
+      "en/Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc"
+    ],
+    "words": 3417
+  },
+  {
+    "id": "b054",
+    "files": [
+      "en/Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc"
+    ],
+    "words": 6799
+  },
+  {
+    "id": "b055",
+    "files": [
+      "en/Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc",
+      "en/Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc",
+      "en/Building_a_Simple_Engine/Lighting_Materials/index.adoc",
+      "en/Building_a_Simple_Engine/Loading_Models/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc"
+    ],
+    "words": 5904
+  },
+  {
+    "id": "b056",
+    "files": [
+      "en/Building_a_Simple_Engine/Loading_Models/03_model_system.adoc"
+    ],
+    "words": 2066
+  },
+  {
+    "id": "b057",
+    "files": [
+      "en/Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc"
+    ],
+    "words": 4736
+  },
+  {
+    "id": "b058",
+    "files": [
+      "en/Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc",
+      "en/Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc"
+    ],
+    "words": 5666
+  },
+  {
+    "id": "b059",
+    "files": [
+      "en/Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc"
+    ],
+    "words": 3472
+  },
+  {
+    "id": "b060",
+    "files": [
+      "en/Building_a_Simple_Engine/Loading_Models/08_animations.adoc",
+      "en/Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Loading_Models/index.adoc"
+    ],
+    "words": 5662
+  },
+  {
+    "id": "b061",
+    "files": [
+      "en/Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc",
+      "en/Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc",
+      "en/Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc"
+    ],
+    "words": 4567
+  },
+  {
+    "id": "b062",
+    "files": [
+      "en/Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc",
+      "en/Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Mobile_Development/index.adoc",
+      "en/Building_a_Simple_Engine/Subsystems/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc"
+    ],
+    "words": 4790
+  },
+  {
+    "id": "b063",
+    "files": [
+      "en/Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc",
+      "en/Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc"
+    ],
+    "words": 3784
+  },
+  {
+    "id": "b064",
+    "files": [
+      "en/Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc",
+      "en/Building_a_Simple_Engine/Subsystems/06_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Subsystems/index.adoc",
+      "en/Building_a_Simple_Engine/Tooling/01_introduction.adoc",
+      "en/Building_a_Simple_Engine/Tooling/02_cicd.adoc"
+    ],
+    "words": 5506
+  },
+  {
+    "id": "b065",
+    "files": [
+      "en/Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc",
+      "en/Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc",
+      "en/Building_a_Simple_Engine/Tooling/05_extensions.adoc"
+    ],
+    "words": 5285
+  },
+  {
+    "id": "b066",
+    "files": [
+      "en/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc",
+      "en/Building_a_Simple_Engine/Tooling/07_conclusion.adoc",
+      "en/Building_a_Simple_Engine/Tooling/index.adoc",
+      "en/Building_a_Simple_Engine/introduction.adoc",
+      "en/ML_Inference/Advanced_Topics/01_introduction.adoc"
+    ],
+    "words": 4877
+  },
+  {
+    "id": "b067",
+    "files": [
+      "en/ML_Inference/Advanced_Topics/02_quantization_strategies.adoc",
+      "en/ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc"
+    ],
+    "words": 5820
+  },
+  {
+    "id": "b068",
+    "files": [
+      "en/ML_Inference/Advanced_Topics/04_memory_management.adoc",
+      "en/ML_Inference/Advanced_Topics/05_model_optimization.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/01_introduction.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc"
+    ],
+    "words": 5934
+  },
+  {
+    "id": "b069",
+    "files": [
+      "en/ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc",
+      "en/ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc"
+    ],
+    "words": 5294
+  },
+  {
+    "id": "b070",
+    "files": [
+      "en/ML_Inference/Debugging_and_Performance/01_introduction.adoc",
+      "en/ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc",
+      "en/ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc",
+      "en/ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc"
+    ],
+    "words": 5812
+  },
+  {
+    "id": "b071",
+    "files": [
+      "en/ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc",
+      "en/ML_Inference/Desktop_Applications/01_introduction.adoc"
+    ],
+    "words": 2395
+  },
+  {
+    "id": "b072",
+    "files": [
+      "en/ML_Inference/Desktop_Applications/02_image_classification.adoc",
+      "en/ML_Inference/Desktop_Applications/03_practical_implementation.adoc"
+    ],
+    "words": 5885
+  },
+  {
+    "id": "b073",
+    "files": [
+      "en/ML_Inference/Desktop_Applications/04_ci_render_validation.adoc",
+      "en/ML_Inference/Desktop_Applications/05_real_time_camera.adoc"
+    ],
+    "words": 5210
+  },
+  {
+    "id": "b074",
+    "files": [
+      "en/ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc"
+    ],
+    "words": 2079
+  },
+  {
+    "id": "b075",
+    "files": [
+      "en/ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc"
+    ],
+    "words": 8527
+  },
+  {
+    "id": "b076",
+    "files": [
+      "en/ML_Inference/Desktop_Applications/08_future_directions.adoc",
+      "en/ML_Inference/Embedded_Applications/01_introduction.adoc",
+      "en/ML_Inference/Embedded_Applications/02_cross_compilation.adoc"
+    ],
+    "words": 4778
+  },
+  {
+    "id": "b077",
+    "files": [
+      "en/ML_Inference/Embedded_Applications/03_camera_integration.adoc",
+      "en/ML_Inference/Embedded_Applications/04_power_optimization.adoc",
+      "en/ML_Inference/Embedded_Applications/05_complete_example.adoc"
+    ],
+    "words": 5943
+  },
+  {
+    "id": "b078",
+    "files": [
+      "en/ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc",
+      "en/ML_Inference/Embedded_Applications/07_ml_compiler.adoc",
+      "en/ML_Inference/Embedded_Applications/08_nnef_example.adoc",
+      "en/ML_Inference/Embedded_Applications/09_conclusion.adoc"
+    ],
+    "words": 5385
+  },
+  {
+    "id": "b079",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/01_introduction.adoc",
+      "en/ML_Inference/ML_Inference_Pipeline/02_what_is_machine_learning.adoc"
+    ],
+    "words": 3006
+  },
+  {
+    "id": "b080",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc"
+    ],
+    "words": 7036
+  },
+  {
+    "id": "b081",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc"
+    ],
+    "words": 6812
+  },
+  {
+    "id": "b082",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/05_transfer_learning.adoc"
+    ],
+    "words": 6014
+  },
+  {
+    "id": "b083",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/06_model_formats.adoc"
+    ],
+    "words": 3956
+  },
+  {
+    "id": "b084",
+    "files": [
+      "en/ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc",
+      "en/ML_Inference/Third_Party_Libraries/01_introduction.adoc"
+    ],
+    "words": 3977
+  },
+  {
+    "id": "b085",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc",
+      "en/ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc"
+    ],
+    "words": 5605
+  },
+  {
+    "id": "b086",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc",
+      "en/ML_Inference/Third_Party_Libraries/05_directml.adoc"
+    ],
+    "words": 5726
+  },
+  {
+    "id": "b087",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc"
+    ],
+    "words": 3055
+  },
+  {
+    "id": "b088",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc"
+    ],
+    "words": 3289
+  },
+  {
+    "id": "b089",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc"
+    ],
+    "words": 3624
+  },
+  {
+    "id": "b090",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/09_practical_examples.adoc"
+    ],
+    "words": 3239
+  },
+  {
+    "id": "b091",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/10_choosing_library.adoc",
+      "en/ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc"
+    ],
+    "words": 3894
+  },
+  {
+    "id": "b092",
+    "files": [
+      "en/ML_Inference/Third_Party_Libraries/12_iree.adoc",
+      "en/ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc",
+      "en/ML_Inference/Third_Party_Libraries/14_mojo_max.adoc",
+      "en/ML_Inference/Third_Party_Libraries/15_openxla.adoc",
+      "en/ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc"
+    ],
+    "words": 5868
+  },
+  {
+    "id": "b093",
+    "files": [
+      "en/ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc",
+      "en/ML_Inference/Vulkan_Compute_for_ML/02_compute_pipeline_review.adoc"
+    ],
+    "words": 3379
+  },
+  {
+    "id": "b094",
+    "files": [
+      "en/ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc",
+      "en/ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc"
+    ],
+    "words": 5624
+  },
+  {
+    "id": "b095",
+    "files": [
+      "en/ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc",
+      "en/ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc"
+    ],
+    "words": 4164
+  },
+  {
+    "id": "b096",
+    "files": [
+      "en/ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc",
+      "en/ML_Inference/glossary.adoc",
+      "en/ML_Inference/introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc"
+    ],
+    "words": 5861
+  },
+  {
+    "id": "b097",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc"
+    ],
+    "words": 5745
+  },
+  {
+    "id": "b098",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/03_display_time_prediction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/02_last_second_update.adoc"
+    ],
+    "words": 5276
+  },
+  {
+    "id": "b099",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc"
+    ],
+    "words": 4269
+  },
+  {
+    "id": "b100",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/02_primary_stereo_with_insets.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc"
+    ],
+    "words": 4196
+  },
+  {
+    "id": "b101",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc"
+    ],
+    "words": 4105
+  },
+  {
+    "id": "b102",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/02_4d_lightfield_representation.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/02_synthesis_shaders.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc"
+    ],
+    "words": 3970
+  },
+  {
+    "id": "b103",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc"
+    ],
+    "words": 3780
+  },
+  {
+    "id": "b104",
+    "files": [
+      "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/02_desktop_high_end.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/03_mobile_mastery.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/01_introduction.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/02_spatial_debugging.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/03_automated_qa.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/04_incorporating_into_the_engine.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/conclusion.adoc",
+      "en/OpenXR_Vulkan_Spatial_Computing/introduction.adoc"
+    ],
+    "words": 3706
+  },
+  {
+    "id": "b105",
+    "files": [
+      "en/Synchronization/Anatomy_of_a_Dependency/01_introduction.adoc",
+      "en/Synchronization/Anatomy_of_a_Dependency/02_execution_vs_memory.adoc",
+      "en/Synchronization/Anatomy_of_a_Dependency/03_sync2_advantage.adoc",
+      "en/Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc",
+      "en/Synchronization/Anatomy_of_a_Dependency/05_conclusion.adoc",
+      "en/Synchronization/Async_Compute_Overlap/01_introduction.adoc",
+      "en/Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc",
+      "en/Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc"
+    ],
+    "words": 5718
+  },
+  {
+    "id": "b106",
+    "files": [
+      "en/Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc",
+      "en/Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc",
+      "en/Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc",
+      "en/Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc",
+      "en/Synchronization/Frame_in_Flight/01_introduction.adoc",
+      "en/Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc",
+      "en/Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc",
+      "en/Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc",
+      "en/Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc",
+      "en/Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc"
+    ],
+    "words": 4585
+  },
+  {
+    "id": "b107",
+    "files": [
+      "en/Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc",
+      "en/Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc",
+      "en/Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc",
+      "en/Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc",
+      "en/Synchronization/Profiling_Optimization/01_introduction.adoc",
+      "en/Synchronization/Profiling_Optimization/02_barrier_batching.adoc",
+      "en/Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc",
+      "en/Synchronization/Synchronization_Validation/01_introduction.adoc",
+      "en/Synchronization/Synchronization_Validation/02_validation_layer.adoc",
+      "en/Synchronization/Synchronization_Validation/03_interpreting_vuids.adoc"
+    ],
+    "words": 5119
+  },
+  {
+    "id": "b108",
+    "files": [
+      "en/Synchronization/Timeline_Semaphores/01_introduction.adoc",
+      "en/Synchronization/Timeline_Semaphores/02_unifying_sync.adoc",
+      "en/Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc",
+      "en/Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc",
+      "en/Synchronization/Transfer_Queues_Streaming/01_introduction.adoc",
+      "en/Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc",
+      "en/Synchronization/Transfer_Queues_Streaming/03_staging_sync.adoc",
+      "en/Synchronization/introduction.adoc",
+      "en/conclusion.adoc",
+      "en/courses/18_Ray_tracing/00_Overview.adoc"
+    ],
+    "words": 5837
+  },
+  {
+    "id": "b109",
+    "files": [
+      "en/courses/18_Ray_tracing/01_Dynamic_rendering.adoc",
+      "en/courses/18_Ray_tracing/02_Acceleration_structures.adoc",
+      "en/courses/18_Ray_tracing/03_Ray_query_shadows.adoc",
+      "en/courses/18_Ray_tracing/04_TLAS_animation.adoc",
+      "en/courses/18_Ray_tracing/05_Shadow_transparency.adoc"
+    ],
+    "words": 5407
+  },
+  {
+    "id": "b110",
+    "files": [
+      "en/courses/18_Ray_tracing/06_Reflections.adoc",
+      "en/courses/18_Ray_tracing/07_Conclusion.adoc",
+      "en/courses/18_Ray_tracing/README.adoc",
+      "en/courses/siggraph2026_vk_tutorial/00_Overview.adoc",
+      "en/courses/siggraph2026_vk_tutorial/README.adoc"
+    ],
+    "words": 1657
+  }
+]

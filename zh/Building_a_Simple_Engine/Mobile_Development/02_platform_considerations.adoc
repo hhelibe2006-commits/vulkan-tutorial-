@@ -1,0 +1,189 @@
+:pp: {plus}{plus}
+
+= 移动端开发：平台考量
+
+== Android 与 iOS 的平台考量
+
+为移动平台开发 Vulkan 应用，需要理解 Android 与 iOS 的具体要求和限制。本节中，我们会探讨每个平台的关键考量，以及如何相应地调整你的引擎。
+
+=== Android 平台考量
+
+Android 自 7.0（Nougat）起就支持 Vulkan，但各设备的支持程度参差不齐。以下是 Android 开发的关键考量：
+
+==== 在 Android 上搭建 Vulkan
+
+要在 Android 上使用 Vulkan，你需要：
+
+* *声明 Vulkan 支持*：在 AndroidManifest.xml 中声明你的应用使用 Vulkan：
+
+[source,xml]
+----
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.vulkanapp">
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />
+    <uses-feature android:name="android.hardware.vulkan.level" android:version="0" android:required="true" />
+    <!-- For devices that support Vulkan but don't declare it -->
+    <uses-feature android:name="android.hardware.vulkan.compute" android:required="false" />
+    <!-- ... -->
+</manifest>
+----
+
+* *初始化 Vulkan*：使用 Android Native Development Kit（NDK）初始化 Vulkan。过程与桌面 Vulkan 类似，但你需要从 Android 取得原生窗口句柄：
+
+[source,cpp]
+----
+// Get the native window handle from Android
+ANativeWindow* native_window = ANativeWindow_fromSurface(env, surface);
+
+// Create the Vulkan surface
+VkAndroidSurfaceCreateInfoKHR create_info{};
+create_info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+create_info.window = native_window;
+
+VkSurfaceKHR vulkan_surface;
+vkCreateAndroidSurfaceKHR(instance, &create_info, nullptr, &vulkan_surface);
+----
+
+==== Android 生命周期管理
+
+Android 应用有复杂的生命周期，你需要妥善处理：
+
+1. *Activity 暂停与恢复*：当应用被暂停时（例如用户切换到另一个应用），你应当释放 Vulkan 资源，并在应用恢复时重新创建它们。
+
+2. *表面变化*：配置变化（例如旋转屏幕）可能导致表面改变。你需要通过重建交换链来处理这些变化。
+
+3. *内存压力*：Android 随时可能回收你的应用占用的内存。设计引擎时要能从容应对内存压力。
+
+==== Android 输入处理
+
+Android 的输入处理与桌面不同：
+
+1. *触摸输入*：你需要处理触摸事件（包括多点触控手势），而不是鼠标输入。
+
+2. *传感器*：Android 设备有各种传感器（加速度计、陀螺仪等），可用于输入。
+
+==== 厂商特定考量
+
+不同的 Android 设备制造商可能有各自的考量：
+
+1. *定制 Android 版本*：许多厂商使用定制版 Android。要在多种设备上测试应用以确保兼容性。
+
+2. *GPU 架构*：不同厂商使用不同的 GPU 架构（Adreno、Mali、PowerVR 等），各自有独特的性能特征。
+
+3. *替代应用商店*：部分设备可能没有 Google Play 服务。必要时可以考虑通过替代应用商店分发。
+
+4. *SoC 差异*：片上系统（SoC）的差异会影响性能。大多数移动 GPU 都是基于瓦片的渲染器，因此要使用 TBR 一节所述的技术相应地优化渲染管线。
+
+[source,cpp]
+----
+// Example of checking for specific device vendors
+bool check_device_vendor(vk::PhysicalDevice physical_device, uint32_t vendor_id) {
+    vk::PhysicalDeviceProperties props = physical_device.getProperties();
+    return props.vendorID == vendor_id;
+}
+
+// Common vendor IDs
+const uint32_t VENDOR_ID_QUALCOMM = 0x5143; // Adreno
+const uint32_t VENDOR_ID_ARM = 0x13B5;      // Mali
+const uint32_t VENDOR_ID_IMAGINATION = 0x1010; // PowerVR
+const uint32_t VENDOR_ID_HUAWEI = 0x19E5;   // Kirin
+
+// You can then apply vendor-specific optimizations if needed
+void configure_for_device(vk::PhysicalDevice physical_device) {
+    if (check_device_vendor(physical_device, VENDOR_ID_HUAWEI)) {
+        // Apply Huawei-specific optimizations if needed
+    }
+    // Handle other vendors as needed
+}
+----
+
+=== iOS 平台考量
+
+iOS 通过 MoltenVK 支持 Vulkan，这是一个把 Vulkan 映射到 Metal 的转换层。以下是 iOS 开发的关键考量：
+
+==== 在 iOS 上搭建 MoltenVK
+
+要在 iOS 上使用 Vulkan，你需要：
+
+* *引入 MoltenVK*：把 MoltenVK 框架添加到 Xcode 工程中。
+
+* *初始化 MoltenVK*：在创建 Vulkan 实例之前初始化 MoltenVK：
+
+[source,cpp]
+----
+// Initialize MoltenVK
+MVKConfiguration config{};
+vkGetMoltenVKConfigurationMVK(nullptr, &config);
+config.debugMode = true;  // Enable debug mode during development
+vkSetMoltenVKConfigurationMVK(nullptr, &config);
+
+// Create Vulkan instance as usual
+// ...
+----
+
+* *创建兼容 Metal 的表面*：从 CAMetalLayer 创建 Vulkan 表面：
+
+[source,cpp]
+----
+// Get the Metal layer from your UIView
+CAMetalLayer* metal_layer = (CAMetalLayer*)layer;
+
+// Create the Vulkan surface
+VkMetalSurfaceCreateInfoEXT create_info{};
+create_info.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+create_info.pLayer = metal_layer;
+
+VkSurfaceKHR vulkan_surface;
+vkCreateMetalSurfaceEXT(instance, &create_info, nullptr, &vulkan_surface);
+----
+
+==== iOS 生命周期管理
+
+iOS 应用同样有生命周期需要处理：
+
+1. *应用状态变化*：处理 applicationWillResignActive、applicationDidBecomeActive 等事件，按需释放并重建 Vulkan 资源。
+
+2. *内存警告*：系统内存不足时，iOS 会发出内存警告。收到后要释放非必需资源。
+
+==== iOS 输入处理
+
+iOS 的输入处理与 Android 类似，但有一些差异：
+
+1. *触摸输入*：iOS 有自己的触摸事件系统，你需要把它集成到引擎中。
+
+2. *传感器*：iOS 设备同样有各种传感器，可用于输入。
+
+=== 跨平台考量
+
+要为 Android 与 iOS（以及可能的桌面端）维护单一代码库，可以考虑：
+
+* *抽象层*：为窗口创建、输入处理以及其他平台特定功能，建立平台特定的抽象层。
+
+* *条件编译*：使用预处理器指令处理平台特定代码：
+
+[source,cpp]
+----
+#ifdef __ANDROID__
+    // Android-specific code
+#elif defined(__APPLE__)
+    // iOS-specific code
+#else
+    // Desktop-specific code
+#endif
+----
+
+* *特性检测*：用 Vulkan 的特性检测机制来适配设备能力，而不是基于平台做假设。
+
+=== 移动平台集成的最佳实践
+
+1. *在真实设备上测试*：模拟器和仿真器可能无法准确反映真实设备的性能与行为。
+
+2. *处理不同的屏幕尺寸与宽高比*：移动设备尺寸和宽高比各异。设计 UI 和渲染时要能相应适配。
+
+3. *考虑电池续航*：移动用户对掉电极敏感。优化引擎以尽量降低功耗。
+
+4. *遵循平台规范*：遵循各平台的设计与用户体验准则，让应用有原生质感。
+
+下一节中，我们会探索专门针对移动硬件的性能优化，重点放在纹理格式和内存使用上。
+
+xref:Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc[上一篇：移动端开发：简介] | xref:Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc[下一篇：移动端开发：性能优化]

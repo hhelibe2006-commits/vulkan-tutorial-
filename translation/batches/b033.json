@@ -1,0 +1,30 @@
+{
+  "id": "b033",
+  "words": 4634,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Physics_Integration/06_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Physics_Integration/06_conclusion.adoc",
+      "words": 867,
+      "title": "Physics Integration: Conclusion"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/01_introduction.adoc",
+      "words": 730,
+      "title": "Procedural Animation & Inverse Kinematics"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc",
+      "words": 1558,
+      "title": "Cyclic Coordinate Descent IK"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc",
+      "words": 1479,
+      "title": "FABRIK: Forward And Backward Reaching IK"
+    }
+  ]
+}

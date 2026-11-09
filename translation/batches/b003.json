@@ -1,0 +1,24 @@
+{
+  "id": "b003",
+  "words": 5877,
+  "files": [
+    {
+      "source": "en/02_Development_environment.adoc",
+      "target": "zh/02_Development_environment.adoc",
+      "words": 3104,
+      "title": "Development Environment"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/00_Setup/00_Base_code.adoc",
+      "target": "zh/03_Drawing_a_triangle/00_Setup/00_Base_code.adoc",
+      "words": 1589,
+      "title": "Base code"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/00_Setup/01_Instance.adoc",
+      "target": "zh/03_Drawing_a_triangle/00_Setup/01_Instance.adoc",
+      "words": 1184,
+      "title": "Instance"
+    }
+  ]
+}

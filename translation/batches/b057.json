@@ -1,0 +1,12 @@
+{
+  "id": "b057",
+  "words": 4736,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc",
+      "words": 4736,
+      "title": "Loading Models: Understanding glTF"
+    }
+  ]
+}

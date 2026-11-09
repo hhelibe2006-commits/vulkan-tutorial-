@@ -1,0 +1,4 @@
+// Copyright 2023-2026 The Khronos Group, Inc.
+// SPDX-License-Identifier: CC-BY-4.0
+
+提醒一下：本 issue 跟踪器由 Khronos Group 管理。此处的互动应遵循 link:https://www.khronos.org/developers/code-of-conduct[Khronos 行为准则]，该准则禁止攻击性或贬损性语言。请保持讨论友好、文明。

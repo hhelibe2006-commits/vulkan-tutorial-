@@ -1,0 +1,24 @@
+{
+  "id": "b009",
+  "words": 4462,
+  "files": [
+    {
+      "source": "en/04_Vertex_buffers/02_Staging_buffer.adoc",
+      "target": "zh/04_Vertex_buffers/02_Staging_buffer.adoc",
+      "words": 1366,
+      "title": "Staging buffer"
+    },
+    {
+      "source": "en/04_Vertex_buffers/03_Index_buffer.adoc",
+      "target": "zh/04_Vertex_buffers/03_Index_buffer.adoc",
+      "words": 987,
+      "title": "Index buffer"
+    },
+    {
+      "source": "en/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc",
+      "target": "zh/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc",
+      "words": 2109,
+      "title": "Descriptor layout and buffer"
+    }
+  ]
+}

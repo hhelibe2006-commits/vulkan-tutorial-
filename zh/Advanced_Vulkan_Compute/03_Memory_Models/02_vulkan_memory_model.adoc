@@ -1,0 +1,68 @@
+:pp: {plus}{plus}
+
+= Vulkan 内存模型：可用性、可见性与域操作
+
+在 GPU 中，你有数千个线程在多个计算单元上并发运行，每个计算单元都有自己的分层缓存（L1——一级缓存、L2——二级缓存等）。因此，仅仅把值写进缓冲区并指望另一个线程立刻看到它是不够的。
+
+相反，你需要遵循一套正式的协议，确保设备某一部分写入的数据对另一部分可用且可见。这套协议由 **Vulkan 内存模型**定义。
+
+== 同步的三大支柱
+
+当你想在两种不同的操作之间共享数据（例如一个线程的写入和另一个线程的读取）时，需要建立**先于发生**（Happens-Before）关系。这通过三种不同的操作完成：
+
+1.  **可用性操作**：它确保写入本地缓存的数据被「推」到一个其他操作可访问的域中。可以把它理解为刷新缓存。
+2.  **可见性操作**：它确保共享域中可用的数据被「拉」进需要读取它的线程的本地缓存。可以把它理解为让本地缓存失效，从而被迫读取新数据。
+3.  **内存域**：这是可用性与可见性操作相会的公共「交汇处」（通常是 L2 缓存或 VRAM）。
+
+=== 数据流动
+
+[source,text]
+----
+Thread A (Write) -> Availability Operation (Make Available)
+                            |
+                     [Memory Domain]
+                            |
+Thread B (Read)  <- Visibility Operation (Make Visible)
+----
+
+== 先于发生与执行屏障
+
+当使用执行屏障（如 `vkCmdPipelineBarrier2`）同步两个操作时，就建立了「先于发生」关系。该屏障指定：
+
+*   **srcStageMask/dstStageMask**：管线的哪些阶段必须在下一阶段开始前完成。
+*   **srcAccessMask/dstAccessMask**：正在执行哪些内存操作（写还是读）。
+
+在 Vulkan 1.4 中，这些掩码已通过**同步 2**（Synchronization 2）被简化和统一，本教程通篇都会使用它。例如，两个计算派发之间的屏障可能长这样：
+
+[source,cpp]
+----
+vk::BufferMemoryBarrier2 bufferBarrier {
+    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+    .srcAccessMask = vk::AccessFlagBits2::eShaderWrite, // Availability
+    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+    .dstAccessMask = vk::AccessFlagBits2::eShaderRead   // Visibility
+};
+
+vk::DependencyInfo dependencyInfo {
+    .bufferMemoryBarrierCount = 1,
+    .pBufferMemoryBarriers = &bufferBarrier
+};
+// ...
+commandBuffer.pipelineBarrier2(dependencyInfo);
+----
+
+== 为什么你需要在意
+
+如果跳过这些步骤，你的内核可能在一块 GPU 上看起来正常，在另一块上却失败。这是因为不同架构的缓存一致性策略不同。NVIDIA 的缓存行为可能与 AMD 或 Intel 不同——而来自 Arm 或 Qualcomm 的移动端基于块的 GPU，凭借统一内存和片上块缓冲区，又是另一种情况。一个缺少正确屏障却在你的独立桌面显卡上「碰巧能跑」的内核，在手机上尤其容易崩掉，这让内存模型在移动端*更加*重要，而不是更不重要。由此在统一内存设备上需要的回读纪律，参见 xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc[Android 上的计算]。
+
+Vulkan 内存模型是你告诉驱动你到底需要什么的方式，这样它就能发出最少的硬件指令，在不牺牲性能的前提下保证数据安全。
+
+== 数据竞争与未定义行为
+
+当两个线程访问同一内存位置、其中至少一个是写，且它们之间没有通过「先于发生」关系同步时，你就有了**数据竞争**。
+
+在 Vulkan 中，数据竞争会导致**未定义行为**。这不只是说你读到错误的值；它可能意味着你读到旧数据、只更新了一半的数据，甚至当竞态导致越界访问或畸形指针时让 GPU 崩溃。
+
+接下来，我们看看如何把这些概念应用到**共享内存（LDS）**上，它比全局 VRAM 快得多。
+
+xref:Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc[上一篇：内存模型与一致性：简介] | xref:Advanced_Vulkan_Compute/03_Memory_Models/03_shared_memory_lds.adoc[下一篇：共享内存（LDS）：高速数据交换]

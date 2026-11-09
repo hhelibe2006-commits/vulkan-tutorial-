@@ -1,0 +1,54 @@
+{
+  "id": "b024",
+  "words": 5069,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc",
+      "words": 597,
+      "title": "Subgroup Shuffles, Broadcasts, and Arithmetic"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc",
+      "words": 659,
+      "title": "Subgroup Partitioning: Ballot and Match"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc",
+      "words": 586,
+      "title": "Non-Uniform Indexing: Resource Arrays in Subgroups"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc",
+      "words": 1385,
+      "title": "Heterogeneous Ecosystem: OpenCL on Vulkan"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc",
+      "words": 528,
+      "title": "Setup and Installation: Preparing Your Environment"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc",
+      "words": 464,
+      "title": "The clspv Pipeline: OpenCL C to SPIR-V"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc",
+      "words": 394,
+      "title": "Kernel Portability: OpenCL C for Vulkan"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc",
+      "words": 456,
+      "title": "clvk and Layering: OpenCL 3.0 on Vulkan"
+    }
+  ]
+}

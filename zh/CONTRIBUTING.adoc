@@ -1,0 +1,58 @@
+// Copyright 2023-2026 The Khronos Group, Inc.
+// SPDX-License-Identifier: CC-BY-4.0
+
+= Khronos Vulkan^®^ 教程贡献指南
+
+欢迎向本仓库贡献内容，任何人都可以自由参与。不过请先阅读以下关于如何贡献的指南。
+
+== 许可证
+
+本仓库的内容以 [Apache-2.0]、[BSD-3-Clause] 和 https://creativecommons.org/licenses/by-sa/4.0/[CC BY-SA 4.0] 许可发布。
+
+向本仓库贡献内容，即表示你同意以相同的许可证将你的贡献公开发布。
+
+== 参与贡献的方式
+
+* 小修小补，例如拼写错误、语法错误或其它细微改动
+** 直接创建 PR 即可，通常很快就会被合并
+* 添加新内容或进行较大的改动
+** 大部分开发工作由 Khronos Group 内部推进，任何较大的外部贡献都应事先协调。因此，如果你打算做较大改动，请先开一个新 issue 提前告知我们，我们会回复你并协调此事
+
+== 技术背景
+
+在开始贡献之前，请务必阅读以下内容，以了解本教程的运作方式，以及它为什么采用这样的结构。
+
+=== Antora 站点生成器
+
+本教程是作为 link:https://github.com/KhronosGroup/Vulkan-Site[Vulkan Documentation Project 站点] 的一部分来渲染的。该项目使用 link:https://antora.org/[Antora]——一个多仓库文档站点生成器。
+
+因此，本教程并不打算在该文档站点之外运行或查看。也就是说，某些在例如 GitHub 预览中看起来像出错的地方（比如图片缺失）其实是正常的，这是 Antora 的工作方式导致的。
+
+任何改动或修复都需要考虑这一点，并确保符合 Antora 的要求。这既涉及内容，也涉及结构（参见 link:https://docs.antora.org/antora/latest/standard-directories/[Antora 标准目录]）。举例来说，如果你想添加截图，就必须把它们放进对应的目录结构。
+
+=== 标记格式
+
+本教程的内容用 Asciidoc 编写（文件扩展名为 adoc）。新增内容或对现有内容的修改都必须符合这一格式。如果你不熟悉 Asciidoc，link:https://docs.antora.org/antora/latest/asciidoc/asciidoc/[Antora 的 Asciidoc 入门] 是一个不错的起点。
+
+与其它 markdown 语言类似，大多数开发环境都支持 Asciidoc 的实时预览。对于 Visual Studio Code，推荐使用 link:https://marketplace.visualstudio.com/items?itemName=asciidoctor.asciidoctor-vscode[这个扩展]。建议把扩展设置 `asciidoc.preview.useEditorStyle` 设为 `false`，以获得接近 Antora 站点的预览效果，同时启用扩展的 `asciidoc.antora.enableAntoraSupport` 选项。
+
+
+=== ClangFormat
+
+为保证代码风格一致，我们使用了一份 link:https://clang.llvm.org/docs/ClangFormat.html[ClangFormat] 定义文件。如果你修改了源代码，请确保你的 IDE 使用了该文件，或者手动对改动过的文件执行 ClangFormat。
+
+示例：
+
+[,bash]
+----
+cd attachments
+clang-format -i -- 15_hello_triangle.*
+----
+
+=== 贡献者许可协议（CLA）
+
+在本仓库提交 pull request 时，你必须签署 Khronos [开源贡献者许可协议（CLA）](https://www.khronos.org/cla/KhronosGroup/Vulkan-Tutorial)，以确认你拥有自己的工作成果，并授予 Khronos 在我们的许可证下重新分发这些成果所需的权限。
+
+=== AI 辅助贡献
+
+向本仓库提交贡献，即表示你进一步声明：在你的任何贡献是借助人工智能工具或 AI 生成代码开发的情况下，你已对这些工具及由此产生的材料进行了充分的审查、判断和创造性指导，足以合理地将其视为你的原创作品；并且你并不知晓由这类使用引起的、与你的贡献或其使用的任何部分相关的任何第三方许可、知识产权主张或其它限制。

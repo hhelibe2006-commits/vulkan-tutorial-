@@ -1,0 +1,166 @@
+:pp: {plus}{plus}
+= 不平地形上的脚部放置
+
+== 为什么这比听上去更难
+
+脚部放置是大多数开发者希望从 IK 系统里得到的第一个实际应用，它也会暴露出不少微妙之处，而前面那些算法描述并没有让你为此做好充分准备。让脚接触地面听起来很简单：从每只脚向下投射一条射线，找到它打到地形的位置，然后运行 IK 把脚放到那里。而在实践中，要让效果看起来正确，至少还有三个额外的问题需要解决。
+
+第一个问题是**身体高度**。如果你把脚向下推以贴合地形，却没有相应调整角色的身体高度（根关节的位置，通常是骨盆或髋部），那么得到的角色会在斜坡的一侧把脚陷进地面，而在另一侧则浮在空中。骨盆需要下移，以容纳地形上最低的脚部接触点。
+
+第二个问题是**脚部旋转**。把脚降到地形表面只是修正的一半——脚还需要*旋转*以匹配地形法线。踩在斜坡上的脚应当调整角度去贴合斜坡，而不是像站在平地上那样保持水平。这需要计算接触点处的地形法线，并旋转脚使其与法线对齐。
+
+第三个问题是**平滑**。如果你每帧都直接施加 IK 修正，脚就会毫无惯性可言地瞬间跳到精确的 IK 解。当地形表面快速变化时——比如角色从斜坡踏上平地——脚会在一瞬间跳变。而在现实中，脚具有动量，应当在若干帧之内逐渐接近目标位置。我们需要在时间上平滑 IK 目标，而不只是计算它们。
+
+== 脚部放置管线
+
+一个完整的脚部放置系统包含四个不同的阶段，每帧按顺序运行：
+
+**阶段 1 —— 射线投射。** 对每只脚，从脚上方的某个位置向下（在世界空间中，沿重力方向）发射一条射线。射线的起点应当足够高，以应对角色可能位于地形上方的情况——通常取脚部位置之上角色身高那么高。记录每次接触的命中点与表面法线。
+
+**阶段 2 —— 平滑目标。** 对命中位置与法线随时间施加低通滤波。简单的指数移动平均就够了：`smoothed = lerp(smoothed, raw, smoothing_factor * delta_time)`。平滑系数控制脚「追上」地形的快慢——值越大响应越快，但跳变也越明显。8 到 12 左右的值通常能产生自然的效果。
+
+**阶段 3 —— 调整骨盆。** 确定每只脚需要在垂直方向上移动多少（从其动画位置向下到平滑后的地形接触点）。取两个垂直调整量中较大的那个，把整个角色的根关节下移相应距离。这样能确保两只脚都不必比必要程度伸得更长去够地形。
+
+**阶段 4 —— 求解 IK。** 在每条腿链上运行 IK 求解器（CCD 或 FABRIK），目标为平滑后的命中点。然后旋转脚部关节，使其与平滑后的地形法线对齐。
+
+== 实现骨盆调整
+
+骨盆调整在 IK 求解之前处理。我们查询期望的脚部位置，并计算所需的下移偏移量：
+
+[source,cpp]
+----
+struct FootPlacementData {
+    glm::vec3 target_position;  // Smoothed world-space target for the foot
+    glm::vec3 surface_normal;   // Smoothed terrain normal at the contact point
+    float     ik_weight;        // 0 = no IK, 1 = full IK (for blending)
+};
+
+struct FootPlacementState {
+    FootPlacementData left;
+    FootPlacementData right;
+    glm::vec3 smoothed_pelvis_offset; // Low-pass filtered pelvis height adjustment
+};
+
+void update_foot_targets(
+    const PhysicsWorld&  world,
+    const glm::vec3&     left_foot_world,
+    const glm::vec3&     right_foot_world,
+    float                character_height,
+    float                delta_time,
+    FootPlacementState&  state)
+{
+    const float SMOOTHING = 10.0f;
+
+    auto raycast_foot = [&](const glm::vec3& foot_world) -> std::pair<glm::vec3, glm::vec3> {
+        glm::vec3 ray_origin = foot_world + glm::vec3(0, character_height, 0);
+        glm::vec3 ray_dir    = glm::vec3(0, -1, 0);
+        float     ray_length = character_height * 2.0f;
+
+        // Use the abstract PhysicsWorld::raycast() — keeps this code engine-agnostic.
+        float     out_distance;
+        glm::vec3 out_normal;
+        JPH::BodyID out_body_id;
+
+        if (world.raycast(ray_origin, ray_dir, ray_length,
+                          out_distance, out_normal, out_body_id))
+        {
+            glm::vec3 hit_point = ray_origin + ray_dir * out_distance;
+            return { hit_point, out_normal };
+        }
+        // No hit: keep the animated foot position, flat normal
+        return { foot_world, glm::vec3(0, 1, 0) };
+    };
+
+    auto [left_pos, left_normal]   = raycast_foot(left_foot_world);
+    auto [right_pos, right_normal] = raycast_foot(right_foot_world);
+
+    float t = glm::clamp(SMOOTHING * delta_time, 0.0f, 1.0f);
+
+    state.left.target_position  = glm::mix(state.left.target_position,  left_pos,    t);
+    state.left.surface_normal   = glm::normalize(glm::mix(state.left.surface_normal,   left_normal,  t));
+    state.right.target_position = glm::mix(state.right.target_position, right_pos,   t);
+    state.right.surface_normal  = glm::normalize(glm::mix(state.right.surface_normal,  right_normal, t));
+
+    // Pelvis adjustment: push the pelvis down by the maximum foot drop
+    float left_drop  = left_foot_world.y  - state.left.target_position.y;
+    float right_drop = right_foot_world.y - state.right.target_position.y;
+    float pelvis_drop = std::max(0.0f, std::max(left_drop, right_drop));
+
+    glm::vec3 desired_pelvis_offset(0, -pelvis_drop, 0);
+    state.smoothed_pelvis_offset = glm::mix(
+        state.smoothed_pelvis_offset, desired_pelvis_offset, t);
+}
+----
+
+请注意骨盆下沉量上的 `std::max(0.0f, ...)`。我们只把骨盆*向下*推，从不向上推。如果地形高于脚的动画位置（角色即将踏上一块凸起的表面），IK 会弯曲腿部来处理这种情况；我们不希望骨盆在快速升高的斜坡上被推向天空。
+
+== 应用 IK 与脚部旋转
+
+调整骨盆之后，腿链已经被略微重新定位。接着我们在每条腿上运行 IK 求解器，然后再做脚部旋转：
+
+[source,cpp]
+----
+void apply_foot_ik(
+    std::vector<Node>&          nodes,
+    const IKChain&              leg_chain,
+    uint32_t                    foot_node_idx,
+    const FootPlacementData&    foot_data,
+    const glm::vec3&            up_axis)
+{
+    // Run the IK solver to place the foot at the target position
+    solve_ccd(nodes, leg_chain, foot_data.target_position);
+
+    // Now rotate the foot to align with the terrain normal.
+    // The foot's "up" direction in its local space needs to align with the surface normal.
+    Node& foot = nodes[foot_node_idx];
+
+    // The foot's current world-space up direction
+    // (assuming the foot's local Y is the "up" direction—adjust for your rig)
+    glm::vec3 foot_current_up = glm::normalize(
+        glm::mat3(foot.world_matrix) * glm::vec3(0, 1, 0));
+
+    float dot = glm::clamp(glm::dot(foot_current_up, foot_data.surface_normal), -1.0f, 1.0f);
+    if (dot < 0.9999f) {
+        float     angle = std::acos(dot);
+        glm::vec3 axis  = glm::normalize(glm::cross(foot_current_up, foot_data.surface_normal));
+
+        glm::quat world_correction = glm::angleAxis(angle, axis);
+        glm::quat new_world_rot    = world_correction * foot.get_world_rotation();
+
+        glm::quat parent_world_rot = (foot.parent_index != INVALID_NODE_INDEX)
+            ? nodes[foot.parent_index].get_world_rotation()
+            : glm::quat(1, 0, 0, 0);
+
+        foot.local_rotation = glm::inverse(parent_world_rot) * new_world_rot;
+        foot.mark_dirty();
+        update_world_matrices_subtree(nodes, foot_node_idx);
+    }
+}
+----
+
+== 混合 IK 的开启与关闭
+
+还有一件事需要处理：当角色处于运动状态时，IK 系统不能与动画系统相互较劲。设想角色刚开始行走时会发生什么。他们的脚会不断离开地面——动画的脚部轨迹会在摆动阶段有意把每只脚抬到空中。如果我们在摆动阶段运行脚部放置 IK，IK 系统就会立刻试图把脚拉回地面，导致脚根本无法抬起。
+
+解决方案是用**着地权重**（plant weight）来门控 IK 修正：这是每只脚的一个数值，当脚应当牢牢着地时为 1.0，当脚在空中时为 0.0。着地权重在这两个极端之间平滑过渡。
+
+着地权重可以从动画本身推导出来。大多数动画系统会用**脚部接触事件**（foot contact events）来标注行走循环——这是由关键帧触发的事件，标记每只脚与地面建立接触和断开接触的时刻。如果你的动画工具会生成这些事件，就监听它们来驱动着地权重。
+
+如果拿不到脚部接触事件，你也可以用启发式方法推导着地权重：当脚的动画速度（其世界位置逐帧的变化率）降到某个阈值以下时，就把这只脚视为着地。这对行走循环效果尚可，但对更快的步态可能会失效。
+
+一旦有了着地权重，就把它作为动画位置与 IK 修正位置之间的混合来应用：
+
+[source,cpp]
+----
+// After computing the IK target position, blend it with the animated position
+// based on the plant weight. A weight of 1.0 uses full IK; 0.0 uses animation.
+glm::vec3 blended_target = glm::mix(
+    animated_foot_position,
+    foot_data.target_position,
+    foot_data.ik_weight
+);
+----
+
+这样一来，脚部放置系统就成了一层增强基础动画、而不是覆盖基础动画的层。当脚着地时，IK 让它与地形精确接触；当脚在空中时，IK 优雅地淡出，让动画不受干扰地播放。
+
+xref:Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc[上一篇：FABRIK：前向与后向到达 IK] | xref:Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc[下一篇：注视控制器]

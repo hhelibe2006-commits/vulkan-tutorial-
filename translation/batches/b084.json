@@ -1,0 +1,18 @@
+{
+  "id": "b084",
+  "words": 3977,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc",
+      "words": 2240,
+      "title": "Mental Model: GPU Execution"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/01_introduction.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/01_introduction.adoc",
+      "words": 1737,
+      "title": "Integrating Third-Party ML Libraries: Introduction"
+    }
+  ]
+}

@@ -1,0 +1,694 @@
+:pp: {plus}{plus}
+
+= 相机与变换：相机实现
+
+== 相机实现
+
+现在我们已经理解了数学基础和变换矩阵，接下来为 Vulkan 应用实现一套灵活的相机系统。我们会写一个可用于在 3D 场景中漫游的相机类。这套实现面向通用 3D 应用或游戏引擎，其中的概念可以套用到各种类型的应用，从第一人称游戏到建筑可视化工具。
+
+=== 相机类型
+
+3D 应用中常见的相机有以下几种：
+
+* *第一人称相机*：模拟从角色眼睛看世界的视角。
+* *第三人称相机*：从角色身后或另一个固定的相对位置跟随角色。
+* *环绕相机*：围绕一个固定点旋转，适合检视物体。
+* *自由相机*：允许向任意方向自由移动。
+
+在我们的实现中，我们会专注于一台可适应不同用途的通用相机。
+
+=== 相机类设计
+
+我们的相机系统围绕一个 `Camera` 类构建，由它负责 3D 漫游和视图生成。下面把实现拆成几个逻辑部分，以便同时理解技术细节和每个组件背后的设计决策。
+
+=== 相机架构：核心数据成员与空间表示
+
+首先建立基础数据结构，用来表示相机在 3D 空间中的位置、朝向和坐标系。
+
+[source,cpp]
+----
+class Camera {
+private:
+    // Spatial positioning and orientation vectors
+    // These form the camera's local coordinate system in world space
+    glm::vec3 position;     // Camera's location in world coordinates
+    glm::vec3 front;        // Forward direction (where camera is looking)
+    glm::vec3 up;           // Camera's local up direction (for roll control)
+    glm::vec3 right;        // Camera's local right direction (perpendicular to front and up)
+    glm::vec3 worldUp;      // Global up vector reference (typically Y-axis)
+----
+
+这套空间表示使用右手坐标系，相机在世界空间中维护自己的局部坐标基。`position` 向量定义相机所在的位置，而 `front`、`up` 和 `right` 向量构成一组正交基，定义相机的朝向。这种方式带来的控制很直观：沿 `front` 向量移动就是让相机前进，`right` 让它横向移动，`up` 则相对相机当前朝向做垂直移动。
+
+`worldUp` 向量是维持正确朝向的参考点，通常指向世界的 Y 轴。这个参考可以防止相机在复杂旋转中失去方向感，也保证「把地平线摆正」这类操作有一致的参考点。
+
+=== 相机架构：欧拉角表示与控制参数
+
+接下来定义旋转如何表示和控制：用欧拉角获得直观的用户输入，同时在内部处理数学上的复杂性。
+
+[source,cpp]
+----
+    // Rotation representation using Euler angles
+    // Provides intuitive control while managing gimbal lock and other rotation complexities
+    float yaw;              // Horizontal rotation around the world up-axis (left-right looking)
+    float pitch;            // Vertical rotation around the camera's right axis (up-down looking)
+
+    // User interaction and behavior parameters
+    // These control how the camera responds to input and environmental factors
+    float movementSpeed;    // Units per second for translation movement
+    float mouseSensitivity; // Multiplier for mouse input to rotation angle conversion
+    float zoom;             // Field of view control for perspective projection
+----
+
+欧拉角为相机旋转提供了直观的接口，能自然对应到用户的输入设备。偏航（yaw）控制水平旋转（左右看），俯仰（pitch）控制垂直旋转（上下看）。对大多数应用来说我们有意不支持翻滚（roll），因为它容易让用户失去方向感，不过这套系统可以扩展以支持它。
+
+参数系统允许针对不同用例微调相机行为。移动速度可以按场景尺度调整，鼠标灵敏度可以适配用户偏好和不同的输入设备，缩放则提供动态的视野控制，用于玩法或电影化效果。
+
+=== 相机架构：内部方法与状态管理
+
+下面定义内部方法，它们负责在旋转变化时维护数学一致性并更新相机的坐标系。
+
+[source,cpp]
+----
+    // Internal coordinate system maintenance
+    // Ensures mathematical consistency when orientation changes occur
+    void updateCameraVectors();
+
+public:
+----
+
+`updateCameraVectors` 方法是相机系统的数学基础：每当欧拉角变化，它重新计算 `front`、`right` 和 `up` 向量。这一过程涉及三角函数计算，把直观的欧拉角表示转换成矩阵运算和移动计算所需的归一化正交向量基。
+
+这种做法把面向用户的友好角度接口与计算高效的向量运算分开，使相机既能提供简单的控制，又能保持精确 3D 变换所需的数学严谨性。
+
+=== 相机架构：公共接口与构造函数设计
+
+接下来建立公共接口，外部代码通过它创建、配置相机实例并与之交互。
+
+[source,cpp]
+----
+    // Constructor with sensible defaults for common use cases
+    // Provides flexibility while ensuring the camera starts in a predictable state
+    Camera(
+        glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f),  // Start at world origin
+        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f),        // Y-axis as world up
+        float yaw = -90.0f,                                 // Look along negative Z-axis (OpenGL convention)
+        float pitch = 0.0f                                  // Level horizon
+    );
+----
+
+构造函数的设计反映了常见的 3D 图形约定和实用的默认值。默认位置设在原点，提供了一个可预期的起点；Y 轴作为世界上方向，与标准数学坐标系一致。初始偏航为 -90°，遵循 OpenGL 的约定——默认视角沿负 Z 轴看，从而形成一套对用户来说很自然的右手坐标系。
+
+参数默认值让简单用例无需复杂的初始化，同时在需要针对特定应用定制时仍允许完全自定义。
+
+=== 相机架构：矩阵生成与几何变换接口
+
+现在定义核心数学接口，它把相机的空间表示转换成图形管线所需的矩阵。
+
+[source,cpp]
+----
+    // Matrix generation for graphics pipeline integration
+    // These methods bridge between the camera's spatial representation and GPU requirements
+    glm::mat4 getViewMatrix() const;
+    glm::mat4 getProjectionMatrix(float aspectRatio, float nearPlane = 0.1f, float farPlane = 100.0f) const;
+----
+
+矩阵生成方法是连接我们直观的相机表示与 3D 图形管线数学需求的关键桥梁。视图矩阵把世界坐标变换到相机空间，相当于把世界相对相机视点重新定位。投影矩阵再把相机空间变换到裁剪空间，处理透视效果并为光栅化准备好坐标。
+
+视图矩阵与投影矩阵分离，遵循标准图形管线架构，使相机定位和透视特性可以独立控制。这种设计让诸如通过改变视野实现缩放效果之类的技术，无需重新计算相机的空间关系。
+
+=== 相机架构：输入处理与用户交互
+
+最后定义相机如何响应各种形式的用户输入，为人的操作与相机移动之间提供接口。
+
+[source,cpp]
+----
+    // Input processing methods for different interaction modalities
+    // Each method handles a specific type of user input with appropriate transformations
+    void processKeyboard(CameraMovement direction, float deltaTime);     // Keyboard-based translation
+    void processMouseMovement(float xOffset, float yOffset, bool constrainPitch = true);  // Mouse-based rotation
+    void processMouseScroll(float yOffset);                              // Scroll-based zoom control
+
+    // Property access methods for external systems
+    // Provide controlled access to internal state without exposing implementation details
+    glm::vec3 getPosition() const { return position; }
+    glm::vec3 getFront() const { return front; }
+    float getZoom() const { return zoom; }
+};
+----
+
+输入处理架构认识到不同输入方式在相机控制中承担不同职责。键盘输入通常处理离散的方向移动，鼠标移动提供连续的旋转控制，滚轮则带来直观的缩放调节。每个方法都针对自己的输入类型设计，配有恰当的数学变换和时序考量。
+
+取值方法对内部状态提供受控访问，让外部系统（例如需要听者位置的音频系统，或需要视线方向的剔除系统）能够访问相机的属性，而不必暴露内部实现细节，也不会让相机的状态被无节制地修改。
+
+=== 相机移动
+
+我们为相机的移动方向定义一个枚举：
+
+[source,cpp]
+----
+enum class CameraMovement {
+    FORWARD,
+    BACKWARD,
+    LEFT,
+    RIGHT,
+    UP,
+    DOWN
+};
+----
+
+然后实现移动逻辑：
+
+[source,cpp]
+----
+void Camera::processKeyboard(CameraMovement direction, float deltaTime) {
+    float velocity = movementSpeed * deltaTime;
+
+    switch (direction) {
+        case CameraMovement::FORWARD:
+            position += front * velocity;
+            break;
+        case CameraMovement::BACKWARD:
+            position -= front * velocity;
+            break;
+        case CameraMovement::LEFT:
+            position -= right * velocity;
+            break;
+        case CameraMovement::RIGHT:
+            position += right * velocity;
+            break;
+        case CameraMovement::UP:
+            position += up * velocity;
+            break;
+        case CameraMovement::DOWN:
+            position -= up * velocity;
+            break;
+    }
+}
+----
+
+==== 处理输入事件
+
+相机类提供了处理输入的方法，但要把它们与应用的输入系统集成起来，就需要仔细考虑不同的输入方式及其各自的特点。下面拆解输入处理的实现，既展示技术上的集成，也说明有效的相机控制背后的设计原则。
+
+=== 输入集成：键盘输入处理与移动转换
+
+首先处理来自键盘的离散方向输入，把按键转换成相机移动指令，并保证正确的帧率无关性。
+
+[source,cpp]
+----
+// Keyboard input processing for camera translation
+// Handles discrete directional commands with frame-rate independent timing
+void processInput(GLFWwindow* window, Camera& camera, float deltaTime) {
+    // WASD movement scheme following standard FPS conventions
+    // Each key press translates to a specific directional movement relative to camera orientation
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::FORWARD, deltaTime);    // Move forward along camera's front vector
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::BACKWARD, deltaTime);   // Move backward opposite to front vector
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::LEFT, deltaTime);       // Strafe left along camera's right vector
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::RIGHT, deltaTime);      // Strafe right along camera's right vector
+
+    // Vertical movement controls for 3D navigation
+    // Space and Control provide intuitive up/down movement
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::UP, deltaTime);         // Move up along camera's up vector
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::DOWN, deltaTime);       // Move down opposite to up vector
+}
+----
+
+键盘输入处理沿用了第一人称游戏的既有约定：WASD 控制水平移动，空格和 Control 控制垂直移动。这种映射对用户来说很直观，也提供了完整的六自由度移动控制。借助 `deltaTime` 实现的帧率无关性，保证了无论渲染性能如何，移动速度都一致，这对在不同硬件配置上获得可预期的体验至关重要。
+
+每条移动指令使用的是相机的局部坐标系，而不是世界坐标。也就是说，「前进」始终沿相机朝向移动，「右移」垂直于视线方向，「上移」沿相机自身的垂直轴。这种方式提供的控制很直观，能自然响应相机的朝向变化。
+
+=== 输入集成：鼠标移动处理与旋转状态管理
+
+下面处理用于相机旋转的连续鼠标输入，管理状态持久化和坐标系转换，以获得平滑的相机控制。
+
+[source,cpp]
+----
+// Mouse movement callback for continuous camera rotation
+// Manages state persistence and coordinate transformations for smooth rotation control
+void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    // State persistence for calculating movement deltas
+    // Static variables maintain state between callback invocations
+    static bool firstMouse = true;          // Flag to handle initial mouse position
+    static float lastX = 0.0f, lastY = 0.0f;  // Previous mouse position for delta calculation
+
+    // Handle initial mouse position to prevent sudden camera jumps
+    // First callback provides absolute position, not relative movement
+    if (firstMouse) {
+        lastX = xpos;               // Initialize previous position
+        lastY = ypos;
+        firstMouse = false;         // Disable special handling for subsequent calls
+    }
+
+    // Calculate mouse movement deltas since last callback
+    // These deltas represent the amount and direction of mouse movement
+    float xoffset = xpos - lastX;                   // Horizontal movement (left-right)
+    float yoffset = lastY - ypos;                   // Vertical movement (inverted: screen Y increases downward, camera pitch increases upward)
+
+    // Update state for next callback iteration
+    lastX = xpos;
+    lastY = ypos;
+
+    // Convert mouse movement to camera rotation
+    // Delta values drive continuous camera orientation changes
+    camera.processMouseMovement(xoffset, yoffset);
+}
+----
+
+这个鼠标回调体现了在事件驱动系统中处理连续输入的复杂度。静态变量在多次回调之间保持状态，因为鼠标移动上报的是绝对位置而不是相对增量。首次鼠标处理避免了光标刚被捕获时相机的突兀跳动。
+
+Y 轴的取反（`lastY - ypos`）解决了屏幕空间（Y 向下增大）与相机空间（俯仰为正表示向上看）之间的坐标系差异。这样向上移动鼠标就会让相机向上转，符合用户从其他 3D 应用中形成的预期。
+
+=== 输入集成：滚轮输入处理与缩放控制
+
+接下来处理滚轮输入，用它来实现缩放控制，提供一种调节视野大小的简单接口，用起来很自然。
+
+[source,cpp]
+----
+// Scroll wheel callback for zoom control
+// Provides intuitive field-of-view adjustment through scroll wheel interaction
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    // Direct scroll-to-zoom mapping
+    // Positive yoffset (scroll up) typically zooms in, negative (scroll down) zooms out
+    camera.processMouseScroll(yoffset);
+}
+----
+
+滚轮回调保持简洁，直接把滚动增量传给相机的缩放处理方法。这种设计把缩放控制的数学细节交给相机类，同时为滚轮事件提供干净的接口。滚动方向的约定（正为放大，负为缩小）遵循标准用户界面的惯例。
+
+=== 输入集成：系统集成与输入模式配置
+
+最后建立输入回调与窗口系统之间的集成，配置鼠标捕获和回调注册，实现完整的相机控制。
+
+[source,cpp]
+----
+// Input system initialization and callback registration
+// Establishes the connection between windowing system and camera control callbacks
+void setupInputCallbacks(GLFWwindow* window) {
+    // Register callback functions with the windowing system
+    // These establish the event-driven connection between hardware input and camera control
+    glfwSetCursorPosCallback(window, mouseCallback);        // Connect mouse movement to camera rotation
+    glfwSetScrollCallback(window, scrollCallback);          // Connect scroll wheel to camera zoom
+
+    // Configure mouse capture mode for first-person camera behavior
+    // Disabling the cursor provides continuous mouse input without cursor interference
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+}
+----
+
+系统集成展示了相机控制如何融入更大的应用架构。回调注册建立了硬件输入与相机响应之间的按事件驱动连接，而禁用光标则提供了 3D 应用所期望的无缝鼠标控制。
+
+`GLFW_CURSOR_DISABLED` 模式会捕获鼠标光标，使鼠标可以无限移动而不会撞到屏幕边界。这种配置对第一人称相机控制必不可少，因为用户期望能不受光标限制地朝任意方向持续转动相机。
+
+[NOTE]
+====
+输入处理的具体实现取决于你使用的窗口库和应用架构。上面的示例使用 GLFW，但类似的原理也适用于 SDL、Qt 等库或平台专用 API。关于在 GLFW 中处理输入的更多细节，参见 link:https://www.glfw.org/docs/latest/input_guide.html[GLFW 输入指南]。
+====
+
+=== 相机旋转
+
+对相机旋转，我们用鼠标输入来调整偏航角和俯仰角：
+
+[source,cpp]
+----
+void Camera::processMouseMovement(float xOffset, float yOffset, bool constrainPitch) {
+    xOffset *= mouseSensitivity;
+    yOffset *= mouseSensitivity;
+
+    yaw += xOffset;
+    pitch += yOffset;
+
+    // Constrain pitch to avoid flipping
+    if (constrainPitch) {
+        pitch = std::clamp(pitch, -89.0f, 89.0f);
+    }
+
+    // Update camera vectors based on updated Euler angles
+    updateCameraVectors();
+}
+----
+
+=== 更新相机向量
+
+改变相机朝向后，我们需要重新计算 front、right 和 up 向量：
+
+[source,cpp]
+----
+void Camera::updateCameraVectors() {
+    // Calculate the new front vector
+    glm::vec3 newFront;
+    newFront.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    newFront.y = sin(glm::radians(pitch));
+    newFront.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    front = glm::normalize(newFront);
+
+    // Recalculate the right and up vectors
+    right = glm::normalize(glm::cross(front, worldUp));
+    up = glm::normalize(glm::cross(right, front));
+}
+----
+
+=== 视图矩阵
+
+视图矩阵把世界坐标变换到视图坐标（相机空间）：
+
+[source,cpp]
+----
+glm::mat4 Camera::getViewMatrix() const {
+    return glm::lookAt(position, position + front, up);
+}
+----
+
+=== 投影矩阵
+
+投影矩阵把视图坐标变换到裁剪坐标：
+
+[source,cpp]
+----
+glm::mat4 Camera::getProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) const {
+    return glm::perspective(glm::radians(zoom), aspectRatio, nearPlane, farPlane);
+}
+----
+
+=== 进阶主题：第三人称相机实现
+
+本节探讨实现第三人称相机的进阶技术：它跟随角色，同时避免被遮挡，并保持对角色聚焦。
+
+==== 第三人称相机设计
+
+第三人称相机通常需要：
+
+1. 与角色保持指定距离地跟随
+2. 始终对角色保持稳定的视野
+3. 避免被环境中的物体遮挡
+4. 在移动和旋转时提供平滑过渡
+
+下面扩展我们的相机类来支持这些特性，构建一个专用的 `ThirdPersonCamera`，应对角色跟随相机系统特有的挑战。
+
+=== 第三人称相机架构：目标跟踪与空间关系管理
+
+如果相机不能用来对准某物观看，那它有什么用呢？也许我们还希望角色互相注视，或者让它们看向相机。让我们从弄清楚「注视（lookat）」系统如何工作、相机又如何跟踪目标开始。
+
+取值方法对内部状态提供受控访问，让外部系统（例如需要听者位置的音频系统，或需要视线方向的剔除系统）能够查询相机，而不与实现紧耦合。这样在添加特性时，相机依然易于维护和扩展。
+
+==== 注视基础：让相机指向某物
+
+在把相机行为自动化之前，先建立对「注视」的直觉。想法很简单：已知相机所在的位置——「眼睛」，也知道它应该朝向的点——「目标」，还知道哪个方向是「上」。我们要用这些信息构造一个朝向，让相机面朝目标，同时保持地平线稳定。
+
+可以把它想象成架设一台真实的相机：
+
+* 眼睛：「我站在哪里？」
+* 目标：「我要把什么框在取景器中央？」
+* 上方向：「画面的顶部应该指向哪个方向（这样画面才不会歪）？」
+
+因此，当我们得到「注视」的输出时，我们得到的是一种视图朝向。为方便起见，我们通常用仿射矩阵来表示，但它仅仅是朝向。毕竟，旋转去「注视」某物不应该包含平移到新位置；所以眼睛在整个注视代码中保持位置不变。
+
+要点：
+
+* 「注视」定义的是朝向，而不是位置。位置来自眼睛；注视会根据眼睛→目标的方向和选定的上方向，算出（前 / 右 / 上）方向。
+* 上方向不应与眼睛→目标方向平行。如果两者几乎重合，相机就不知道如何保持地平线水平（它可能「不可预测地翻滚」）。
+* 注视既可用于相机，也可用于物体。角色可以互相面向，你也可以用同样的概念让聚光灯或炮塔对准目标。
+
+在下一节，我们会把这个一次性的「指向目标」想法变成一种行为：平滑、连续地跟踪相机目标，跟随移动的对象而不抖动、不突然跳变。
+
+=== 相机与目标关系的实现
+
+首先建立相机与其目标之间的基本关系，管理驱动所有第三人称相机行为的空间跟踪信息。
+
+[source,cpp]
+----
+class ThirdPersonCamera : public Camera {
+private:
+    // Target entity tracking and spatial relationship data
+    // These properties define the relationship between camera and the character being followed
+    glm::vec3 targetPosition;      // Current world position of the target character
+    glm::vec3 targetForward;       // Target's forward direction vector for contextual camera positioning
+----
+
+目标跟踪系统是第三人称相机行为的基础，它在相机与被跟随的角色之间维持持续的联系。`targetPosition` 提供相机环绕所围绕的空间锚点，而 `targetForward` 使相机能够进行上下文感知的定位，预判角色正在朝哪里移动或观看。
+
+这种方式让相机能根据角色的状态和朝向做出智能的定位决策，产生比简单的固定偏移跟随更动态、更灵敏的相机行为。
+
+=== 第三人称相机架构：行为配置与控制参数
+
+下面处理控制相机相对目标行为的参数，为相机的特性提供美术和玩法层面的控制。
+
+[source,cpp]
+----
+    // Camera behavior configuration parameters
+    // These values control the aesthetic and functional characteristics of camera following
+    float followDistance;          // Desired distance from target (affects intimacy and field of view)
+    float followHeight;            // Height offset above target (provides better scene visibility)
+    float followSmoothness;        // Interpolation factor for smooth camera transitions (0 = instant, 1 = never)
+----
+
+行为参数为相机的「性格」和功能特性提供了美术控制。跟随距离同时影响与角色的视觉亲近感和画面中可见的周围环境范围。高度偏移确保相机对角色以及周围地形或障碍都有良好的可见性。
+
+平滑参数控制相机对目标移动的响应程度，让设计者在即时响应（可能显得生硬）与平滑运动（可能显得迟滞）之间取得平衡。这个参数对营造自然、能适应不同玩法情境的相机手感至关重要。
+
+=== 第三人称相机架构：碰撞检测与遮挡管理
+
+现在我们有了一个能在基本情形下工作的相机系统。不过，让我们简单谈谈环境遮挡这个复杂问题，确保即使障碍物干扰了理想机位，相机也保持对目标的可见性。
+
+[source,cpp]
+----
+    // Occlusion avoidance and collision management
+    // These parameters control how the camera responds to environmental obstacles
+    float minDistance;             // Minimum allowed distance from target (prevents camera from getting too close)
+    float raycastDistance;         // Maximum distance for occlusion detection rays
+----
+
+遮挡管理系统应对第三人称相机实现中最具挑战性的方面之一：当环境几何体干扰理想机位时保持可见性。最小距离防止相机在碰撞情形下离角色近得令人不适，而射线投射距离则定义了相机向前探测潜在遮挡问题的范围。
+
+这套系统让相机能主动响应环境约束，平滑调整位置以保持最佳可见性，而不出现会让玩家失去方向感的突兀过渡或突然位移。
+
+=== 第三人称相机架构：内部状态管理与运动控制
+
+为了获得平滑的相机运动，我们需要理解相机架构的有限状态机（FSM）设计。我们管理智能定位决策所需的内部计算状态，以帮助实现平滑的相机运动。
+
+[source,cpp]
+----
+    // Internal computational state for smooth motion control
+    // These variables manage the mathematical aspects of camera positioning and movement
+    glm::vec3 desiredPosition;     // Target position the camera wants to reach (before collision adjustments)
+    glm::vec3 smoothDampVelocity;  // Velocity state for smooth damping interpolation algorithms
+
+public:
+----
+
+内部状态管理把期望的相机行为与实际相机位置分开，使系统能够处理多种影响相机定位因素并存的复杂情形。期望位置表示根据跟随参数相机理想上应处的位置，而平滑阻尼速度则支撑起复杂的插值算法，产生自然、物理感十足的运动。
+
+这种关注点分离让相机系统能够从容处理期望定位与环境约束之间的冲突，即使相机必须明显偏离偏好的位置，也能保持平滑运动。
+
+=== 第三人称相机架构：公共接口与配置控制
+
+接下来考察外部接口，它让游戏代码能够与第三人称相机系统交互并配置它，从而避免紧耦合，并把相机保持为独立模块。
+
+[source,cpp]
+----
+    // Constructor with gameplay-tuned defaults
+    // Default values chosen for common third-person game scenarios
+    ThirdPersonCamera(
+        float followDistance = 5.0f,        // Medium distance providing good character visibility and environment context
+        float followHeight = 2.0f,          // Height above target for clear sightlines over low obstacles
+        float followSmoothness = 0.1f,      // Moderate smoothing for responsive but stable camera motion
+        float minDistance = 1.0f            // Minimum distance to prevent uncomfortable close-ups
+    );
+
+    // Core functionality methods for camera behavior control
+    void updatePosition(const glm::vec3& targetPos, const glm::vec3& targetFwd, float deltaTime);
+    void handleOcclusion(const Scene& scene);
+    void orbit(float horizontalAngle, float verticalAngle);
+
+    // Runtime configuration methods for dynamic camera adjustment
+    void setFollowDistance(float distance) { followDistance = distance; }
+    void setFollowHeight(float height) { followHeight = height; }
+    void setFollowSmoothness(float smoothness) { followSmoothness = smoothness; }
+};
+----
+
+公共接口的设计在易用性与强大功能之间取得平衡，为常见的第三人称场景提供合理的默认值，同时在需要时允许完全自定义。默认值依据常见的第三人称游戏需求选取：中等距离以保证角色可见性，中等高度以保持对环境感知，以及适中的平滑度以获得灵敏而稳定的运动。
+
+方法组织把核心更新功能（通常每帧运行）与配置方法（调用频率较低）以及环绕等专门行为（可能由特定用户输入触发）区分开。这种设计便于把相机集成到不同的游戏循环架构中，同时保持清晰的关注点分离。
+
+==== 角色跟随算法
+
+第三人称相机的核心是相对角色定位相机的算法。下面是 `updatePosition` 方法的一种实现：
+
+[source,cpp]
+----
+void ThirdPersonCamera::updatePosition(
+    const glm::vec3& targetPos,
+    const glm::vec3& targetFwd,
+    float deltaTime
+) {
+    // Update target properties
+    targetPosition = targetPos;
+    targetForward = glm::normalize(targetFwd);
+
+    // Calculate the desired camera position
+    // Position the camera behind and above the character
+    glm::vec3 offset = -targetForward * followDistance;
+    offset.y = followHeight;
+
+    desiredPosition = targetPosition + offset;
+
+    // Smooth camera movement using exponential smoothing
+    position = glm::mix(position, desiredPosition, 1.0f - pow(followSmoothness, deltaTime * 60.0f));
+
+    // Update the camera to look at the target
+    front = glm::normalize(targetPosition - position);
+
+    // Recalculate right and up vectors
+    right = glm::normalize(glm::cross(front, worldUp));
+    up = glm::normalize(glm::cross(right, front));
+}
+----
+
+这段实现：
+
+1. 根据角色的前方向把相机放在角色后方
+2. 增加高度，以便更好地看到角色和周围环境
+3. 使用指数平滑营造自然的相机运动
+4. 始终让相机聚焦在角色上
+
+==== 遮挡回避
+
+第三人称相机最具挑战性的方面之一是处理遮挡——环境中的物体挡住角色视线的情形。下面是遮挡回避的一种实现：
+
+[source,cpp]
+----
+void ThirdPersonCamera::handleOcclusion(const Scene& scene) {
+    // Cast a ray from the target to the desired camera position
+    Ray ray;
+    ray.origin = targetPosition;
+    ray.direction = glm::normalize(desiredPosition - targetPosition);
+
+    // Check for intersections with scene objects
+    RaycastHit hit;
+    if (scene.raycast(ray, hit, glm::length(desiredPosition - targetPosition))) {
+        // If there's an intersection, move the camera to the hit point
+        // minus a small offset to avoid clipping
+        float offsetDistance = 0.2f;
+        position = hit.point - (ray.direction * offsetDistance);
+
+        // Ensure we don't get too close to the target
+        float currentDistance = glm::length(position - targetPosition);
+        if (currentDistance < minDistance) {
+            position = targetPosition + ray.direction * minDistance;
+        }
+
+        // Update the camera to look at the target
+        front = glm::normalize(targetPosition - position);
+        right = glm::normalize(glm::cross(front, worldUp));
+        up = glm::normalize(glm::cross(right, front));
+    }
+}
+----
+
+这段实现：
+
+1. 从角色向期望的相机位置投射一条射线
+2. 如果射线命中物体，就把相机移动到命中点（带一个小偏移）
+3. 确保相机不会靠角色太近
+4. 更新相机朝向，保持对角色聚焦
+
+===== 遮挡回避的性能考量
+
+实现遮挡回避时要注意性能：
+
+* *使用简化的碰撞几何体*：做射线投射时，使用比渲染几何体更简单的碰撞形状
+* *限制遮挡检测的频率*：在较慢的设备上可能不需要每帧检测
+* *考虑空间划分*：使用八叉树之类的结构，通过快速排除不可能与射线相交的物体来加速射线投射
+* *针对移动平台优化*：对性能受限的设备，考虑简化遮挡算法或降低其精度
+
+==== 实现环绕控制
+
+许多第三人称游戏允许玩家围绕角色环绕相机。下面实现这一功能：
+
+[source,cpp]
+----
+void ThirdPersonCamera::orbit(float horizontalAngle, float verticalAngle) {
+    // Update yaw and pitch based on input
+    yaw += horizontalAngle;
+    pitch += verticalAngle;
+
+    // Constrain pitch to avoid flipping
+    pitch = std::clamp(pitch, -89.0f, 89.0f);
+
+    // Calculate the new camera position based on spherical coordinates
+    float radius = followDistance;
+    float yawRad = glm::radians(yaw);
+    float pitchRad = glm::radians(pitch);
+
+    // Convert spherical coordinates to Cartesian
+    glm::vec3 offset;
+    offset.x = radius * cos(yawRad) * cos(pitchRad);
+    offset.y = radius * sin(pitchRad);
+    offset.z = radius * sin(yawRad) * cos(pitchRad);
+
+    // Set the desired position
+    desiredPosition = targetPosition + offset;
+
+    // Update camera vectors
+    front = glm::normalize(targetPosition - desiredPosition);
+    right = glm::normalize(glm::cross(front, worldUp));
+    up = glm::normalize(glm::cross(right, front));
+}
+----
+
+这段实现：
+
+1. 根据用户输入更新相机的偏航与俯仰
+2. 约束俯仰，防止相机翻转
+3. 使用球面坐标计算新的相机位置
+4. 保持相机聚焦在角色上
+
+==== 与角色移动集成
+
+要构建完整的第三人称相机系统，我们需要把它与角色移动集成。下面是在游戏循环中使用第三人称相机的示例：
+
+[source,cpp]
+----
+void gameLoop(float deltaTime) {
+    // Update character position and orientation based on input
+    character.update(deltaTime);
+
+    // Update camera position to follow the character
+    thirdPersonCamera.updatePosition(
+        character.getPosition(),
+        character.getForward(),
+        deltaTime
+    );
+
+    // Handle camera occlusion
+    thirdPersonCamera.handleOcclusion(scene);
+
+    // Process camera orbit input (if any)
+    if (mouseInputDetected) {
+        thirdPersonCamera.orbit(mouseDeltaX, mouseDeltaY);
+    }
+
+    // Get the view and projection matrices for rendering
+    glm::mat4 viewMatrix = thirdPersonCamera.getViewMatrix();
+    glm::mat4 projMatrix = thirdPersonCamera.getProjectionMatrix(aspectRatio);
+
+    // Use these matrices for rendering the scene
+    renderer.render(scene, viewMatrix, projMatrix);
+}
+----
+
+[NOTE]
+====
+关于更进阶的相机技术，参见 xref:Building_a_Simple_Engine/Appendix/appendix.adoc[附录] 中的「进阶相机技术」一节。
+====
+
+下一节，我们会把相机系统与 Vulkan 集成，用来渲染 3D 场景。
+
+xref:Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc[上一篇：相机与变换：变换矩阵] | xref:Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc[下一篇：相机与变换：与 Vulkan 集成]

@@ -1,0 +1,12 @@
+{
+  "id": "b014",
+  "words": 5155,
+  "files": [
+    {
+      "source": "en/11_Compute_Shader.adoc",
+      "target": "zh/11_Compute_Shader.adoc",
+      "words": 5155,
+      "title": "Compute Shader"
+    }
+  ]
+}

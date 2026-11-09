@@ -1,0 +1,103 @@
+:pp: {plus}{plus}
+= 掌握混合精度：FP16 与 Int8
+
+在高性能计算中，我们过去几乎对所有计算都依赖 32 位浮点精度（FP32）。但随着数据集越来越大、我们对吞吐量的要求越来越高，值得一问：每一次计算*真的*都需要 32 位吗？**混合精度（Mixed Precision）**正是为此而生。
+
+核心思路很简单：把大部分计算交给 **FP16**（半精度浮点数）或 **Int8**（8 位整数）这类低精度类型，只在绝对必要时才使用更高精度。现代 GPU 架构针对这些低精度类型做了大量优化。例如，许多 GPU 在相同时间内能完成两倍于 FP32 的 FP16 运算。
+
+== 为什么要用混合精度？
+
+拥抱低精度主要有两个理由：
+
+1. **算术吞吐量**：许多现代 GPU 配备了"打包"数学单元。一个 32 位寄存器可以容纳两个 16 位值，硬件能在原本执行一次 32 位运算的同一周期内完成两次 16 位运算。
+2. **内存带宽**：搬运数据的代价很高。使用 16 位或 8 位类型，你实际上把同一条内存总线能搬运的数据量翻了两倍或四倍。
+
+== 精度与范围：FP16 与 BFloat16
+
+从 32 位降到 16 位时，你必须选择牺牲什么。
+
+* **FP16（IEEE 754）**：1 位符号位、5 位指数位、10 位尾数位。精度尚可，但范围非常有限（最大值约 65,504）。
+* **BFloat16（Brain Float）**：1 位符号位、8 位指数位、7 位尾数位。它的范围与 FP32 *相同*，但精度低得多。由于对溢出更稳健，它在机器学习中往往更受青睐。
+
+在 Vulkan 中，FP16 通过 `VK_KHR_shader_float16_int8` 扩展得到广泛支持，而 BFloat16 支持则由 `VK_KHR_shader_bfloat16` 扩展提供。
+
+== Slang：天然的混合精度
+
+Slang 让混合精度变得极其简单，因为它把 `half` 和 `int8_t` 当作原生类型。底层的转换指令由它替你处理。
+
+[source,slang]
+----
+// Using half-precision in Slang
+void computeMain() {
+    // 16-bit floats (h suffix)
+    half a = 1.0h;
+    half b = 2.0h;
+
+    // Mixed accumulation: Perform 16-bit math, accumulate in 32-bit
+    float accumulator = 0.0f;
+    for(int i = 0; i < 100; i++) {
+        // Explicit cast to float to ensure the addition is 32-bit
+        accumulator += (float)(a * b);
+    }
+}
+----
+
+== Int8 与点积（DP4A）
+
+为了获得更高的吞吐量，许多 GPU 支持针对 8 位整数运算的专用指令。最常见的一种是 **DP4A**（带 4 路累加的点积）。
+
+硬件取两个 32 位寄存器，每个寄存器包含四个 8 位值（$x_0, x_1, x_2, x_3$ 和 $y_0, y_1, y_2, y_3$），然后执行：
+[latexmath]
+++++
+Result = (x_0 \times y_0) + (x_1 \times y_1) + (x_2 \times y_2) + (x_3 \times y_3) + Accumulator
+++++
+这一切都在单个周期内完成。在 Slang 中，你可以对打包的 8 位向量使用 `dot` 来触发它：
+
+[source,slang]
+----
+RWStructuredBuffer<uint> output;
+
+void computeMain(uint3 threadId : SV_DispatchThreadID) {
+    uint32_t packedA = loadPackedA(threadId.x);
+    uint32_t packedB = loadPackedB(threadId.x);
+
+    // Reinterpret the uint32 as a vector of four 8-bit ints
+    int8_t4 vecA = BitCast<int8_t4>(packedA);
+    int8_t4 vecB = BitCast<int8_t4>(packedB);
+
+    // The dot product intrinsic maps directly to DP4A hardware
+    int result = dot(vecA, vecB);
+    output[threadId.x] = result;
+}
+----
+
+== C{pp} 侧：准备数据
+
+要喂给这些着色器，你必须在 CPU 上正确地打包数据。由于标准 C{pp} 没有原生的 16 位浮点类型（直到 C{pp}23 的 `std::float16_t`），你通常会使用 `glm` 这类库，或者手动做位打包。
+
+[source,cpp]
+----
+// Example of packing four 8-bit integers into one 32-bit uint
+uint32_t packInt8(int8_t a, int8_t b, int8_t c, int8_t d) {
+    return (uint32_t(a) << 0)  | (uint32_t(b) << 8) |
+           (uint32_t(c) << 16) | (uint32_t(d) << 24);
+}
+
+// Uploading to a Vulkan buffer using RAII
+void uploadData(vk::raii::Device& device, const std::vector<uint32_t>& packedData) {
+    vk::BufferCreateInfo createInfo({}, packedData.size() * sizeof(uint32_t),
+                                   vk::BufferUsageFlagBits::eStorageBuffer);
+    vk::raii::Buffer storageBuffer(device, createInfo);
+    // ... bind memory and copy data ...
+}
+----
+
+== 管理动态范围：损失缩放
+
+混合精度最大的挑战，尤其是 **FP16**，在于它有限的**动态范围**。FP16 的范围远小于 FP32，这意味着它更容易**溢出**（超出最大值）或**下溢**（小到无法表示）。
+
+应对这一点需要一种称为**损失缩放（Loss Scaling）**的技术。在执行低精度计算之前，先把数值乘以一个缩放因子（例如 128.0），使其保持在安全范围内，计算完成后再除以同一因子。
+
+掌握混合精度，你就不只是在"榨出更多性能"，而是在更聪明地利用硬件资源。无论你是在优化流体仿真还是实时信号处理引擎，这些技术都是突破现代 GPU 能力边界的关键。
+
+xref:Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc[上一篇：使用协作矩阵] | xref:Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc[下一篇：性能审计与优化]

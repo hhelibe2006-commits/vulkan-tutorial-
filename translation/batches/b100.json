@@ -1,0 +1,66 @@
+{
+  "id": "b100",
+  "words": 4196,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc",
+      "words": 277,
+      "title": "Quad-Views and Foveated Rendering: High-Fidelity Spatial Computing"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/02_primary_stereo_with_insets.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/02_primary_stereo_with_insets.adoc",
+      "words": 508,
+      "title": "Primary Stereo with Insets"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc",
+      "words": 539,
+      "title": "Multi-Layer Composition"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/04_incorporating_into_the_engine.adoc",
+      "words": 309,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc",
+      "words": 275,
+      "title": "Variable Rate Shading (VRS) for Peripheral Optimization"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc",
+      "words": 473,
+      "title": "Fragment Density Control & VRS"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc",
+      "words": 654,
+      "title": "Gaze-Driven Logic and Eye-Tracking Telemetry"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc",
+      "words": 397,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc",
+      "words": 234,
+      "title": "Canted Displays and Asymmetric Frustums"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc",
+      "words": 530,
+      "title": "Asymmetric Frustums for Canted Displays"
+    }
+  ]
+}

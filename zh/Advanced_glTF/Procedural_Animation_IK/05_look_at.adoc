@@ -1,0 +1,198 @@
+:pp: {plus}{plus}
+= 注视控制器
+
+== 注视控制器的作用
+
+注视控制器（look-at controller）是一种程序化系统，它旋转一个或多个关节——通常是颈部和头部——让角色看起来正在注视世界中的某个特定点。与修正末端执行器位置的脚部放置 IK 不同，注视控制器是纯旋转的：它回答的是「这些关节必须具有怎样的旋转，才能让视线方向指向目标？」
+
+它的应用领域很广。一名敌方士兵扭头追踪从其视野中横穿而过的玩家。一个商店 NPC，其头部随着玩家角色走过集市而转动。一名狙击手角色，其颈部与上段脊柱缓慢转向远处的目标。一匹马，其头部转向一段有趣的声音。在所有这些情况中，基础身体动画都继续播放——角色在行走、说话、呼吸——而注视系统则独立地旋转头部关节。
+
+注视控制器可以实现为 IK 的一个特例（此时「末端执行器」是视线方向而不是位置），也可以实现为直接的旋转计算。我们将采用直接计算的方式，因为它更简单、更可控，并且足以应付绝大多数实际用例。
+
+== 理解坐标空间问题
+
+注视控制器棘手的地方不在于数学——数学很简单——而在于把坐标空间搞对。每个关节都有一个由 glTF 层级定义的局部坐标系。头部关节的「前向」方向不一定是世界 Y 轴或 Z 轴；它取决于美术在 Blender 中如何搭建骨架。你需要知道头部关节的哪一个局部轴指向「前方」（朝向面部）、哪一个指向「上方」，因为这些正是你要对齐的轴。
+
+在遵循常见约定的标准 Blender 人形骨架上，头部的局部 +Y 轴通常指向上方（朝向头顶），+Z 轴指向前方（朝向鼻子）。但这只是一种约定，不是铁律——你应当通过在 Blender 中查看关节朝向，来验证你自己的骨架。我们会在注视实现中把前向轴与上向轴参数化，这样无论骨架采用什么约定都能工作。
+
+== 注视旋转
+
+给定头部关节当前的世界位置与朝向，以及一个目标世界位置，注视旋转按如下方式计算：
+
+1. 计算期望的前向方向：`desired_forward = normalize(target - head_world_pos)`。
+2. 提取当前的前向方向：`current_forward = normalize(head_world_rotation * local_forward_axis)`。
+3. 计算从当前到期望的旋转：这就是我们在 CCD 中用过的同一个「把一个向量旋转到另一个向量上」的四元数。
+4. 可选地把该角度应用到场景图中的局部旋转上，用与 IK 求解器中相同的方式把世界空间转换回父空间。
+
+我们把它实现为一个可复用的函数：
+
+[source,cpp]
+----
+struct LookAtController {
+    uint32_t  head_node_idx;           // The primary head/neck joint
+    glm::vec3 local_forward_axis;      // The "forward" axis in the joint's local space
+    glm::vec3 local_up_axis;           // The "up" axis in the joint's local space
+    float     max_angle_degrees;       // Maximum deviation from the rest pose
+    float     weight;                  // Blend weight: 0 = no look-at, 1 = full
+};
+
+void apply_look_at(
+    std::vector<Node>&     nodes,
+    const LookAtController& controller,
+    const glm::vec3&        target_world)
+{
+    Node& head = nodes[controller.head_node_idx];
+
+    // World position of the head joint
+    glm::vec3 head_world_pos = glm::vec3(head.world_matrix[3]);
+
+    glm::vec3 to_target = target_world - head_world_pos;
+    float dist = glm::length(to_target);
+    if (dist < 1e-4f) return; // Target is inside the head; ignore
+    to_target /= dist;
+
+    // Current world-space forward direction of the head joint
+    glm::quat head_world_rot = head.get_world_rotation();
+    glm::vec3 current_forward = head_world_rot * controller.local_forward_axis;
+
+    float dot = glm::clamp(glm::dot(current_forward, to_target), -1.0f, 1.0f);
+    if (dot > 0.9999f) return; // Already looking at target
+
+    float angle = std::acos(dot);
+
+    // Clamp the rotation to the maximum allowed angle.
+    // This prevents the head from twisting 180 degrees around.
+    float clamped_angle = std::min(angle, glm::radians(controller.max_angle_degrees));
+
+    // Apply the weight: a weight of 0.5 would only rotate halfway to the target.
+    // This is useful for blending the look-at in and out smoothly.
+    clamped_angle *= controller.weight;
+    if (clamped_angle < 1e-5f) return;
+
+    glm::vec3 rotation_axis = glm::cross(current_forward, to_target);
+    if (glm::length(rotation_axis) < 1e-6f) {
+        // Vectors are anti-parallel; choose an arbitrary perpendicular axis.
+        // Use the joint's up axis as the rotation axis to avoid gimbal issues.
+        rotation_axis = head_world_rot * controller.local_up_axis;
+    } else {
+        rotation_axis = glm::normalize(rotation_axis);
+    }
+
+    glm::quat world_correction  = glm::angleAxis(clamped_angle, rotation_axis);
+    glm::quat new_world_rot     = world_correction * head_world_rot;
+
+    glm::quat parent_world_rot = (head.parent_index != INVALID_NODE_INDEX)
+        ? nodes[head.parent_index].get_world_rotation()
+        : glm::quat(1, 0, 0, 0);
+
+    head.local_rotation = glm::inverse(parent_world_rot) * new_world_rot;
+    head.mark_dirty();
+    update_world_matrices_subtree(nodes, controller.head_node_idx);
+}
+----
+
+== 把旋转分配到多个关节
+
+只作用于头部关节的单关节注视控制器虽然能用，但看起来不够自然。真实的人注视某物时不会只转动头部——他们还会转动颈部，而在角度差较大时，还会转动上段脊柱。注视旋转应当**分配**到从脊柱到头部的一整条关节链上，每个关节承担总旋转量的一部分。
+
+这种分配到有两个目的。第一，它避免了头部在固定颈部上旋转的机械感——人类的颈部是柔韧的，会参与到旋转之中。第二，它让总的注视角度可以超过头部单个关节的最大活动范围，因为多个关节各自贡献了总量中较小的一部分。
+
+分配旋转很直接：不要把所有角度都施加到头部关节上，而是把其中的一部分施加到链上的每个关节，从脊柱到头部。这些份额之和应当为 1，权重可以按你的喜好设置——通常头部占最大份额，脊柱占最小份额：
+
+[source,cpp]
+----
+struct LookAtChain {
+    std::vector<uint32_t> joints;      // Ordered from root (spine) to tip (head)
+    std::vector<float>    weights;     // Per-joint share of the total rotation (must sum to 1)
+    glm::vec3 local_forward_axis;      // Forward axis in the *head joint's* local space
+    glm::vec3 local_up_axis;           // Up axis in the *head joint's* local space
+    float     max_total_angle_degrees; // Maximum total look-at angle across all joints
+    float     blend_weight;            // Global blend weight (0 = none, 1 = full)
+};
+
+void apply_look_at_chain(
+    std::vector<Node>&    nodes,
+    const LookAtChain&    chain,
+    const glm::vec3&      target_world)
+{
+    if (chain.joints.empty()) return;
+    uint32_t head_idx = chain.joints.back();
+
+    // Compute the total desired rotation (same as single-joint look-at)
+    glm::vec3 head_world_pos  = glm::vec3(nodes[head_idx].world_matrix[3]);
+    glm::vec3 to_target       = target_world - head_world_pos;
+    float dist = glm::length(to_target);
+    if (dist < 1e-4f) return;
+    to_target /= dist;
+
+    glm::quat head_world_rot   = nodes[head_idx].get_world_rotation();
+    glm::vec3 current_forward  = head_world_rot * chain.local_forward_axis;
+
+    float dot   = glm::clamp(glm::dot(current_forward, to_target), -1.0f, 1.0f);
+    float angle = std::acos(dot);
+    if (angle < 1e-5f) return;
+
+    float total_angle = std::min(angle, glm::radians(chain.max_total_angle_degrees));
+    total_angle *= chain.blend_weight;
+    if (total_angle < 1e-5f) return;
+
+    glm::vec3 rotation_axis = glm::cross(current_forward, to_target);
+    if (glm::length(rotation_axis) < 1e-6f) {
+        rotation_axis = head_world_rot * chain.local_up_axis;
+    } else {
+        rotation_axis = glm::normalize(rotation_axis);
+    }
+
+    // Distribute the rotation across the chain, applying each joint's share
+    for (size_t i = 0; i < chain.joints.size(); ++i) {
+        uint32_t joint_idx    = chain.joints[i];
+        float    joint_angle  = total_angle * chain.weights[i];
+        if (joint_angle < 1e-5f) continue;
+
+        Node& joint = nodes[joint_idx];
+        glm::quat world_correction = glm::angleAxis(joint_angle, rotation_axis);
+        glm::quat new_world_rot    = world_correction * joint.get_world_rotation();
+
+        glm::quat parent_world_rot = (joint.parent_index != INVALID_NODE_INDEX)
+            ? nodes[joint.parent_index].get_world_rotation()
+            : glm::quat(1, 0, 0, 0);
+
+        joint.local_rotation = glm::inverse(parent_world_rot) * new_world_rot;
+        joint.mark_dirty();
+        update_world_matrices_subtree(nodes, joint_idx);
+    }
+}
+----
+
+一条从颈部到头部的三关节链，典型的权重分配可能是 `[0.2, 0.3, 0.5]`：下段颈部贡献 20% 的旋转，上段颈部贡献 30%，头部贡献 50%。这些数值是审美上的选择——用眼睛去调，直到动作对你的角色来说显得自然为止。
+
+== 平滑注视目标
+
+和脚部放置一样，注视控制器也需要时间上的平滑，否则角色的头部每帧都会直接跳到新的目标位置。平滑方式同样是指数移动平均：维护一个平滑后的目标位置，让它每帧去追赶原始目标：
+
+[source,cpp]
+----
+struct LookAtState {
+    glm::vec3 smoothed_target;  // The temporally-smoothed look-at target
+    bool initialized = false;
+};
+
+void update_look_at_target(
+    const glm::vec3& raw_target,
+    float            speed,      // Higher = faster tracking; typical range 3–15
+    float            delta_time,
+    LookAtState&     state)
+{
+    if (!state.initialized) {
+        state.smoothed_target = raw_target;
+        state.initialized     = true;
+        return;
+    }
+    float t = glm::clamp(speed * delta_time, 0.0f, 1.0f);
+    state.smoothed_target = glm::mix(state.smoothed_target, raw_target, t);
+}
+----
+
+`speed` 参数控制头部追踪的「僵硬程度」。速度为 3 会产生缓慢、慵懒的追踪，适合一个漫不经心地望着远处某物的角色。速度为 12 会产生敏捷的追踪，适合一名警觉地扫视威胁的士兵。根据角色状态——平静还是警觉——来改变速度，会增添一层微妙的表达力，在过场动画中回报丰厚。
+
+xref:Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc[上一篇：不平地形上的脚部放置] | xref:Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc[下一篇：物理驱动的程序化倾斜]

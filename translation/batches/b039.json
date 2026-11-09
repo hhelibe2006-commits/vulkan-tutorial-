@@ -1,0 +1,42 @@
+{
+  "id": "b039",
+  "words": 5136,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc",
+      "words": 2317,
+      "title": "Direct-to-Display Rendering with VK_KHR_display"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc",
+      "words": 257,
+      "title": "VK_KHR_dynamic_rendering_local_read — keeping color data in tile memory"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc",
+      "words": 251,
+      "title": "Forward+ Rendering in this Sample"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc",
+      "words": 680,
+      "title": "Forward, Forward+, and Deferred — choosing the right path"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc",
+      "words": 1395,
+      "title": "glTF Animation and Transform Composition"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc",
+      "words": 236,
+      "title": "Mipmaps and Level of Detail (LOD)"
+    }
+  ]
+}

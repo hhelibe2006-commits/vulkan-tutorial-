@@ -1,0 +1,240 @@
+= 调试面向 ML 的 Vulkan 计算：驯服显式控制
+:pp: ++
+:stem: latexmath
+
+你已经把神经网络的各层实现成了 Vulkan 计算着色器。应用能编译，验证层一言不发，GPU 也确实在*做点什么*。但正如我们在引言中讨论过的，ML 是无声失败的国度。「能跑」只是整个旅程的前 10%。
+
+调试 Vulkan 计算是一套独特的技能。你要找的不只是 GLSL 里的逻辑错误，你还要找**编排错误**。本章我们来看 Vulkan ML 中三个最大的摩擦点：同步、描述符管理与工作组数学。
+
+== 接力赛：理解管线屏障
+
+Vulkan ML 中最常见的单一 bug 就是同步缺失或错误。神经网络是严格串行的：第 latexmath:[N] 层必须先写完它的输出，第 latexmath:[N+1] 层才能开始读取。
+
+在 PyTorch 这样的高级框架里，这一切都替你处理好了。而在 Vulkan 里，GPU 是一匹野马——除非你明确拉紧缰绳，否则它会试图一次性执行所有东西来最大化吞吐量。
+
+=== 屏障的类比
+把你的推理管线想象成一场**接力赛**。
+
+*   **跑者**：你的计算着色器（卷积、ReLU、池化）。
+*   **接力棒**：GPU 内存中的张量数据。
+
+如果第二棒（ReLU）在第一棒（卷积）交出接力棒之前就起跑，那他们就是空着手在跑。用 Vulkan 的话说，这叫**数据竞争**。ReLU 着色器会读到未初始化的内存、上一帧的陈旧数据，或者只写了一半的部分结果。
+
+=== 实现握手
+我们用 `vkCmdPipelineBarrier` 来实现这个握手。两层之间一道正确的屏障长这样：
+
+[source,cpp]
+----
+// Transitioning from Layer 1 (Convolution) to Layer 2 (ReLU)
+vk::BufferMemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite, // Wait for Convolution to finish writing
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead,  // Ensure ReLU can safely read
+    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .buffer = activationBuffer,
+    .offset = 0,
+    .size = VK_WHOLE_SIZE
+};
+
+cmd.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader, // Source stage
+    vk::PipelineStageFlagBits::eComputeShader, // Destination stage
+    {},                                        // Dependency flags
+    nullptr, nullptr, barrier                  // Memory, Buffer, and Image barriers
+);
+----
+
+=== 执行屏障与内存屏障
+这一部分连经验丰富的图形程序员也会栽跟头。
+
+1.  **执行屏障**：告诉 GPU：「在上一个着色器完成之前，不要启动下一个。」
+2.  **内存屏障**：告诉 GPU：「确保第一个着色器写入的数据真正从 L1/L2 缓存刷出，并对下一个着色器可见。」
+
+在 Vulkan 中，`vkCmdPipelineBarrier` 同时处理这两者。设置 `srcStage` 与 `dstStage`，你处理的是执行；设置 `srcAccess` 与 `dstAccess`，你处理的是内存可见性。
+
+**常见陷阱**：把 `srcAccessMask` 设成 `eShaderRead`。记住：`src` 是你正在**完成**的事，`dst` 是你正在**开始**的事。如果你让 Vulkan 在开始一次读取之前等待一次读取，你的写入根本没有受到保护！
+
+=== 面向 ML 的全局内存屏障
+在深层网络中，你可能会想为每一次转换都创建一个 `VkBufferMemoryBarrier`。这样虽然精确，却会导致「屏障膨胀」和混乱的代码。
+
+专业的 ML 引擎通常使用**全局内存屏障**。你不指定具体的缓冲区，而是把 `bufferCount` 设为 0，并提供一个通用的 `VkMemoryBarrier`。
+
+[source,cpp]
+----
+vk::MemoryBarrier globalBarrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+
+// This protects ALL buffers currently being used by the compute pipe
+cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    {}, globalBarrier, nullptr, nullptr);
+----
+
+它效率稍低（GPU 可能刷出比实际需要更多的数据），但出错的可能性小得多。调试时先用全局屏障，只有在需要榨出最后 1% 性能时，再换成针对具体缓冲区的屏障。
+
+== 并行性的几何：工作组数学
+
+在「构建推理引擎」一章中，我们介绍过工作组。现在来看看那些导致 90%「部分渲染」bug 的数学。
+
+派发计算着色器时，你定义的是一张线程网格。
+[latexmath]
+++++
+\text{Total Threads} = \text{Workgroups} \times \text{Local Size}
+++++
+
+=== 「向上取整」问题
+如果你有一个宽度为 latexmath:[W = 225] 的张量，而本地工作组大小是 latexmath:[16]，你需要多少个工作组？
+
+如果你做简单的整数除法：
+[latexmath]
+++++
+225 / 16 = 14 \text{ (Integer)}
+++++
+[latexmath]
+++++
+14 \times 16 = 224
+++++
+
+你刚刚漏掉了图像最后一列！你的网络现在对每一帧最右侧的边缘「失明」了。要修好它，我们必须始终**向上取整**：
+
+[latexmath]
+++++
+\text{Workgroups} = \left\lceil \frac{\text{Tensor Dimension}}{\text{Workgroup Size}} \right\rceil = \frac{\text{Tensor Dimension} + \text{Workgroup Size} - 1}{\text{Workgroup Size}}
+++++
+
+在 C{pp} 中：
+[source,cpp]
+----
+uint32_t groupCount = (tensorWidth + localSize - 1) / localSize;
+cmd.dispatch(groupCount, heightCount, depthCount);
+----
+
+=== 「越界」安全网
+向上取整带来了新问题：有些线程现在会跑到张量「外面」去。如果你的着色器不加检查就写 `data[index]`，就会破坏相邻内存，或者触发 GPU 页错误。
+
+**每个 ML 着色器都必须有边界检查：**
+[source,glsl]
+----
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+
+    // Safety check: Don't process pixels that don't exist
+    if (pos.x >= params.width || pos.y >= params.height) {
+        return;
+    }
+
+    // Real work happens here...
+}
+----
+
+== 内存可见性：缓存幽灵
+
+即使同步做得完美，结果仍可能因为**内存可见性**而出错。
+
+GPU 有多级缓存（L1、L2）。当着色器写入某个缓冲区时，数据可能留在 L2 缓存里，而没有写回真正的显存。如果你的下一层在一个拥有独立 L1 缓存的「计算单元」上执行，它就可能从显存读到数据的「陈旧」版本。
+
+Vulkan 的屏障通过**访问标志**来处理这一点。
+*   `eShaderWrite` 确保 L1/L2 缓存被**刷出**（推送到显存）。
+*   `eShaderRead` 确保 L1/L2 缓存被**失效**（强制从显存重新读取）。
+
+**调试提示**：如果每次运行应用结果都会变（非确定性），那几乎可以肯定存在可见性 bug。
+
+== 描述符集混乱
+
+在 MobileNetV2 这样的深层网络中，你可能有 50 多个卷积层。每一层都需要自己的权重、偏置和激活缓冲区。
+
+**症状**：执行「第 3 层」的计算派发时，绑定的却是「第 2 层」的权重。
+**原因**：高级循环复用了描述符集索引。
+
+[source,cpp]
+----
+// DANGEROUS: Reusing the same descriptor set for different dispatches in one frame
+for (int i = 0; i < layers.size(); ++i) {
+    updateDescriptorSet(globalSet, layers[i].weights); // This is an CPU-GPU race!
+    cmd.bindDescriptorSets(..., globalSet);
+    cmd.dispatch(...);
+}
+----
+
+因为 Vulkan 命令被录制进缓冲区、稍后才执行，等 GPU 真正运行第 1 层时，CPU 早已把 `globalSet` 更新为指向第 50 层的权重了！
+
+**解决方案**：
+
+1.  **每层分配一个描述符集**：最安全的做法。如果你有 50 层，就在启动时创建 50 个描述符集。
+2.  **使用动态偏移**：把整个模型的所有权重打包进一个巨大的 `VkBuffer`。绑定时提供一个偏移量。这种方式效率很高，推荐生产级引擎使用。
+3.  **使用推送描述符**：（若支持）直接在命令流中更新描述符。这样完全不需要描述符集，但在旧硬件上支持有限。
+
+== 侦探的工具箱：面向 ML 的 RenderDoc
+
+RenderDoc 是你武器库中最重要的工具。它让你「冻结时间」，精确查看 GPU 在出错那一刻看到的内容。
+
+=== 如何调试一个坏掉的层
+1.  **捕获帧**：在 RenderDoc 中运行应用，在推理期间按 `F12`。
+2.  **找到派发调用**：寻找 `vkCmdDispatch` 调用。用 `VK_EXT_debug_utils` 给你的层命名，这样就不会迷路（例如 "Conv_Layer_5"）。
+3.  **检查输入**：点击 "Pipeline State" 标签页，查看「读」缓冲区。权重真的在里面吗？还是缓冲区里全是零？
+4.  **检查输出**：点击 "Mesh View" 或 "Raw Data" 查看输出缓冲区。
+    *   **专业提示**：在 Mesh View 中，你可以把格式配置为 "3D"，从而把你的张量看成一个体数据。如果你看到零组成的「棋盘格」，那就是索引计算写错了。
+    *   **专业提示**：用 "Byte Comparison" 工具，把 GPU 缓冲区与 CPU 参考实现导出的二进制转储做对比。
+5.  **着色器调试**：如果数据正确但计算错误，你可以右键点击某个线程并选择 "Debug Shader"。你能逐行单步执行 GLSL 代码，观察寄存器变化。
+
+== 共享内存同步
+
+如果你为了优化而使用**共享内存**（分块），就多了一类 bug：**工作组内部竞争**。
+
+GLSL 中的 `barrier()` 只同步**执行**。它确保每个线程都到达了那一行，但**不**保证内存写入可见。
+
+[source,glsl]
+----
+sharedData[gl_LocalInvocationIndex] = inputVal;
+barrier(); // Every thread is here...
+float val = sharedData[neighborIndex]; // ...but did the neighbor finish writing?
+----
+
+**修法**：先用 `memoryBarrierShared()`，再用 `groupMemoryBarrier()`。
+
+[source,glsl]
+----
+sharedData[idx] = val;
+memoryBarrierShared(); // Flush writes to shared memory
+barrier();             // Wait for all threads
+// Now it is safe to read
+----
+
+== 处理 NaN 与 Inf
+
+在 ML 中，一旦出现一个 `NaN`（非数），它就像病毒一样。它会传播并破坏之后所有的计算。
+
+=== NaN 为什么会发生？
+1.  **除以零**：在批归一化中若方差为零，这很常见。
+2.  **溢出**：Softmax 中的 latexmath:[e^x]，其中 latexmath:[x] 过大。
+3.  **未初始化内存**：从一个你忘记清零的缓冲区读取。
+
+=== 调试 NaN
+Vulkan 有一个专门的扩展：`VK_EXT_device_fault`。如果你的驱动支持它，它能精确定位产生非法浮点结果的那条指令。
+
+另一种办法是写一个「健全性着色器」，在每一层之后运行：
+[source,glsl]
+----
+if (isnan(value) || isinf(value)) {
+    atomicAdd(errorCounter, 1);
+}
+----
+
+== 故障排查清单
+
+当输出为 `NaN` 或垃圾数据时：
+
+1.  **验证层**：有没有任何「同步」警告？（启用 `VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`）。
+2.  **描述符检查**：RenderDoc 显示的当前层权重缓冲区是否正确？
+3.  **工作组检查**：你做了向上取整和边界检查吗？
+4.  **屏障检查**：每一次层派发之间都有屏障吗？
+5.  **布局检查**：着色器期望 NCHW 时，你的数据真的是 NCHW 吗？
+6.  **回读检查**：在 CPU 上读取结果之前，你用 `VkFence` 等待 GPU 完成了吗？
+
+调试 Vulkan ML 的关键在于**显式**。你不能假设驱动会「做正确的事」。你必须明确告诉它何时等待、到哪里看、算多少。
+
+接下来，我们看看如何借助与黄金参考的数学比对，把「正确性」量化出来。
+
+xref:ML_Inference/Debugging_and_Performance/01_introduction.adoc[上一篇：调试与性能：验证与速度的艺术] | xref:ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc[下一篇：验证 ML 正确性：追寻数值真相]

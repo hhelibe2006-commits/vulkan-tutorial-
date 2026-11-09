@@ -1,0 +1,12 @@
+{
+  "id": "b059",
+  "words": 3472,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc",
+      "words": 3472,
+      "title": "Loading Models: Rendering the Scene"
+    }
+  ]
+}

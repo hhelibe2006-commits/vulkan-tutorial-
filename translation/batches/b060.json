@@ -1,0 +1,24 @@
+{
+  "id": "b060",
+  "words": 5662,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/08_animations.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/08_animations.adoc",
+      "words": 5246,
+      "title": "Loading Models: Updating Animations"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc",
+      "words": 181,
+      "title": "Loading Models: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/index.adoc",
+      "words": 235,
+      "title": "Loading Models: Integrating a glTF loader with animation and PBR"
+    }
+  ]
+}

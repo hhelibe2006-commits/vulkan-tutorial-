@@ -1,0 +1,260 @@
+= CPU 基准实现
+:pp: {plus}{plus}
+:stem: latexmath
+
+现在你已经理解了 CNN 的工作原理，我们来构建基础的图像分类应用。本章的重点是用 ONNX Runtime 搭出一个能跑的 CPU 基准。我们会加载模型、正确预处理图像、运行推理并显示结果。
+
+这个基准至关重要——当你后面加入 GPU 加速、多线程和相机输入时，它可以作为正确的参照实现来核对。
+
+== 我们要构建什么
+
+这个应用将会：
+
+*   从 ONNX 格式加载预训练的 MobileNetV2 模型
+*   从文件或相机接受图像
+*   预处理图像（缩放、归一化、布局变换）
+*   运行推理，得到类别预测
+*   显示前 5 个结果及置信度分数
+
+我们会分阶段实现，每一步都验证正确性。
+
+== 深入：预处理逻辑
+
+在碰 ONNX Runtime 之前，我们必须理解模型与数据之间的「契约」。如果你把原始像素值（0-255）喂给模型，只会得到垃圾结果。你必须做三步变换。
+
+=== 1. 感知宽高比的缩放
+
+MobileNetV2 期望输入是 224×224 的正方形。如果你的照片是 1920×1080 的宽幅风景照，你不能直接把它挤成正方形——那会扭曲特征，让狗看起来像张煎饼。
+
+[source,cpp]
+----
+// Simple Bilinear Resize (Conceptual)
+// We interpolate between 4 neighboring pixels to get the new value
+float interpolate(float p00, float p01, float p10, float p11, float x_diff, float y_diff) {
+    return p00 * (1 - x_diff) * (1 - y_diff) +
+           p10 * x_diff * (1 - y_diff) +
+           p01 * (1 - x_diff) * y_diff +
+           p11 * x_diff * y_diff;
+}
+----
+
+在生产应用中，你通常会**裁剪**图像中心以保持宽高比，再把这块正方形区域缩放到 224×224。
+
+=== 2. 归一化：那些魔数
+
+神经网络是在特定的统计分布上训练的。对 ImageNet 模型，标准做法是：
+
+[latexmath]
+++++
+\text{Normalized} = \frac{(\text{Pixel} / 255.0) - \text{Mean}}{\text{StdDev}}
+++++
+
+ImageNet 的「魔数」是：
+*   **均值**：`[0.485, 0.456, 0.406]`（R、G、B）
+*   **标准差**：`[0.229, 0.224, 0.225]`
+
+[source,cpp]
+----
+// Normalization in C++
+float r = (pixel.r / 255.0f - 0.485f) / 0.229f;
+float g = (pixel.g / 255.0f - 0.456f) / 0.224f;
+float b = (pixel.b / 255.0f - 0.406f) / 0.225f;
+----
+
+这些数字代表了 ImageNet 数据集中数百万张图像的平均值和方差。减去均值后，我们把数据以零为中心，这有助于网络的激活函数（如 ReLU）保持在最有效的区间。
+
+=== 3. 布局转置：HWC 到 NCHW
+
+正如上一章讨论的，图形文件使用**交错**（HWC）布局：`[R0, G0, B0, R1, G1, B1, ...]`。
+
+大多数 ML 模型期望**平面**（NCHW）布局：`[R0, R1, R2, ..., G0, G1, G2, ..., B0, B1, B2, ...]`。
+
+[source,cpp]
+----
+// Transpose Logic
+std::vector<float> planarData(1 * 3 * 224 * 224);
+for (int y = 0; y < 224; ++y) {
+    for (int x = 0; x < 224; ++x) {
+        int outIdx = y * 224 + x;
+        planarData[0 * 224 * 224 + outIdx] = r_val;
+        planarData[1 * 224 * 224 + outIdx] = g_val;
+        planarData[2 * 224 * 224 + outIdx] = b_val;
+    }
+}
+----
+
+== 获取模型与标签
+
+下载预训练的 MobileNetV2 模型：
+
+[source,bash]
+----
+cd ml_inference
+mkdir -p models
+cd models
+wget https://github.com/onnx/models/raw/main/vision/classification/mobilenet/model/mobilenetv2-7.onnx
+----
+
+你还需要 ImageNet 类别标签（imagenet_labels.txt）——一个 1000 行的文本文件，把类别 ID 映射到名称。可以在 GitHub 上任何 ImageNet 分类项目中找到它。
+
+== CPU 基准实现
+
+从简单做起：加载图像、在 CPU 上预处理、运行 ONNX Runtime 推理、显示结果。
+
+[source,cpp]
+----
+class ImageClassifier {
+public:
+    ImageClassifier(const std::string& modelPath) {
+        // The Environment is the top-level ONNX Runtime object.
+        // It manages the thread pool for all sessions.
+        env_ = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "ImageClassifier");
+
+        // SessionOptions allow us to tune performance.
+        Ort::SessionOptions options;
+
+        // ENABLE_ALL turns on constant folding, node fusion, and more.
+        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+        // We can also set how many threads ONNX should use for math.
+        // For a CPU baseline, 4 threads is a good starting point.
+        options.SetIntraOpNumThreads(4);
+
+        session_ = Ort::Session(env_, modelPath.c_str(), options);
+    }
+
+    std::vector<Prediction> classify(const std::string& imagePath);
+
+private:
+    std::vector<float> preprocessImage(const std::string& path);
+    std::vector<float> runInference(const std::vector<float>& input);
+
+    Ort::Env env_;
+    Ort::Session session_{nullptr};
+    // ...
+};
+----
+
+=== 推理：C{pp} 中的「前向传播」
+
+运行推理时，我们并不只是在调用一个函数；我们在管理一次复杂的内存交换。
+
+[source,cpp]
+----
+std::vector<float> ImageClassifier::runInference(const std::vector<float>& input) {
+    // 1. Memory Info: Tells ONNX we are using standard CPU RAM
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
+    // 2. Create Input Tensor: This WRAPS our std::vector.
+    // It does NOT copy the data, which is efficient but means
+    // our 'input' vector must stay alive until session_.Run() finishes!
+    std::array<int64_t, 4> input_shape = {1, 3, 224, 224};
+    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, const_cast<float*>(input.data()), input.size(),
+        input_shape.data(), input_shape.size());
+
+    // 3. Run: The heavy lifting happens here.
+    // Note: session_.Run returns a vector of 'Ort::Value' outputs.
+    auto output_tensors = session_.Run(
+        Ort::RunOptions{nullptr},
+        input_names.data(), &input_tensor, 1,
+        output_names.data(), 1);
+
+    // 4. Extract results
+    float* output_data = output_tensors[0].GetTensorMutableData<float>();
+    return std::vector<float>(output_data, output_data + 1000);
+}
+----
+
+=== Softmax 中数值稳定性的重要性
+
+拿到 1000 个得分（逻辑值）后，你必须应用 Softmax 得到概率。正如数学部分所见，这涉及 latexmath:[e^{\text{logit}}]。
+
+逻辑值为 88.0 很常见。但 latexmath:[e^{88}] 大约是 latexmath:[1.6 \times 10^{38}]——已经到 32 位浮点数的极限。逻辑值到 90.0 就会溢出并返回 `Infinity`，让程序崩溃，或者得到 `NaN`（Not a Number）结果。
+
+我们用**减去最大值技巧**（max-subtraction trick）解决这个问题：
+
+[latexmath]
+++++
+\text{Softmax}(L_i) = \frac{e^{L_i - \max(L)}}{\sum e^{L_j - \max(L)}}
+++++
+
+这在数学上产生完全相同的结果，但保证 latexmath:[e^x] 的最大输入是 `0.0`（因为 latexmath:[\max(L) - \max(L) = 0]）。由于 latexmath:[e^0 = 1.0]，我们完全处在浮点数的安全范围内。
+
+== 调试你的第一个实现
+
+你可以在 `attachments/ml_inference` 文件夹中找到完整的源代码和 CMake 配置。要构建示例，按照标准的 CMake 流程操作：
+
+[source,bash]
+----
+mkdir build && cd build
+cmake ..
+cmake --build .
+./classification ../test_images/dog.jpg
+----
+
+预期输出：
+
+[source]
+----
+Top 5 predictions:
+Golden retriever: 87.3%
+Labrador retriever: 8.2%
+Cocker spaniel: 2.1%
+...
+----
+
+恭喜！你已经构建了一个能用的 CPU 图像分类器。它虽然有点慢，但为后面 GPU 加速的章节提供了完美的基准。
+
+== 性能瓶颈：时间都花在哪了？
+
+在现代 CPU 上（比如 4 核的笔记本处理器），这次分类预计需要 **50ms 到 150ms**。
+
+如果你对应用做性能分析，会发现一个有意思的分布：
+
+*   **图像加载与缩放**：10-20ms（取决于图像分辨率）
+*   **归一化与转置**：5-10ms
+*   **推理（MobileNetV2）**：40-100ms
+*   **后处理（Softmax）**：< 1ms
+
+=== 混合路径
+等等，如果推理要花 80ms，而我们想要 60 FPS（16.6ms），怎么才能做到？
+
+这正是引言中**混合方案**的用武之地。
+
+1.  **在 GPU 上预处理**：在接下来的章节中，我们会把缩放和归一化搬到 Vulkan 计算着色器里。这会把那 30ms 的 CPU 开销降到 GPU 上的约 **2ms**。
+2.  **异步推理**：我们在后台线程运行 ONNX 推理。UI 保持以 60 FPS 渲染，分类结果「准备好时」再更新。
+
+从这个 CPU 基准开始，你现在有了一份「真值」实现。当你的 Vulkan 着色器输出奇怪的颜色，或者异步线程崩溃时，你随时可以回到这段代码，看看正确的值应该是什么。
+
+=== R/B 通道互换的陷阱
+
+计算机视觉（CV）中最常见的 bug 之一，是 **RGB 与 BGR** 不匹配。
+
+*   **stb_image**：按 RGB 加载。
+*   **OpenCV**：按 BGR 加载。
+*   **MobileNetV2**：期望 RGB。
+
+如果你的「金毛寻回犬」被分类成「蓝莓」，那多半是红蓝通道互换了。务必确认你所用的加载库的默认颜色顺序。
+
+== 疑难排查：常见陷阱
+
+构建第一条 ML 流水线很少能「一次通过」。以下是得到 0% 置信度或离谱结果最常见的三个原因：
+
+1.  **归一化不对齐**：是不是忘了在减均值之前除以 255.0？如果你的输入是 `[0, 255]`，而模型期望 `[0, 1]`，ReLU 激活会「爆掉」，产生极端值。
+2.  **布局混乱**：你确定 HWC→NCHW 转置是对的吗？如果不小心把红色像素放进了蓝色平面，特征（比如「肤色」或「草地颜色」）就会出错。
+3.  **模型版本不匹配**：MobileNetV2 有几十个版本。有的用 224x224 输入，有的用 128x128，有的用不同的归一化常量。一定要查看你从 ONNX Model Zoo 下载的模型附带的 `README`。
+
+== 小结
+
+你已经构建了一个能用的 CPU 基准图像分类器：
+
+*   **模型加载**：启用图优化的 ONNX Runtime 会话
+*   **预处理**：感知宽高比的缩放、ImageNet 归一化，以及 HWC→NCHW 转置
+*   **推理**：用 ONNX Runtime C{pp} API 管理张量内存
+*   **后处理**：数值稳定的 Softmax 和 top-K 选择
+*   **验证**：GPU 加速的基础
+
+这个基准能用，但慢。接下来的章节会用 GPU 预处理来加速它，加入多线程提升响应性，并集成实时相机输入。
+
+xref:ML_Inference/Desktop_Applications/02_image_classification.adoc[上一篇：图像分类：从 MNIST 到 CNN] | xref:ML_Inference/Desktop_Applications/04_ci_render_validation.adoc[下一篇：CI/CD 渲染验证]

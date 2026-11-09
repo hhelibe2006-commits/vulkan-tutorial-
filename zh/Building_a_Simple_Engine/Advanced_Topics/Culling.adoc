@@ -1,0 +1,46 @@
+= 视锥剔除与基于距离的 LOD
+
+剔除是让 GPU 只盯着相机看得见的东西这种做法的最简单形式。在本引擎里我们有意识地保持务实：CPU 侧视锥测试，加上一个很小的「距离/尺寸 LOD」，跳过那些只会贡献几个像素的对象。
+
+* 针对逐网格 AABB 的 CPU 视锥剔除
+* 一个很小的距离/尺寸 LOD，跳过极小的对象（投影尺寸阈值）
+
+== 我们做了什么
+
+1. 每帧从 `proj * view` 中提取一次相机视锥平面。
+2. 对每个网格实例，把它的局部 AABB 变换到世界空间，再对平面做测试。
+3. 若启用，估算投影后的像素尺寸，跳过低于阈值的对象（不透明与透明对象使用各自的阈值）。
+
+== 在代码里看哪里
+
+* 平面提取与 AABB 测试：
+** `renderer_rendering.cpp`（文件顶部的辅助函数）
+* 逐帧应用剔除：
+** `renderer_rendering.cpp`（构建渲染列表与逐通道过滤）
+* UI 控件：
+** `renderer_rendering.cpp` 中的 ImGui 面板——「Frustum culling」、「Distance LOD」以及各通道的阈值
+
+== 为什么这样设置
+
+* AABB 的变换与测试很便宜；在 CPU 上做这件事，可以避免把明显不可见的绘制提交出去。
+* 对大型场景来说，按投影尺寸截断是完整 LOD 系统的实用替代方案。
+
+== 调优建议
+
+* 先保守一些（更小的阈值），再逐步提高，直到移动时你已经察觉不到对象突然出现。
+* 透明对象通常需要稍高一点的阈值，因为极小尺寸下的混合会产生瑕疵。
+
+== 后续工作的想法
+
+如果你想继续推进：
+
+* 加入按材质或按图层的剔除规则（例如让标识牌的可读距离更长）。
+* 为超大型场景加入层级剔除（AABB 的 BVH）。
+* 一旦管线规模超出「可读示例」的级别，就加入 GPU 遮挡剔除（HZB）。
+* 用真正的网格 LOD（或 meshlet）替换投影尺寸启发式。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc[本示例中的 Forward+ 渲染]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc[光线查询渲染]

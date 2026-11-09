@@ -1,0 +1,125 @@
+= SIGGRAPH 2026：如何编写 Vulkan 应用
+
+本教程的目标是说明如何在 2026 年编写一个 Vulkan 应用。
+教程采用了当前推荐的最佳实践：
+
+* 描述符堆
+* 着色器对象
+* 动态渲染
+
+本教程面向 Vulkan 新手，旨在展示自 Vulkan 1.0 以来的主要改进。
+
+着色器使用 Slang 编写，这是一种由 Khronos Group 主持的现代着色语言。
+
+更多信息参见 link:https://github.com/KhronosGroup/Vulkan-Tutorial/blob/main/en/courses/siggraph2026_vk_tutorial/00_Overview.adoc[概览页面]。
+
+== 资源
+
+* **主页**：link:https://docs.vulkan.org/tutorial/latest/courses/siggraph2026_vk_tutorial/00_Overview.html[教程]
+* **幻灯片**：link:/attachments/How_to_write_a_Vulkan_application_in_2026.pdf[如何在 2026 年编写 Vulkan 应用]。
+
+== 构建
+
+=== 前提条件
+
+* C++ 2023 工具链
+** Visual Studio 2022（或更新版本）
+** Clang 21（或更新版本）与 Ninja
+* CMake 3.26 或更新版本
+* Git
+* Vulkan SDK
+* +slangc+，位于 +PATH+ 中，或通过 +-DSLANGC_EXECUTABLE=...+ 提供
+
+[NOTE]
+====
+本教程可在 Windows 和 Linux 上构建并运行。不支持 Android。
+本教程需要大量现代 Vulkan 扩展，包括 +VK_EXT_descriptor_heap+ 与 +VK_EXT_shader_object+。
+旧的 Vulkan 驱动将无法运行本教程。
+====
+
+=== 配置
+
+无需初始化子模块。
+
+CMake 在配置阶段使用 git 下载所需的第三方库。
+其中包括 Sponza 的 glTF 资产。
+
+=== 使用 Visual Studio 编译（Windows）
+
+仓库包含 Visual Studio 2022 和 Visual Studio 2026 预设：
+
+[source,bash]
+----
+cmake --preset vs2022-debug -DSLANGC_EXECUTABLE="C:/VulkanSDK/1.4.341.1/Bin/slangc.exe"
+
+cmake --preset vs2026-debug -DSLANGC_EXECUTABLE="C:/VulkanSDK/1.4.341.1/Bin/slangc.exe"
+----
+
+这会把 Visual Studio 项目文件与可执行文件写入 +build/vs2022+ 和 +build/vs2026+ 下。
+
+构建时，你可以打开 +build/vs2026/vulkan_siggraph.slnx+，也可以在控制台中运行：
+
+[source,bash]
+----
+cmake --build --preset vs2026-debug
+----
+
+=== 使用 Clang 编译（Windows 和 Linux）
+
+仓库包含使用 clang 编译的 CMake 预设：
+
+[source,bash]
+----
+cmake --preset clang-debug -DSLANGC_EXECUTABLE="C:/VulkanSDK/1.4.341.1/Bin/slangc.exe"
+cmake --build --preset clang-debug
+----
+
+[NOTE]
+====
++-DSLANGC_EXECUTABLE+ 是可选的。如果未提供，CMake 会使用 +PATH+ 中的 +slangc+ 版本。
+====
+
+== 运行
+
+[source,bash]
+----
+.\build\vs2026\Debug\vulkan_siggraph.exe
+.\build\clang\vulkan_siggraph.exe
+----
+
+== 文件
+
+* +src/main.cpp+、+src/main.h+：包含 Vulkan 代码的主应用。
+* +src/util.cpp+、+src/util.h+：一组辅助函数，让教程更易跟随。这些文件中的函数负责解析反射数据、glTF 对象、纹理及相关输入，因此如果你的目标是学习 Vulkan，它们并不那么重要。
+* +shaders/+：Slang 着色器。
+
+== 许可证
+
+本 SIGGRAPH 教程示例以 link:LICENSE[MIT 许可证] 发布。
+该许可证适用于本目录中的示例代码和文档。
+资产与第三方库仍遵循各自的许可证。
+
+== 资产
+
+* *Sponza* —— Cryengine Limited License Agreement（+LicenseRef-CRYENGINE-Agreement+）。用于光照与渲染测试的建筑内部 glTF 场景。参见 https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Sponza[glTF Sample Assets]。
+* *Vulkan 徽标* —— Khronos 商标。Vulkan 徽标是 The Khronos Group Inc. 的商标。MIT 许可证不授予商标权。参见 https://www.khronos.org/legal/trademarks/[Khronos 商标指南]。
+
+== 第三方库
+
+* *GLFW* —— https://github.com/glfw/glfw[glfw/glfw]：窗口创建与 Vulkan 表面集成（https://github.com/glfw/glfw/blob/master/LICENSE.md[zlib 许可证]）。
+* *GLM* —— https://github.com/g-truc/glm[g-truc/glm]：面向向量、矩阵与变换的仅头文件数学库（https://github.com/g-truc/glm/blob/master/copying.txt[MIT 或 Happy Bunny 许可证]）。
+* *vk-bootstrap* —— https://github.com/charles-lunarg/vk-bootstrap[charles-lunarg/vk-bootstrap]：用于 Vulkan 实例、设备、队列与交换链配置的辅助库（https://github.com/charles-lunarg/vk-bootstrap/blob/main/LICENSE.txt[MIT 许可证]）。
+* *nlohmann/json* —— https://github.com/nlohmann/json[nlohmann/json]：仅头文件的 JSON 解析器（https://github.com/nlohmann/json/blob/develop/LICENSE.MIT[MIT 许可证]）。
+* *stb* —— https://github.com/nothings/stb[nothings/stb]：仅头文件的实用工具库；本教程使用 +stb_image+ 加载纹理（https://github.com/nothings/stb/blob/master/LICENSE[MIT 或公共领域 / Unlicense]）。
+* *tinygltf* —— https://github.com/syoyo/tinygltf[syoyo/tinygltf]：仅头文件的 glTF 2.0 加载器（https://github.com/syoyo/tinygltf/blob/release/LICENSE[MIT 许可证]）。
+
+[NOTE]
+====
+Codex 与 ChatGPT 5.5 曾被用于协助编写本教程。
+
+AI 被用于：
+
+* 审校，尤其是拼写和语法方面。
+* 协助进行小幅重构（例如："用 `span` 替代 `vector` 作为参数"）
+* 生成一些基础的工具函数，主要用于 CMake 文件以及解析 glTF 与 JSON。
+====

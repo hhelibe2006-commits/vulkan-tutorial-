@@ -1,0 +1,543 @@
+:pp: {plus}{plus}
+
+= 引擎架构：组件系统
+
+== 组件系统
+
+上一节我们介绍了几种架构模式，并解释了为什么我们的 Vulkan 渲染引擎要聚焦于基于组件的架构。正如我们已经确立的，组件系统为现代渲染引擎提供了灵活性、模块化与性能的理想平衡。现在，让我们深入探讨如何在你的渲染引擎中实现有效的组件系统。
+
+=== 深层继承的问题
+
+传统的游戏对象系统常常依赖很深的继承层级：
+
+[source,cpp]
+----
+class GameObject { /* ... */ };
+class PhysicalObject : public GameObject { /* ... */ };
+class Character : public PhysicalObject { /* ... */ };
+class Player : public Character { /* ... */ };
+class Enemy : public Character { /* ... */ };
+class FlyingEnemy : public Enemy { /* ... */ };
+// And so on...
+----
+
+这种方式有几个缺点：
+
+1. *僵化*——添加新的行为组合需要创建新的类。
+2. *代码重复*——相似的功能可能在不同分支中被重复实现。
+3. *类膨胀*——基类往往会随时间不断堆积功能。
+4. *重构困难*——对基类的修改可能产生深远影响。
+
+=== 基于组件的设计原则
+
+基于组件的设计通过提倡组合优于继承来解决这些问题：
+
+1. *单一职责*——每个组件应当只有一个明确定义的职责。
+2. *封装*——组件应当封装自己的内部状态与行为。
+3. *松耦合*——组件应当尽量减少对其他组件的依赖。
+4. *可复用性*——组件的设计应当支持在不同实体类型之间复用。
+
+=== 组件系统的基本实现
+
+让我们基于上一节的示例，构建一个更完整的组件系统：
+
+[source,cpp]
+----
+// Forward declarations
+class Entity;
+
+// Base component class
+class Component {
+protected:
+    Entity* owner = nullptr;
+
+public:
+    virtual ~Component() = default;
+
+    virtual void Initialize() {}
+    virtual void Update(float deltaTime) {}
+    virtual void Render() {}
+
+    void SetOwner(Entity* entity) { owner = entity; }
+    Entity* GetOwner() const { return owner; }
+};
+
+// Entity class
+class Entity {
+private:
+    std::string name;
+    bool active = true;
+    std::vector<std::unique_ptr<Component>> components;
+
+public:
+    explicit Entity(const std::string& entityName) : name(entityName) {}
+
+    const std::string& GetName() const { return name; }
+    bool IsActive() const { return active; }
+    void SetActive(bool isActive) { active = isActive; }
+
+    void Initialize() {
+        for (auto& component : components) {
+            component->Initialize();
+        }
+    }
+
+    void Update(float deltaTime) {
+        if (!active) return;
+
+        for (auto& component : components) {
+            component->Update(deltaTime);
+        }
+    }
+
+    void Render() {
+        if (!active) return;
+
+        for (auto& component : components) {
+            component->Render();
+        }
+    }
+
+    template<typename T, typename... Args>
+    T* AddComponent(Args&&... args) {
+        static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
+
+        // Create new component
+        auto component = std::make_unique<T>(std::forward<Args>(args)...);
+        T* componentPtr = component.get();
+        componentPtr->SetOwner(this);
+        components.push_back(std::move(component));
+        return componentPtr;
+    }
+
+    template<typename T>
+    T* GetComponent() {
+        for (auto& component : components) {
+            if (T* result = dynamic_cast<T*>(component.get())) {
+                return result;
+            }
+        }
+        return nullptr;
+    }
+
+    template<typename T>
+    bool RemoveComponent() {
+        for (auto it = components.begin(); it != components.end(); ++it) {
+            if (dynamic_cast<T*>(it->get())) {
+                components.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+};
+----
+
+=== 常见组件类型
+
+让我们实现一些渲染引擎中可能用到的常见组件类型：
+
+[source,cpp]
+----
+// Transform component
+// Handles the position, rotation, and scale of an entity in 3D space
+// AffineTransform or "Pose" matrix.
+class TransformComponent : public Component {
+private:
+    glm::vec3 position = glm::vec3(0.0f);
+    glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // Identity quaternion
+    glm::vec3 scale = glm::vec3(1.0f);
+
+    // Cached transformation matrix
+    mutable glm::mat4 transformMatrix = glm::mat4(1.0f);
+    mutable bool transformDirty = true;
+
+public:
+    void SetPosition(const glm::vec3& pos) {
+        position = pos;
+        transformDirty = true;
+    }
+
+    void SetRotation(const glm::quat& rot) {
+        rotation = rot;
+        transformDirty = true;
+    }
+
+    void SetScale(const glm::vec3& s) {
+        scale = s;
+        transformDirty = true;
+    }
+
+    const glm::vec3& GetPosition() const { return position; }
+    const glm::quat& GetRotation() const { return rotation; }
+    const glm::vec3& GetScale() const { return scale; }
+
+    glm::mat4 GetTransformMatrix() const {
+        if (transformDirty) {
+            // Calculate transformation matrix
+            glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), position);
+            glm::mat4 rotationMatrix = glm::mat4_cast(rotation);
+            glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), scale);
+
+            transformMatrix = translationMatrix * rotationMatrix * scaleMatrix;
+            transformDirty = false;
+        }
+        return transformMatrix;
+    }
+};
+
+// Mesh component
+// Manages the visual representation of an entity by handling its 3D mesh and material
+class MeshComponent : public Component {
+private:
+    Mesh* mesh = nullptr;
+    Material* material = nullptr;
+
+public:
+    MeshComponent(Mesh* m, Material* mat) : mesh(m), material(mat) {}
+
+    void SetMesh(Mesh* m) { mesh = m; }
+    void SetMaterial(Material* mat) { material = mat; }
+
+    Mesh* GetMesh() const { return mesh; }
+    Material* GetMaterial() const { return material; }
+
+    void Render() override {
+        if (!mesh || !material) return;
+
+        // Get transform component
+        auto transform = GetOwner()->GetComponent<TransformComponent>();
+        if (!transform) return;
+
+        // Render mesh with material and transform
+        material->Bind();
+        material->SetUniform("modelMatrix", transform->GetTransformMatrix());
+        mesh->Render();
+    }
+};
+
+// Camera component
+// Defines a viewpoint for rendering the scene by managing view and projection matrices
+class CameraComponent : public Component {
+private:
+    float fieldOfView = 45.0f;
+    float aspectRatio = 16.0f / 9.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
+
+    glm::mat4 viewMatrix = glm::mat4(1.0f);
+    // mutable: GetProjectionMatrix() is logically const (it just returns a
+    // matrix) even though it lazily recomputes and caches that matrix on
+    // first access after the projection parameters change.
+    mutable glm::mat4 projectionMatrix = glm::mat4(1.0f);
+    mutable bool projectionDirty = true;
+
+public:
+    void SetPerspective(float fov, float aspect, float near, float far) {
+        fieldOfView = fov;
+        aspectRatio = aspect;
+        nearPlane = near;
+        farPlane = far;
+        projectionDirty = true;
+    }
+
+    glm::mat4 GetViewMatrix() const {
+        // Get transform component
+        auto transform = GetOwner()->GetComponent<TransformComponent>();
+        if (transform) {
+            // Calculate view matrix from transform
+            glm::vec3 position = transform->GetPosition();
+            glm::quat rotation = transform->GetRotation();
+
+            // Forward vector (local -Z)
+            glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, -1.0f);
+            // Up vector (local +Y)
+            glm::vec3 up = rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+
+            return glm::lookAt(position, position + forward, up);
+        }
+        return glm::mat4(1.0f);
+    }
+
+    glm::mat4 GetProjectionMatrix() const {
+        if (projectionDirty) {
+            projectionMatrix = glm::perspective(
+                glm::radians(fieldOfView),
+                aspectRatio,
+                nearPlane,
+                farPlane
+            );
+            projectionDirty = false;
+        }
+        return projectionMatrix;
+    }
+};
+----
+
+=== 组件间通信
+
+组件之间经常需要互相通信。组件通信有几种方式：
+
+==== 直接引用
+
+最简单的方式是使用直接引用：
+
+[source,cpp]
+----
+void MeshComponent::Update(float deltaTime) {
+    auto transform = GetOwner()->GetComponent<TransformComponent>();
+    if (transform) {
+        // Use transform data
+    }
+}
+----
+
+这种方式简单直接，但会在组件之间造成紧耦合。紧耦合会让单元测试变得困难甚至不可能，也就无法对引擎进行恰当的测试，因此在生产代码中应当避免这种做法。
+
+==== 事件系统
+
+更灵活的方式是使用事件系统：
+
+[source,cpp]
+----
+// Event base class
+class Event {
+public:
+    virtual ~Event() = default;
+};
+
+// Specific event types
+class CollisionEvent : public Event {
+private:
+    Entity* entity1;
+    Entity* entity2;
+
+public:
+    CollisionEvent(Entity* e1, Entity* e2) : entity1(e1), entity2(e2) {}
+
+    Entity* GetEntity1() const { return entity1; }
+    Entity* GetEntity2() const { return entity2; }
+};
+
+// Event listener interface
+class EventListener {
+public:
+    virtual ~EventListener() = default;
+    virtual void OnEvent(const Event& event) = 0;
+};
+
+// Event system
+class EventSystem {
+private:
+    std::vector<EventListener*> listeners;
+
+public:
+    void AddListener(EventListener* listener) {
+        listeners.push_back(listener);
+    }
+
+    void RemoveListener(EventListener* listener) {
+        auto it = std::find(listeners.begin(), listeners.end(), listener);
+        if (it != listeners.end()) {
+            listeners.erase(it);
+        }
+    }
+
+    void DispatchEvent(const Event& event) {
+        for (auto listener : listeners) {
+            listener->OnEvent(event);
+        }
+    }
+};
+
+// Component that listens for events
+// Handles physics-related behavior and responds to collision events through the event system
+class PhysicsComponent : public Component, public EventListener {
+public:
+    void Initialize() override {
+        // Register as event listener
+        GetEventSystem().AddListener(this);
+    }
+
+    ~PhysicsComponent() override {
+        // Unregister as event listener
+        GetEventSystem().RemoveListener(this);
+    }
+
+    void OnEvent(const Event& event) override {
+        if (auto collisionEvent = dynamic_cast<const CollisionEvent*>(&event)) {
+            // Handle collision event
+        }
+    }
+
+private:
+    EventSystem& GetEventSystem() {
+        // Get event system from somewhere (e.g., service locator)
+        static EventSystem eventSystem;
+        return eventSystem;
+    }
+};
+----
+
+这种方式让组件解耦，但增加了复杂度。关键在于，一个解耦的组件是能够不依赖任何其他组件而独立测试的组件。
+
+=== 组件生命周期管理
+
+管理组件的生命周期对于一个健壮的组件系统至关重要：
+
+[source,cpp]
+----
+class Component {
+public:
+    enum class State {
+        Uninitialized,
+        Initializing,
+        Active,
+        Destroying,
+        Destroyed
+    };
+
+private:
+    State state = State::Uninitialized;
+    Entity* owner = nullptr;
+
+public:
+    virtual ~Component() {
+        if (state != State::Destroyed) {
+            OnDestroy();
+            state = State::Destroyed;
+        }
+    }
+
+    void Initialize() {
+        if (state == State::Uninitialized) {
+            state = State::Initializing;
+            OnInitialize();
+            state = State::Active;
+        }
+    }
+
+    void Destroy() {
+        if (state == State::Active) {
+            state = State::Destroying;
+            OnDestroy();
+            state = State::Destroyed;
+        }
+    }
+
+    bool IsActive() const { return state == State::Active; }
+
+    void SetOwner(Entity* entity) { owner = entity; }
+    Entity* GetOwner() const { return owner; }
+
+protected:
+    virtual void OnInitialize() {}
+    virtual void OnDestroy() {}
+    virtual void Update(float deltaTime) {}
+    virtual void Render() {}
+
+    friend class Entity; // Allow Entity to call protected methods
+};
+----
+
+=== 优化组件访问
+
+前面展示的 `GetComponent<T>()` 方法使用了 dynamic_cast，这可能很慢。下面是一种使用组件类型 ID 的优化方式：
+
+[source,cpp]
+----
+// Component type ID system
+class ComponentTypeIDSystem {
+private:
+    static size_t nextTypeID;
+
+public:
+    template<typename T>
+    static size_t GetTypeID() {
+        static size_t typeID = nextTypeID++;
+        return typeID;
+    }
+};
+
+size_t ComponentTypeIDSystem::nextTypeID = 0;
+
+// Component base class with type ID
+class Component {
+public:
+    virtual ~Component() = default;
+
+    template<typename T>
+    static size_t GetTypeID() {
+        return ComponentTypeIDSystem::GetTypeID<T>();
+    }
+};
+
+// Entity with optimized component access
+class Entity {
+private:
+    std::vector<std::unique_ptr<Component>> components;
+    std::unordered_map<size_t, Component*> componentMap;
+
+public:
+    template<typename T, typename... Args>
+    T* AddComponent(Args&&... args) {
+        static_assert(std::is_base_of<Component, T>::value, "T must derive from Component");
+
+        size_t typeID = Component::GetTypeID<T>();
+
+        // Check if component of this type already exists
+        auto it = componentMap.find(typeID);
+        if (it != componentMap.end()) {
+            return static_cast<T*>(it->second);
+        }
+
+        // Create new component
+        auto component = std::make_unique<T>(std::forward<Args>(args)...);
+        T* componentPtr = component.get();
+        componentMap[typeID] = componentPtr;
+        components.push_back(std::move(component));
+        return componentPtr;
+    }
+
+    template<typename T>
+    T* GetComponent() {
+        size_t typeID = Component::GetTypeID<T>();
+        auto it = componentMap.find(typeID);
+        if (it != componentMap.end()) {
+            return static_cast<T*>(it->second);
+        }
+        return nullptr;
+    }
+
+    template<typename T>
+    bool RemoveComponent() {
+        size_t typeID = Component::GetTypeID<T>();
+        auto it = componentMap.find(typeID);
+        if (it != componentMap.end()) {
+            Component* componentPtr = it->second;
+            componentMap.erase(it);
+
+            for (auto compIt = components.begin(); compIt != components.end(); ++compIt) {
+                if (compIt->get() == componentPtr) {
+                    components.erase(compIt);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+};
+----
+
+=== 结语
+
+组件系统为在引擎中构建游戏对象提供了一种灵活、模块化的方式。遵循本节所述的各项原则，你可以构建一个健壮的组件系统，它能够：
+
+1. 通过组合促进代码复用
+2. 降低引擎不同部分之间的耦合
+3. 无需深层继承体系即可灵活创建实体
+4. 可以针对性能进行优化
+
+下一节中，我们将探讨资源管理系统，它对于在引擎中高效处理资产至关重要。
+
+xref:Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.adoc[上一篇：引擎架构：架构模式] | xref:Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc[下一篇：引擎架构：资源管理]

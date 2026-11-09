@@ -1,0 +1,24 @@
+{
+  "id": "b011",
+  "words": 5567,
+  "files": [
+    {
+      "source": "en/06_Texture_mapping/01_Image_view_and_sampler.adoc",
+      "target": "zh/06_Texture_mapping/01_Image_view_and_sampler.adoc",
+      "words": 1697,
+      "title": "Image view and sampler"
+    },
+    {
+      "source": "en/06_Texture_mapping/02_Combined_image_sampler.adoc",
+      "target": "zh/06_Texture_mapping/02_Combined_image_sampler.adoc",
+      "words": 1497,
+      "title": "Combined image sampler"
+    },
+    {
+      "source": "en/07_Depth_buffering.adoc",
+      "target": "zh/07_Depth_buffering.adoc",
+      "words": 2373,
+      "title": "Depth Buffering"
+    }
+  ]
+}

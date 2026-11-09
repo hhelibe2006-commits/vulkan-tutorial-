@@ -1,0 +1,60 @@
+{
+  "id": "b097",
+  "words": 5745,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc",
+      "words": 833,
+      "title": "System Integration"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc",
+      "words": 753,
+      "title": "Hardware Alignment"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc",
+      "words": 757,
+      "title": "Vulkan 1.3 Feature Requirements"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc",
+      "words": 822,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc",
+      "words": 321,
+      "title": "Runtime-Owned Swapchains & Image Wrapping: Introduction"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc",
+      "words": 657,
+      "title": "External Image Negotiation"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc",
+      "words": 629,
+      "title": "RAII Resource Integration"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc",
+      "words": 656,
+      "title": "Memory Ownership Lifecycle"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc",
+      "words": 317,
+      "title": "Incorporating into the Engine"
+    }
+  ]
+}

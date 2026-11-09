@@ -1,0 +1,18 @@
+{
+  "id": "b041",
+  "words": 1600,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Appendix/appendix.adoc",
+      "target": "zh/Building_a_Simple_Engine/Appendix/appendix.adoc",
+      "words": 1385,
+      "title": "Appendix:"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc",
+      "words": 215,
+      "title": "Camera & Transformations: Introduction"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+:pp: {plus}{plus}
+
+= 内存一致性：Slang 屏障与管线停顿
+
+前面几节我们探讨了同步的「做什么」和「在哪里」。现在我们聚焦「怎么做」——具体来说，就是如何在安全与性能之间取得平衡，让你的 GPU 管线保持饱和。
+
+== 万能屏障：GroupMemoryBarrierWithGroupSync
+
+多数开发者会从 Slang 的 `GroupMemoryBarrierWithGroupSync()` 开始。这是一个高层函数，合并了两个关键操作：
+
+1.  **执行同步**：它强制当前工作组中的每个线程都在这一行等待。在邻居也到达屏障之前，任何线程都不能继续。
+2.  **内存屏障**：它确保工作组执行的所有内存写入（对共享内存和全局内存）都被置为可用且可见。
+
+这个函数本质上是同步的「安全模式」。当你需要 100% 确定所有数据都已为算法的下一步准备好时，就用它。
+
+=== GLSL：显式屏障
+
+在 GLSL 中，你没有单一的「魔法」函数替你包办一切。你必须显式说明自己在同步什么。很多 bug 正是从这里溜进来，但性能收益也常在这里。
+
+CAUTION: 一种常见写法是在 `barrier()` 之前紧挨着调用 `memoryBarrier*()` 函数。在 Vulkan 内存模型下，这个顺序并不会同步它看起来应该同步的东西：获取操作必须发生在控制屏障*之后*，而不是之前。单独使用 `barrier()` 在这里已经正是正确的工具——对计算着色器而言，它被定义为控制屏障，同时针对共享内存执行完整的获取-释放内存屏障，因此前面再调用 `memoryBarrierShared()` 是多余的。
+
+[source,glsl]
+----
+// barrier() alone already does everything GroupMemoryBarrierWithGroupSync() does for shared memory
+barrier();
+----
+
+如果你处理的是**全局内存**（SSBO），仅 `barrier()` 只覆盖共享内存。要同时同步工作组的缓冲区写入，请使用 `GL_KHR_memory_scope_semantics` 扩展中的 `controlBarrier()`，它把释放、屏障与获取作为一次正确排序的操作一起完成：
+
+[source,glsl]
+----
+#extension GL_KHR_memory_scope_semantics : enable
+
+// Ensuring global memory is ready for other threads in the workgroup
+controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup,
+               gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+----
+
+Vulkan 1.4 用**内存语义**进一步细化了这一点，让你精确指定正在同步哪个「域」（Uniform、Buffer、Image 或 Shared），避免通用屏障「全部同步」的代价。
+
+== 同步的代价
+
+同步不是免费的。每次调用屏障，你实际上都在告诉 GPU：「停下你正在做的事，等着。」
+
+*   **工作组屏障**代价高，因为涉及大量线程（例如 256 或 1024 个）。硬件必须跟踪所有这些线程，确保它们都到达同一点。
+*   **管线停顿**：如果一些线程很快完成工作，另一些却被缓慢的访存拖住，快线程就闲在那里，浪费潜在的 **TFLOPS**（每秒万亿次浮点运算）。
+
+=== 降低影响
+
+要把同步的性能代价降到最低，可以考虑这些策略：
+
+1.  **批量化你的工作**：尽量在两次屏障之间做尽可能多的工作。一个带两次屏障的大内核，往往比两个各带一次屏障的小内核更快。
+2.  **共享内存双缓冲**：不要对同一个共享内存数组反复读写（那需要屏障），而是用两个数组。从 `B` 读的同时写 `A`，然后交换。
+3.  **原子操作**：对于给全局计数器自增这类简单任务，使用 `InterlockedAdd`（Slang 从 HLSL 继承而来）。**原子操作**在硬件层面处理同步，通常比手动屏障快得多，因为它们不会被其他线程「打断」。
+
+== Vulkan 1.4 中的细粒度控制
+
+现代 Vulkan（1.3+）与同步 2 允许更细粒度的控制。在着色器中，如果你的语言支持，可以使用更具体的屏障类型：
+
+*   **`GroupMemoryBarrier()`**：只同步内存，不强制执行同步。
+*   **子组屏障**：在一批 32/64 个线程（**子组**）内部同步，比同步整个工作组快得多，因为它不需要牵涉 GPU 的全局调度器。
+
+== 接下来
+
+我们已经讲完了 GPU 如何执行代码、如何管理内存的基础。但还有一层性能是许多开发者忽略的。
+
+下一章我们将深入**子组操作**。通过学习如何在批*内部*的线程之间通信，我们可以完全绕过共享内存，直接通过寄存器做高速数据交换。
+
+xref:Advanced_Vulkan_Compute/03_Memory_Models/03_shared_memory_lds.adoc[上一篇：共享内存（LDS）：高速数据交换] | xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc[下一篇：为什么子组很重要]

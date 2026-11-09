@@ -1,0 +1,24 @@
+{
+  "id": "b006",
+  "words": 5691,
+  "files": [
+    {
+      "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc",
+      "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc",
+      "words": 3059,
+      "title": "Shader modules"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/02_Fixed_functions.adoc",
+      "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/02_Fixed_functions.adoc",
+      "words": 2288,
+      "title": "Fixed functions"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/03_Dynamic_rendering.adoc",
+      "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/03_Dynamic_rendering.adoc",
+      "words": 344,
+      "title": "Dynamic Rendering"
+    }
+  ]
+}

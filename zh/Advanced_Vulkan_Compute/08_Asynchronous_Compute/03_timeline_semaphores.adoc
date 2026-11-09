@@ -1,0 +1,50 @@
+:pp: {plus}{plus}
+= 时间线信号量：统一的同步
+
+二值信号量（经典的 `VkSemaphore`）对于队列之间简单的「等待/发信号」关系很有用，但在复杂的异步管线里，它们很快就会变成管理噩梦。每个二值信号量只能被发信号一次，之后必须被等待并重置，这导致信号量对象大量繁殖、难以追踪。
+
+这就是为什么**时间线信号量**（Vulkan 1.2 引入，并通过 `VK_KHR_timeline_semaphore` 提供）对异步计算是一场变革。时间线信号量内部不是简单的布尔「开/关」状态，而是一个单调递增的 **64 位整数值**。
+
+== 单一数值的力量
+使用时间线信号量时，你不只是等它被发信号，而是等它达到**某个特定值**。这让你能用单个对象表示整条工作的时间线。例如：
+
+*   **值 10**：物理模拟完成。
+*   **值 11**：降噪趟次完成。
+*   **值 12**：帧已准备好供 UI 合成。
+
+不同的队列可以用不同的值对同一个信号量发信号，其它队列则可以精确等待自己所需要的那一级进度。
+
+== 先等待后发信号（主机侧）
+时间线信号量最强大的特性之一，是你可以提交一个等待某个**尚未达到**的值的命令缓冲区。事实上，在等待被提交时，发信号操作甚至都不必已经提交给 GPU。
+
+这使 CPU 能构建复杂的依赖图，并一次性把它们提交到不同的队列。随着计数器递增，GPU 硬件会自动处理停顿与唤醒。
+
+[source,cpp]
+----
+// Defining a wait for a specific timeline value
+vk::TimelineSemaphoreSubmitInfo timelineInfo {
+    .waitSemaphoreValueCount = 1,
+    .pWaitSemaphoreValues = &requiredValue,
+    .signalSemaphoreValueCount = 1,
+    .pSignalSemaphoreValues = &newValue
+};
+
+vk::SubmitInfo submitInfo {
+    .pNext = &timelineInfo,
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &*timelineSemaphore // Extract handle from vk::raii::Semaphore
+};
+// ...
+----
+
+== 主机侧查询与等待
+时间线信号量还弥合了 GPU 与 CPU 之间的鸿沟。CPU 可以随时用 `vkGetSemaphoreCounterValue` 查询信号量的当前值。更好的是，CPU 可以用 `vkWaitSemaphores` 阻塞，直到信号量达到某个值。
+
+这在很多场景中取代了对 `VkFence` 的需要。CPU 不必等待整个命令缓冲区结束（那是栅栏做的事），而是可以等待 GPU 时间线上的某个特定点。这对**流水线化的资源管理**极为有用——例如，CPU 可以等 GPU 达到值 `N`，从而知道现在可以安全地复用那个被发出值 `N` 的命令使用过的缓冲区。
+
+== 为什么它对异步计算很重要
+在异步计算的设置里，你常常有多条工作流，彼此之间存在交叉依赖。比如，你的物理引擎（计算队列）可能产出粒子系统（图形队列）需要的数据，后者又产出降噪器（计算队列）需要的数据。
+
+用二值信号量做这件事，需要一张复杂的「信号 A -> 等待 A -> 信号 B -> 等待 B」的网。用时间线信号量，你只需要一条「引擎时间线」。每个任务通过递增计数器来表示自己完成，每个依赖任务则等待自己所需的前置值。这大大简化了编排逻辑，并降低了信号量管理的开销。
+
+xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc[上一节：并发执行与 Synchronization 2] | xref:Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc[下一节：队列优先级：管理延迟敏感型工作负载]

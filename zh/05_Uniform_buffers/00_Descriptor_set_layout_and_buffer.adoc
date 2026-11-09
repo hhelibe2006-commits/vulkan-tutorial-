@@ -1,0 +1,366 @@
+:pp: {plus}{plus}
+
+= 描述符集布局与缓冲区
+
+== 简介
+
+现在我们已能为每个顶点把任意属性传给顶点着色器，但全局变量呢？
+从本章开始，我们要进入 3D 图形，这需要模型-视图-投影矩阵。
+我们可以把它作为顶点数据包含进去，但那会浪费内存，而且只要变换改变，就必须更新顶点缓冲区。
+变换很可能每一帧都会变。
+
+在 Vulkan 中处理这个问题的正确方式是使用 _资源描述符_。
+描述符是着色器自由访问缓冲区、图像等资源的一种方式。
+我们要设置一个包含变换矩阵的缓冲区，并让顶点着色器通过描述符访问它。
+使用描述符分为三部分：
+
+* 在创建管线期间指定描述符集布局
+* 从描述符池中分配描述符集
+* 在渲染期间绑定描述符集
+
+_描述符集布局_ 规定管线将要访问的资源类型，就像渲染通道规定将要访问的附件类型一样。
+_描述符集_ 指定实际要绑定到描述符的缓冲区或图像资源，就像帧缓冲区指定实际要绑定到渲染通道附件的图像视图一样。
+然后，像顶点缓冲区和帧缓冲区那样，为绘制命令绑定描述符集。
+
+描述符有很多种类型，但本章我们使用统一缓冲区对象（UBO）。
+其他类型的描述符会在后续章节介绍，但基本流程相同。
+假设我们希望顶点着色器拿到的数据放在这样一个 C 结构体里：
+
+[,c++]
+----
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+----
+
+== 顶点着色器
+
+那么我们可以把数据拷贝到一个 `vk::raii::Buffer`，并在顶点着色器中通过统一缓冲区对象描述符这样访问它：
+
+[,slang]
+----
+struct VSInput {
+    float2 inPosition;
+    float3 inColor;
+};
+
+struct UniformBuffer {
+    float4x4 model;
+    float4x4 view;
+    float4x4 proj;
+};
+ConstantBuffer<UniformBuffer> ubo;
+
+struct VSOutput
+{
+    float4 pos : SV_Position;
+    float3 color;
+};
+
+[shader("vertex")]
+VSOutput vertMain(VSInput input) {
+    VSOutput output;
+    output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.inPosition, 0.0, 1.0))));
+    output.color = input.inColor;
+    return output;
+}
+----
+
+我们要每帧更新模型、视图和投影矩阵，让上一章的矩形在 3D 中旋转。
+我假设你熟悉 MVP 变换。
+如果不熟悉，请参见第一章提到的 https://www.opengl-tutorial.org/beginners-tutorials/tutorial-3-matrices/[资源]。
+
+按上面指定的方式修改顶点着色器，加入统一缓冲区对象。
+带 `SV_Position` 的那一行改为使用变换来计算裁剪坐标中的最终位置。
+与 2D 三角形不同，裁剪坐标的最后一个分量可能不是 `1`，在转换为屏幕上的最终规范化设备坐标时会导致一次除法。
+这在透视投影中称为 _透视除法_，对于让近处的物体看起来比远处的物体更大至关重要。
+
+== 片元着色器
+
+片元着色器与前面几章相同：
+
+[,slang]
+----
+[shader("fragment")]
+float4 fragMain(VSOutput vertIn) : SV_TARGET {
+    return float4(vertIn.color, 1.0);
+}
+----
+
+== 描述符集布局
+
+下一步是在 C{pp} 侧定义 UBO，并把顶点着色器中的这个描述符告诉 Vulkan。
+
+[,c++]
+----
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+----
+
+我们可以用 GLM 中的数据类型与着色器中的定义完全对应。
+矩阵中的数据与着色器期望的二进制布局兼容，所以稍后可以直接把 `UniformBufferObject` `memcpy` 到一个 `vk::raii::Buffer`。
+
+我们需要为着色器中使用的每个描述符绑定提供细节，以供创建管线使用，就像之前为每个顶点属性及其 `location` 索引所做的那样。
+我们将新建一个函数 `createDescriptorSetLayout` 来定义所有这些信息。
+它应该在创建管线之前紧接着调用，因为那里会用到它。
+
+[,c++]
+----
+void initVulkan()
+{
+    ...
+    createDescriptorSetLayout();
+    createGraphicsPipeline();
+    ...
+}
+
+...
+
+void createDescriptorSetLayout()
+{
+}
+----
+
+每个绑定都需要通过一个 `vk::DescriptorSetLayoutBinding` 结构体来描述。
+
+[,c++]
+----
+void createDescriptorSetLayout() {
+		vk::DescriptorSetLayoutBinding uboLayoutBinding{
+		    .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex};
+}
+----
+
+前两个字段指定着色器中使用的 `binding` 和描述符类型，这里是统一缓冲区对象。
+着色器变量可以表示一个统一缓冲区对象数组，`descriptorCount` 指定数组中的元素数量。
+例如，可以用它为骨骼动画中骨架的每根骨骼指定一个变换。
+我们的 MVP 变换放在单个统一缓冲区对象中，所以 `descriptorCount` 用 `1`。
+
+我们还需要指定描述符将在哪些着色器阶段被引用。
+`stageFlags` 字段可以是 `vk::ShaderStageFlagBits` 各值的组合，也可以是值 `vk::ShaderStageFlagBits::eAllGraphics`。
+在我们的情况下，只在顶点着色器中引用该描述符。
+
+`pImmutableSamplers` 字段仅与图像采样相关的描述符有关，我们稍后再看。
+你可以让它保持默认值。
+
+所有描述符绑定会合并到一个 `vk::raii::DescriptorSetLayout` 对象中。
+在 `pipelineLayout` 上方定义一个类成员：
+
+[,c++]
+----
+vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+vk::raii::PipelineLayout      pipelineLayout      = nullptr;
+----
+
+然后可以用 `vk::raii::DescriptorSetLayout` 构造函数创建它。
+该函数接受一个简单的 `vk::DescriptorSetLayoutCreateInfo`，其中包含绑定数组：
+
+[,c++]
+----
+vk::DescriptorSetLayoutBinding uboLayoutBinding{
+    .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex};
+vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
+descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+----
+
+我们需要在创建管线期间指定描述符集布局，告诉 Vulkan 着色器将使用哪些描述符。
+描述符集布局在管线布局对象中指定。
+修改 `vk::PipelineLayoutCreateInfo` 以引用该布局对象：
+
+[,c++]
+----
+vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*descriptorSetLayout, .pushConstantRangeCount = 0 };
+----
+
+你可能会疑惑，为什么这里可以指定多个描述符集布局，毕竟单个布局已经包含所有绑定。
+我们会在下一章回过头讨论这个问题，那里会介绍描述符池和描述符集。
+
+== 统一缓冲区
+
+下一章我们会指定包含着色器 UBO 数据的缓冲区，但我们需要先创建这个缓冲区。
+我们要每帧把新数据拷贝到统一缓冲区，所以使用暂存缓冲区其实毫无意义。
+在这种情况下，它只会增加额外开销，而且很可能降低而不是提升性能。
+
+我们应该有多个缓冲区，因为可能同时有多个飞行帧，我们不希望在上一帧仍在读取缓冲区时就为下一帧更新它！
+因此，统一缓冲区的数量应等于飞行帧的数量，并且要写入当前没有被 GPU 读取的那个统一缓冲区。
+
+为此，为 `uniformBuffers` 和 `uniformBuffersMemory` 添加新的类成员：
+
+[,c++]
+----
+vk::raii::Buffer       indexBuffer        = nullptr;
+vk::raii::DeviceMemory indexBufferMemory  = nullptr;
+
+std::vector<vk::raii::Buffer>       uniformBuffers;
+std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+std::vector<void *>                 uniformBuffersMapped;
+----
+
+同样地，新建 `createUniformBuffers` 函数，在 `createIndexBuffer` 之后调用并分配这些缓冲区：
+
+[,c++]
+----
+void initVulkan()
+{
+    ...
+    createVertexBuffer();
+    createIndexBuffer();
+    createUniformBuffers();
+    ...
+}
+
+...
+
+void createUniformBuffers()
+{
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        auto [buffer, bufferMem]  = createBuffer(
+            bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMem));
+        uniformBuffersMapped.emplace_back( uniformBuffersMemory.back().mapMemory(0, bufferSize));
+    }
+}
+----
+
+创建后我们立即用 `vk::raii::DeviceMemory::mapMemory` 映射缓冲区，得到一个稍后可以写入数据的指针。
+在应用的整个生命周期内，缓冲区都保持映射到该指针。
+这种技术称为 *「持久映射」*，在所有 Vulkan 实现上都能工作。
+不必每次需要更新时都映射缓冲区可以提升性能，因为映射并非没有代价。
+
+== 更新统一缓冲区数据
+
+新建 `updateUniformBuffer` 函数，并在 `drawFrame` 中提交下一帧之前调用它：
+
+[,c++]
+----
+void drawFrame()
+{
+    ...
+
+    updateUniformBuffer(frameIndex);
+
+    ...
+
+		const vk::SubmitInfo   submitInfo{.waitSemaphoreCount   = 1,
+		                                  .pWaitSemaphores      = &*presentCompleteSemaphores[frameIndex],
+		                                  .pWaitDstStageMask    = &waitDestinationStageMask,
+		                                  .commandBufferCount   = 1,
+		                                  .pCommandBuffers      = &*commandBuffers[frameIndex],
+		                                  .signalSemaphoreCount = 1,
+		                                  .pSignalSemaphores    = &*renderFinishedSemaphores[imageIndex]};
+
+    ...
+}
+
+...
+
+void updateUniformBuffer(uint32_t currentImage)
+{
+}
+----
+
+这个函数会每帧生成新的变换，让几何体旋转起来。
+要实现这个功能，我们需要包含两个新的头文件：
+
+[,c++]
+----
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
+----
+
+`glm/gtc/matrix_transform.hpp` 头文件提供了可用于生成 `glm::rotate` 等模型变换、`glm::lookAt` 等视图变换以及 `glm::perspective` 等投影变换的函数。
+
+`chrono` 标准库头文件提供了进行精确计时的函数。
+我们将用它确保几何体无论帧率如何都每秒旋转 90 度。
+
+[,c++]
+----
+void updateUniformBuffer(uint32_t currentImage)
+{
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time       = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+}
+----
+
+`updateUniformBuffer` 函数开头会用一些逻辑，以浮点精度计算自开始渲染以来经过的秒数。
+
+现在我们将在统一缓冲区对象中定义模型、视图和投影变换。
+模型旋转是使用 `time` 变量绕 Z 轴的简单旋转：
+
+[,c++]
+----
+UniformBufferObject ubo{};
+ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+----
+
+`glm::rotate` 函数以现有变换、旋转角度和旋转轴为参数。
+`glm::mat4(1.0f)` 构造函数返回单位矩阵。
+使用 `time * glm::radians(90.0f)` 作为旋转角度就实现了每秒旋转 90 度的目的。
+
+[,c++]
+----
+ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+----
+
+对于视图变换，我决定从上方 45 度角观察几何体。
+`glm::lookAt` 函数以眼睛位置、中心位置和上轴为参数。
+
+[,c++]
+----
+ubo.proj =
+    glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+----
+
+我选择使用垂直视场角为 45 度的透视投影。
+其余参数是宽高比、近裁剪面和远裁剪面。
+重要的一点是，要用当前交换链范围来计算宽高比，以便把窗口缩放后的新宽度和高度考虑进去。
+
+GLM 最初是为 OpenGL 设计的，OpenGL 中裁剪坐标的 Y 坐标与 Vulkan 相反。
+如果你不在某处做补偿，渲染出的图像就会上下颠倒。
+
+一种常见的补偿方式是把投影矩阵中 Y 缩放因子的符号取反（`ubo.proj[1][1] *= -1;`）。
+这样做可行，但它同时会翻转投影矩阵的手性，于是凡是启用背面剔除的地方都需要翻转 `frontFace`，还可能让下游任何假定标准右手投影的代码出错。
+作为替代，我们在视口阶段做同样的修正，那里完全不会碰投影矩阵。
+回到你在 xref:03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc[命令缓冲区] 中设置的 `vk::Viewport`，给它一个负的高度：
+
+[,c++]
+----
+commandBuffer.setViewport(0, vk::Viewport(0.0f, static_cast<float>(swapChainExtent.height), static_cast<float>(swapChainExtent.width), -static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+----
+
+把 `y` 设为完整高度、把 `height` 设为它的负值，会在视口变换期间翻转 Y 轴，而视口变换在裁剪之后应用——对最终图像的净效果与翻转投影矩阵相同，但投影矩阵本身（因此也包括它的手性）保持原样。
+这是 Vulkan 核心功能（从 `VK_KHR_maintenance1` 提升而来），因此不需要启用额外的特性或扩展。
+
+所有变换都已定义好，现在可以把统一缓冲区对象中的数据拷贝到当前的统一缓冲区。
+做法与处理顶点缓冲区时完全相同，只是不用暂存缓冲区。
+如前所述，我们只映射统一缓冲区一次，所以可以直接写入，无需再次映射：
+
+[,c++]
+----
+memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+----
+
+以这种方式使用 UBO 并不是向着色器传递频繁变化值的最有效方式。
+向着色器传递少量缓冲区数据的更高效方式是 _推送常量_。
+我们可能会在后面的章节中介绍它。
+
+在 xref:./01_Descriptor_pool_and_sets.adoc[下一章] 中，我们会介绍描述符集，它将真正把 ``vk::raii::Buffer`` 绑定到统一缓冲区描述符，使着色器能够访问这些变换数据。
+
+link:/attachments/22_descriptor_layout.cpp[C{pp} 代码] /
+link:/attachments/22_shader_ubo.slang[slang 着色器] /
+link:/attachments/22_shader_ubo.vert[GLSL 顶点着色器] /
+link:/attachments/22_shader_ubo.frag[GLSL 片元着色器]

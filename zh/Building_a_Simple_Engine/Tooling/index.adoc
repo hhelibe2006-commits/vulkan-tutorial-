@@ -1,0 +1,15 @@
+:pp: {plus}{plus}
+
+= 工具链
+
+本章介绍开发、调试和分发 Vulkan 应用所必需的各类工具与技术，重点在于使用现代 C++20 模块和 vk::raii 命名空间。
+
+* xref:Building_a_Simple_Engine/Tooling/01_introduction.adoc[工具链：简介]
+* xref:Building_a_Simple_Engine/Tooling/02_cicd.adoc[工具链：Vulkan 项目的 CI/CD]
+* xref:Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc[工具链：使用 VK_KHR_debug_utils 与 RenderDoc 调试]
+* xref:Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc[工具链：崩溃处理与 GPU 崩溃转储]
+* xref:Building_a_Simple_Engine/Tooling/05_extensions.adoc[工具链：提升健壮性的 Vulkan 扩展]
+* xref:Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc[工具链：打包与分发]
+* xref:Building_a_Simple_Engine/Tooling/07_conclusion.adoc[工具链：结语]
+
+xref:Building_a_Simple_Engine/Subsystems/06_conclusion.adoc[上一篇：子系统：结语] | xref:../index.adoc[返回：构建简易引擎：简介]

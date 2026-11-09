@@ -1,0 +1,36 @@
+{
+  "id": "b034",
+  "words": 5872,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc",
+      "words": 1401,
+      "title": "Foot Placement on Uneven Terrain"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc",
+      "words": 1450,
+      "title": "Look-At Controllers"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc",
+      "words": 1446,
+      "title": "Physics-Driven Procedural Lean"
+    },
+    {
+      "source": "en/Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc",
+      "words": 924,
+      "title": "Procedural Animation: Summary & What's Next"
+    },
+    {
+      "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc",
+      "words": 651,
+      "title": "The Scene Graph & Transform Hierarchy"
+    }
+  ]
+}

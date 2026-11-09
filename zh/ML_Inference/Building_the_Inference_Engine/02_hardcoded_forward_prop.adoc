@@ -1,0 +1,196 @@
+:pp: {plus}{plus}
+
+= 硬编码前向传播
+
+理解推理如何工作的最好方法，是先构建一个最简单的版本。没有抽象，没有灵活性，也不解析复杂的文件格式。就是硬编码一个特定的网络并执行它。
+
+这是我们的起点。它无法扩展到不同的模型，但能用。更重要的是，它会把推理过程中真正发生的事揭示得一清二楚。
+
+== 网络：MNIST 数字识别
+
+我们要实现一个用于 MNIST 的简单神经网络——手写数字识别。这个网络的结构如下：
+
+- **输入**：28×28 灰度图像（784 个像素）
+- **第一个全连接层**：784 个输入 → 128 个输出，ReLU 激活
+- **第二个全连接层**：128 个输入 → 64 个输出，ReLU 激活
+- **输出全连接层**：64 个输入 → 10 个输出（对应数字 0-9 各一个）
+
+三层，全部是全连接（dense）。暂时没有卷积——我们保持简单。
+
+== 二进制权重格式
+
+我们不解析 ONNX 或 TensorFlow Lite，而是使用一种极其简单的二进制格式。Python 训练脚本这样导出权重：
+
+[source,python]
+----
+# After training in PyTorch/TensorFlow
+with open('mnist_weights.bin', 'wb') as f:
+    # Magic number for validation
+    f.write(struct.pack('I', 0x4D4E5354))  # 'MNST' in hex
+
+    # Version
+    f.write(struct.pack('I', 1))
+
+    # For each layer: count, then floats
+    for weights, bias in [(fc1_w, fc1_b), (fc2_w, fc2_b), (fc3_w, fc3_b)]:
+        f.write(struct.pack('I', weights.size))
+        f.write(weights.numpy().tobytes())
+
+        f.write(struct.pack('I', bias.size))
+        f.write(bias.numpy().tobytes())
+----
+
+读取它的 C++ 代码直截了当。打开文件、校验魔数、读取计数、读取浮点数组。完整实现见 link:/attachments/ml_inference/weight_loader.hpp[weight_loader.hpp]——总共大约 50 行。
+
+关键之处在于：我们完全知道这个文件里有什么，因为格式是我们自己定的。没有模式协商，没有版本兼容问题，只有原始数据。
+
+== 一层，逐步实现
+
+我们来走一遍单个全连接层的执行过程。这是我们要重复三次的核心操作。
+
+回想一下 xref:ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc[推理详解] 中的内容：全连接（dense）层执行的是矩阵乘法——通过训练得到的权重把每个输入连接到每个输出。它是神经网络最基本的构件之一。
+
+一个全连接层计算的是：**output = input × weights + bias**
+
+其中 input 是向量（N 个元素），weights 是矩阵（M×N），bias 是向量（M 个元素），output 也是向量（M 个元素）。这就是矩阵-向量乘法再加上向量加法。
+
+=== 缓冲区
+
+我们需要四个 Vulkan 缓冲区：
+
+[source,cpp]
+----
+vk::raii::Buffer inputBuffer;   // Input vector
+vk::raii::Buffer weightBuffer;  // Weight matrix
+vk::raii::Buffer biasBuffer;    // Bias vector
+vk::raii::Buffer outputBuffer;  // Output vector (result)
+----
+
+每个缓冲区都需要绑定设备内存。我们使用主机可见内存，因为数据是从 CPU 上传的，而且这是教学代码。生产代码会用暂存缓冲区和设备本地内存来获得更好的性能。
+
+=== 计算着色器
+
+全连接层的着色器很简单：
+
+[source,glsl]
+----
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Input { float data[]; } input;
+layout(binding = 1) readonly buffer Weights { float data[]; } weights;
+layout(binding = 2) readonly buffer Bias { float data[]; } bias;
+layout(binding = 3) writeonly buffer Output { float data[]; } output;
+
+layout(push_constant) uniform Params {
+    uint inputSize;
+    uint outputSize;
+} params;
+
+void main() {
+    uint outIdx = gl_GlobalInvocationID.x;
+    if (outIdx >= params.outputSize) return;
+
+    float sum = 0.0;
+    for (uint i = 0; i < params.inputSize; ++i) {
+        sum += input.data[i] * weights.data[outIdx * params.inputSize + i];
+    }
+    sum += bias.data[outIdx];
+
+    output.data[outIdx] = max(0.0, sum);  // ReLU activation
+}
+----
+
+每个线程计算一个输出元素。它读取整个输入向量，乘以权重矩阵对应的那一行，加上偏置，再应用 ReLU 激活。ReLU（修正线性单元，见 xref:ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc[神经网络基础]）就是 `max(0, x)`——正数原样通过，负数归零，由此引入了让深度网络强大的非线性。
+
+关键的一行是 `weights.data[outIdx * params.inputSize + i]`。权重矩阵按行主序存储。计算 output[j] 的线程读取的是权重的第 j 行。
+
+=== 派发
+
+要执行这个着色器，我们派发足够多的工作组来覆盖所有输出元素：
+
+[source,cpp]
+----
+uint32_t outputSize = 128;  // First layer: 784 → 128
+uint32_t workgroups = (outputSize + 63) / 64;  // Round up
+cmdBuffer.dispatch(workgroups, 1, 1);
+----
+
+在 local_size_x = 64 的情况下，每个工作组处理 64 个输出。128 个输出需要 2 个工作组。
+
+=== 同步
+
+第 1 层执行完之后，它的输出缓冲区就成了第 2 层的输入。我们需要一个管线屏障，确保写入在读取开始之前完成。
+
+Vulkan 计算操作在 GPU 上是异步执行的。没有显式同步，第 2 层的着色器可能在第 1 层的着色器还没写完输出缓冲区时就开始读取——导致结果错误。管线屏障（详见 xref:ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc[同步]）告诉 GPU：等到之前的操作完成后再开始新的操作。
+
+[source,cpp]
+----
+vk::MemoryBarrier barrier{
+    .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+    .dstAccessMask = vk::AccessFlagBits::eShaderRead
+};
+
+cmdBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eComputeShader,  // src stage
+    vk::PipelineStageFlagBits::eComputeShader,  // dst stage
+    {},
+    barrier,
+    nullptr,
+    nullptr
+);
+----
+
+这告诉 Vulkan：「等所有计算着色器的写入完成，然后让它们对后续的计算着色器读取可见。」
+
+== 完整的前向传播
+
+现在我们把三层串起来：
+
+1. 从二进制文件把权重加载到 CPU 内存
+2. 创建 Vulkan 缓冲区，上传权重
+3. 派发第 1 层（784 → 128）
+4. 屏障
+5. 派发第 2 层（128 → 64）
+6. 屏障
+7. 派发第 3 层（64 → 10）
+8. 从 GPU 下载输出
+
+代码是重复的——我们三次设置描述符、推送常量并派发。但这种重复正是重点。一旦你看到它跑起来，你就会注意到层与层之间哪些地方相同、哪些地方不同。这种理解会驱动我们接下来构建的抽象。
+
+完整实现见 link:/attachments/ml_inference/vulkan_mnist_inference.cpp[vulkan_mnist_inference.cpp]。核心推理循环大约 150 行，其中大部分是 Vulkan 样板代码。
+
+== 这教会了我们什么
+
+这种硬编码的做法揭示了几个要点：
+
+**推理是顺序的**。每一层都依赖上一层的输出。你不能同时派发全部三层——它们构成一条依赖链。
+
+**大部分代码都是准备工作**。创建缓冲区、设置描述符集、配置管线——这些占了代码的绝大部分。实际的计算派发只有一行。
+
+**数据住在 GPU 上**。中间结果（各层输出）从不经过 CPU。它们由一个着色器写入，由下一个着色器读取。这对性能至关重要。
+
+**模式重复**。每一层都遵循同样的模式：绑定描述符、推送常量、派发、屏障。具体细节（用哪些缓冲区、尺寸是多少）会变，但结构完全一样。
+
+最后这一点是关键。重复意味着我们可以抽象。与其硬编码三层，我们可以定义一个 Layer 接口，然后用不同参数实例化三次。
+
+但在构建这些抽象之前，我们还需要弄明白一件事：权重到底是从哪里来的？
+
+== 训练与导出
+
+硬编码的做法假设你已经有 `mnist_weights.bin`。它是从哪来的？
+
+你在 PyTorch 或 TensorFlow 里训练一个模型，然后导出权重。训练脚本在 link:/attachments/ml_inference/train_mnist.py[train_mnist.py]。它会：
+
+1. 定义网络架构（与我们硬编码的一致）
+2. 在 MNIST 数据集上训练几个 epoch
+3. 把训练好的权重导出为二进制格式
+
+在 CPU 上训练大约需要 5 分钟，能达到约 98% 的准确率。用于演示足够了。
+
+导出代码就是前面展示过的 struct.pack 片段。没什么花哨的——只是按已知顺序把浮点数写进文件。
+
+下一章：我们识别出模式，并构建第一批抽象。
+
+xref:ML_Inference/Building_the_Inference_Engine/01_introduction.adoc[上一篇：构建推理引擎入门] | xref:ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc[下一篇：从硬编码到灵活实现]

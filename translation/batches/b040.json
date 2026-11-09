@@ -1,0 +1,66 @@
+{
+  "id": "b040",
+  "words": 5020,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc",
+      "words": 1234,
+      "title": "Planar Reflections in Our Engine"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc",
+      "words": 264,
+      "title": "Push Constants — per‑object material properties"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc",
+      "words": 528,
+      "title": "Ray Query Reflections and Transparency"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc",
+      "words": 630,
+      "title": "Ray Query Rendering"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc",
+      "words": 383,
+      "title": "Rendering Pipeline Overview (this sample)"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc",
+      "words": 386,
+      "title": "VK_EXT_robustness2 — safer defaults for real‑world engines"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc",
+      "words": 268,
+      "title": "Separate Image and Sampler Descriptors — when and why"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc",
+      "words": 276,
+      "title": "VK_EXT_shader_tile_image — fast access to tile data"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc",
+      "words": 395,
+      "title": "Synchronization 2 and frame pacing in this engine"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc",
+      "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc",
+      "words": 656,
+      "title": "Synchronization and Streaming"
+    }
+  ]
+}

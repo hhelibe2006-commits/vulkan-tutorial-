@@ -1,0 +1,541 @@
+:pp: {plus}{plus}
+
+= 工具链：打包与分发
+
+== 打包与分发 Vulkan 应用
+
+开发并测试完 Vulkan 应用之后，最后一步就是把它打包并分发给用户。这个过程包括为不同平台准备应用、处理依赖，以及制作安装程序或软件包，让安装体验尽可能顺畅。本节我们将探讨打包与分发 Vulkan 应用的关键考量与技术。
+
+=== 各平台的打包考量
+
+每个平台都有自己的打包格式与分发机制。下面来看主要平台各自的考量：
+
+==== Windows 打包
+
+在 Windows 上，常见的打包格式包括：
+
+* *可执行安装程序*：用 NSIS（Nullsoft Scriptable Install System）、Inno Setup 或 WiX Toolset 等工具制作
+* *MSIX 包*：现代 Windows 应用包，支持干净地安装与卸载
+* *便携应用*：无需安装、自带全部所需内容的应用
+
+下面是一个为 Vulkan 应用编写基础 NSIS 安装脚本的示例：
+
+[source,nsis]
+----
+; Basic NSIS installer script for a Vulkan application
+
+!include "MUI2.nsh"
+
+Name "My Vulkan Application"
+OutFile "MyVulkanApp_Installer.exe"
+InstallDir "$PROGRAMFILES\MyVulkanApp"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetOutPath "$INSTDIR"
+
+  ; Application files
+  File "MyVulkanApp.exe"
+  File "*.dll"
+  File /r "shaders"
+  File /r "assets"
+
+  ; Vulkan Runtime
+  File "vulkan-1.dll"
+
+  ; Create uninstaller
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+  ; Create shortcuts
+  CreateDirectory "$SMPROGRAMS\MyVulkanApp"
+  CreateShortcut "$SMPROGRAMS\MyVulkanApp\MyVulkanApp.lnk" "$INSTDIR\MyVulkanApp.exe"
+  CreateShortcut "$SMPROGRAMS\MyVulkanApp\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+SectionEnd
+
+Section "Uninstall"
+  ; Remove application files
+  Delete "$INSTDIR\MyVulkanApp.exe"
+  Delete "$INSTDIR\*.dll"
+  RMDir /r "$INSTDIR\shaders"
+  RMDir /r "$INSTDIR\assets"
+
+  ; Remove uninstaller
+  Delete "$INSTDIR\Uninstall.exe"
+
+  ; Remove shortcuts
+  Delete "$SMPROGRAMS\MyVulkanApp\MyVulkanApp.lnk"
+  Delete "$SMPROGRAMS\MyVulkanApp\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\MyVulkanApp"
+
+  ; Remove install directory
+  RMDir "$INSTDIR"
+SectionEnd
+----
+
+==== Linux 打包
+
+在 Linux 上，常见的打包格式包括：
+
+* *DEB 包*：用于基于 Debian 的发行版（Ubuntu、Debian 等）
+* *RPM 包*：用于基于 Red Hat 的发行版（Fedora、CentOS 等）
+* *AppImage*：可在大多数 Linux 发行版上运行的自包含应用
+* *Flatpak*：沙箱化应用，对系统资源的访问受控
+* *Snap*：由 Canonical 维护的通用 Linux 软件包
+
+下面是一个为 Vulkan 应用制作基础 AppImage 的示例：
+
+[source,bash]
+----
+#!/bin/bash
+# Script to create an AppImage for a Vulkan application
+
+# Create AppDir structure
+mkdir -p AppDir/usr/bin
+mkdir -p AppDir/usr/lib
+mkdir -p AppDir/usr/share/applications
+mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+mkdir -p AppDir/usr/share/metainfo
+
+# Copy application binary
+cp build/MyVulkanApp AppDir/usr/bin/
+
+# Copy dependencies (excluding system libraries)
+ldd build/MyVulkanApp | grep "=> /" | awk '{print $3}' | xargs -I{} cp -v {} AppDir/usr/lib/
+
+# Copy Vulkan loader
+cp /usr/lib/libvulkan.so.1 AppDir/usr/lib/
+
+# Copy application data
+cp -r assets AppDir/usr/share/MyVulkanApp/assets
+cp -r shaders AppDir/usr/share/MyVulkanApp/shaders
+
+# Create desktop file
+cat > AppDir/usr/share/applications/MyVulkanApp.desktop << EOF
+[Desktop Entry]
+Name=My Vulkan Application
+Exec=MyVulkanApp
+Icon=MyVulkanApp
+Type=Application
+Categories=Graphics;
+EOF
+
+# Copy icon
+cp icon.png AppDir/usr/share/icons/hicolor/256x256/apps/MyVulkanApp.png
+
+# Create AppStream metadata
+cat > AppDir/usr/share/metainfo/MyVulkanApp.appdata.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.example.MyVulkanApp</id>
+  <name>My Vulkan Application</name>
+  <summary>A Vulkan-powered application</summary>
+  <description>
+    <p>
+      My Vulkan Application is a high-performance graphics application
+      built with the Vulkan API.
+    </p>
+  </description>
+  <url type="homepage">https://example.com/MyVulkanApp</url>
+  <releases>
+    <release version="1.0.0" date="2023-01-01"/>
+  </releases>
+</component>
+EOF
+
+# Create AppRun script
+cat > AppDir/AppRun << EOF
+#!/bin/bash
+SELF=\$(readlink -f "\$0")
+HERE=\$(dirname "\$SELF")
+export PATH="\${HERE}/usr/bin:\${PATH}"
+export LD_LIBRARY_PATH="\${HERE}/usr/lib:\${LD_LIBRARY_PATH}"
+export VK_LAYER_PATH="\${HERE}/usr/share/vulkan/explicit_layer.d"
+export VK_ICD_FILENAMES="\${HERE}/usr/share/vulkan/icd.d/vulkan_icd.json"
+"\${HERE}/usr/bin/MyVulkanApp" "$@"
+EOF
+
+chmod +x AppDir/AppRun
+
+# Download appimagetool
+wget -c "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+chmod +x appimagetool-x86_64.AppImage
+
+# Create the AppImage
+./appimagetool-x86_64.AppImage AppDir MyVulkanApp-x86_64.AppImage
+----
+
+==== macOS 打包
+
+在 macOS 上，常见的打包格式包括：
+
+* *应用程序包（.app）*：macOS 应用的标准格式
+* *磁盘映像（.dmg）*：包含应用、可挂载的磁盘映像
+* *安装包（.pkg）*：适用于更复杂安装流程的安装程序包
+
+下面是一个用 MoltenVK 为 Vulkan 应用创建基础 macOS 应用程序包结构的示例：
+
+[source,bash]
+----
+#!/bin/bash
+# Script to create a macOS application bundle for a Vulkan application
+
+# Create bundle structure
+mkdir -p MyVulkanApp.app/Contents/MacOS
+mkdir -p MyVulkanApp.app/Contents/Resources
+mkdir -p MyVulkanApp.app/Contents/Frameworks
+
+# Copy application binary
+cp build/MyVulkanApp MyVulkanApp.app/Contents/MacOS/
+
+# Copy MoltenVK framework
+cp -R $VULKAN_SDK/macOS/Frameworks/MoltenVK.framework MyVulkanApp.app/Contents/Frameworks/
+
+# Copy application resources
+cp -r assets MyVulkanApp.app/Contents/Resources/assets
+cp -r shaders MyVulkanApp.app/Contents/Resources/shaders
+cp icon.icns MyVulkanApp.app/Contents/Resources/
+
+# Create Info.plist
+cat > MyVulkanApp.app/Contents/Info.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>MyVulkanApp</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.example.MyVulkanApp</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>My Vulkan Application</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+# Create DMG (optional)
+hdiutil create -volname "My Vulkan Application" -srcfolder MyVulkanApp.app -ov -format UDZO MyVulkanApp.dmg
+----
+
+=== 处理 Vulkan 依赖
+
+打包 Vulkan 应用时的关键考量之一，是处理 Vulkan 加载器以及所需的各类扩展。
+
+==== Vulkan 加载器
+
+Vulkan 加载器负责把你的应用连接到用户系统上的 Vulkan 实现。处理加载器有几种不同做法：
+
+1. *依赖系统已安装的加载器*：要求用户已安装 Vulkan SDK 或驱动程序
+2. *捆绑加载器*：把 Vulkan 加载器随应用一起打包
+3. *混合方案*：先检查系统安装的加载器，找不到时回退到捆绑的加载器
+
+下面是混合方案的一个示例：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+class VulkanLoader {
+public:
+    static bool initialize() {
+        try {
+            // First, try to use the system-installed Vulkan loader
+            if (try_system_loader()) {
+                std::cout << "Using system-installed Vulkan loader" << std::endl;
+                return true;
+            }
+
+            // If that fails, try to use the bundled loader
+            if (try_bundled_loader()) {
+                std::cout << "Using bundled Vulkan loader" << std::endl;
+                return true;
+            }
+
+            // If both approaches fail, report an error
+            std::cerr << "Failed to initialize Vulkan loader" << std::endl;
+            return false;
+        } catch (const std::exception& e) {
+            std::cerr << "Error initializing Vulkan loader: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+private:
+    static bool try_system_loader() {
+        try {
+            // Create a Vulkan instance to test if the system loader works
+            vk::raii::Context context;
+            vk::ApplicationInfo app_info{};
+            app_info.setApiVersion(VK_API_VERSION_1_2);
+
+            vk::InstanceCreateInfo create_info{};
+            create_info.setPApplicationInfo(&app_info);
+
+            vk::raii::Instance instance(context, create_info);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    static bool try_bundled_loader() {
+        try {
+            // Set the path to the bundled Vulkan loader
+            #if defined(_WIN32)
+            std::string loader_path = get_executable_path() + "\\vulkan-1.dll";
+            SetDllDirectoryA(get_executable_path().c_str());
+            #elif defined(__linux__)
+            std::string loader_path = get_executable_path() + "/libvulkan.so.1";
+            setenv("LD_LIBRARY_PATH", get_executable_path().c_str(), 1);
+            #elif defined(__APPLE__)
+            std::string loader_path = get_executable_path() + "/../Frameworks/libMoltenVK.dylib";
+            setenv("DYLD_LIBRARY_PATH", (get_executable_path() + "/../Frameworks").c_str(), 1);
+            #endif
+
+            // Check if the bundled loader exists
+            if (!std::filesystem::exists(loader_path)) {
+                return false;
+            }
+
+            // Try to create a Vulkan instance using the bundled loader
+            vk::raii::Context context;
+            vk::ApplicationInfo app_info{};
+            app_info.setApiVersion(VK_API_VERSION_1_2);
+
+            vk::InstanceCreateInfo create_info{};
+            create_info.setPApplicationInfo(&app_info);
+
+            vk::raii::Instance instance(context, create_info);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    static std::string get_executable_path() {
+        #if defined(_WIN32)
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+        std::string exe_path(path);
+        return exe_path.substr(0, exe_path.find_last_of("\\/"));
+        #elif defined(__linux__)
+        char result[PATH_MAX];
+        ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
+        std::string exe_path(result, (count > 0) ? count : 0);
+        return exe_path.substr(0, exe_path.find_last_of("/"));
+        #elif defined(__APPLE__)
+        char path[PATH_MAX];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            std::string exe_path(path);
+            return exe_path.substr(0, exe_path.find_last_of("/"));
+        }
+        return "";
+        #endif
+    }
+};
+----
+
+==== Vulkan 层与扩展
+
+如果你的应用需要特定的 Vulkan 层或扩展，就要妥善处理它们：
+
+1. *记录需求*：清楚记录应用需要哪些扩展
+2. *检查支持情况*：使用所需扩展之前，始终先确认它们是否可用
+3. *提供回退*：尽可能为缺失的扩展实现回退行为
+4. *捆绑层*：面向开发工具时，可以考虑捆绑验证层
+
+=== 着色器管理
+
+着色器是 Vulkan 应用的关键组成部分，打包时需要特别考虑：
+
+1. *预编译着色器*：打包预编译好的 SPIR-V 着色器，而不是 GLSL 源码
+2. *着色器版本管理*：为着色器实现版本系统，以处理更新
+3. *着色器优化*：考虑针对不同硬件目标优化着色器
+4. *着色器缓存*：实现着色器缓存，缩短加载时间
+
+下面是已打包应用中着色器管理系统的示例：
+
+[source,cpp]
+----
+import std;
+import vulkan_raii;
+
+class ShaderManager {
+public:
+    ShaderManager(vk::raii::Device& device) : device(device) {
+        // Determine the shader directory based on the application's location
+        shader_dir = get_application_directory() + "/shaders";
+
+        // Create a shader module cache
+        shader_cache.reserve(100); // Reserve space for up to 100 shader modules
+    }
+
+    vk::raii::ShaderModule load_shader(const std::string& name) {
+        // Check if the shader is already in the cache
+        auto it = shader_cache.find(name);
+        if (it != shader_cache.end()) {
+            return vk::raii::ShaderModule(nullptr, nullptr, nullptr); // Return a copy of the cached module
+        }
+
+        // Load the shader from the package
+        std::string path = shader_dir + "/" + name + ".spv";
+        std::vector<char> code = read_file(path);
+
+        // Create the shader module
+        vk::ShaderModuleCreateInfo create_info{};
+        create_info.setCodeSize(code.size());
+        create_info.setPCode(reinterpret_cast<const uint32_t*>(code.data()));
+
+        // Create and cache the shader module
+        vk::raii::ShaderModule module(device, create_info);
+        shader_cache[name] = std::move(module);
+
+        return vk::raii::ShaderModule(nullptr, nullptr, nullptr); // Return a copy of the cached module
+    }
+
+    void clear_cache() {
+        shader_cache.clear();
+    }
+
+private:
+    std::string get_application_directory() {
+        // Platform-specific code to get the application directory
+        // ...
+        return "."; // Placeholder
+    }
+
+    std::vector<char> read_file(const std::string& path) {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open shader file: " + path);
+        }
+
+        size_t file_size = static_cast<size_t>(file.tellg());
+        std::vector<char> buffer(file_size);
+
+        file.seekg(0);
+        file.read(buffer.data(), file_size);
+        file.close();
+
+        return buffer;
+    }
+
+    vk::raii::Device& device;
+    std::string shader_dir;
+    std::unordered_map<std::string, vk::raii::ShaderModule> shader_cache;
+};
+----
+
+=== 用 CI/CD 自动打包
+
+正如我们在 CI/CD 一节中讨论过的，把打包过程自动化既省时间又少出错。下面是把它集成进 CI/CD 管线的做法：
+
+1. *构建矩阵*：为不同平台与配置设置构建矩阵
+2. *打包脚本*：为每个平台的打包流程编写脚本
+3. *版本管理*：依据 git 标签或其他条件自动递增版本号
+4. *产物存储*：把打包好的应用作为构建产物保存
+5. *发布自动化*：把发布到分发平台的流程自动化
+
+下面是一个包含打包步骤的 GitHub Actions 工作流示例：
+
+[source,yaml]
+----
+name: Build and Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-package:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            package-script: ./scripts/package_linux.sh
+            artifact-name: MyVulkanApp-Linux
+            artifact-path: MyVulkanApp-x86_64.AppImage
+          - os: windows-latest
+            package-script: .\scripts\package_windows.bat
+            artifact-name: MyVulkanApp-Windows
+            artifact-path: MyVulkanApp_Installer.exe
+          - os: macos-latest
+            package-script: ./scripts/package_macos.sh
+            artifact-name: MyVulkanApp-macOS
+            artifact-path: MyVulkanApp.dmg
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Vulkan SDK
+      uses: humbletim/install-vulkan-sdk@v1.1.1
+      with:
+        version: latest
+        cache: true
+
+    - name: Configure CMake
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config Release
+
+    - name: Package
+      run: ${{ matrix.package-script }}
+
+    - name: Upload Package
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: ${{ matrix.artifact-path }}
+
+  create-release:
+    needs: build-and-package
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          MyVulkanApp-Linux/MyVulkanApp-x86_64.AppImage
+          MyVulkanApp-Windows/MyVulkanApp_Installer.exe
+          MyVulkanApp-macOS/MyVulkanApp.dmg
+----
+
+=== 结语
+
+打包与分发是 Vulkan 应用生命周期中的关键步骤。仔细考虑各平台的具体要求、妥善处理依赖关系，再把打包过程自动化，你就能让用户在各平台上都获得顺畅的体验。
+
+请记住，打包的目标是让用户的安装和更新尽可能无缝。花时间打造一套健壮的打包与分发系统，你的用户就能得到一个更专业、更可靠的应用。
+
+在下一节、也是最后一节中，我们会总结这一章关于 Vulkan 应用工具链所学到的内容。
+
+xref:Building_a_Simple_Engine/Tooling/05_extensions.adoc[上一篇：工具链：提升健壮性的 Vulkan 扩展] | xref:Building_a_Simple_Engine/Tooling/07_conclusion.adoc[下一篇：工具链：结语]

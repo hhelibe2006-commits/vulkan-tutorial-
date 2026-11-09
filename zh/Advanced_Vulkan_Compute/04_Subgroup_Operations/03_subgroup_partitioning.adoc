@@ -1,0 +1,73 @@
+:pp: {plus}{plus}
+
+= 子组划分：Ballot 与 Match
+
+== 超越锁步执行
+
+上一节我们看到了子组中的线程如何共享数据。但如果同一子组里的线程想做不同的事呢？**子组划分**正是为此而生。
+
+在 GPU 上，一个子组（SIMD 打包）中的所有线程在同一时刻执行同一条指令。遇到 `if` 语句时，一部分线程可能走“真”分支，另一部分走“假”分支。硬件的处理方式是把不该执行当前指令的线程“屏蔽掉”。这叫**分支发散**，正如第 2 章所讨论的，它可能成为性能的重大杀手。
+
+**Ballot** 和 **Match** 这类子组划分工具让你能“看见”这些掩码，并利用它们优化代码。
+
+== 子组 Ballot
+
+**Ballot** 操作向子组中的每个线程提出一个布尔问题，并返回一个**位掩码**（一串比特，每个比特代表一个线程），其中每一位代表一个线程的回答。
+
+[source,slang]
+----
+// Does this thread have a valid result?
+bool hasResult = computeIsSuccessful();
+
+// Get a bitmask of all threads in the subgroup that have a valid result
+uint4 activeMask = WaveActiveBallot(hasResult);
+----
+
+在 Slang（以及 Vulkan SPIR-V）中，ballot 返回 `uint4`（128 位），以便支持最宽 128 个线程的子组，不过 32 或 64 更常见。
+
+拿到这个掩码后，你可以用按位运算来做判断：
+
+*   `WaveActiveCountBits(hasResult)`：有多少线程是活跃的？（Slang 为此提供了便捷的简写）
+*   `countbits(activeMask)`：对掩码做底层比特计数。
+*   `WavePrefixCountBits(hasResult)`：我在活跃线程中的**排名**是多少（即索引比我小的活跃线程数量）？
+
+这对**流压缩**特别有用。如果 32 个线程中只有 5 个有数据要写入缓冲区，它们可以用这些操作精确算出自己该写到输出缓冲区的哪个索引，完全不需要任何原子操作！
+
+== 子组 Match
+
+`Ballot` 处理布尔值，而 **Match** 处理数值。它会找出子组中某个变量取值*相同*的所有线程。
+
+[source,slang]
+----
+// Every thread has a 'key' (e.g., a material ID or a hash)
+uint myKey = ...;
+
+// Get a mask of all threads that have the same key as me
+uint4 sameKeyMask = WaveMatch(myKey);
+----
+
+这是一种专门操作（通常需要 Vulkan 1.1 或特定扩展），对**全局原子归约**（把多个线程的原子操作合并为一次）来说是颠覆性的。
+
+设想 32 个线程都想往同一个全局计数器上累加。通常这会产生 32 次串行的原子操作。借助 `WaveMatch`，线程可以判断出哪些线程访问的是同一地址，选出一个**“领头”**线程（代表整个组执行操作的那个线程）为整组做一次原子加，然后把结果分发回去。
+
+== 子组选举
+
+最简单的划分形式是 `WaveIsFirstLane()`。它对子组中恰好一个线程（或 **lane**，即通道）返回 `true`（通常是活跃 ID 最小的那个），对其他所有线程返回 `false`。
+
+[source,slang]
+----
+if (WaveIsFirstLane()) {
+    // Only one thread in the subgroup performs this expensive task
+    performGlobalLogging();
+}
+----
+
+对于每个波前只需要执行一次的任务，这再合适不过，比如写一条调试消息或更新全局时间戳。
+
+== 用掩码控制流程
+
+把这些操作组合起来，你就能写出“感知波前”的代码，随线程的分支情况自适应。你不再只是让硬件去屏蔽线程，而是可以显式检查 `activeMask`，在没有线程关心时跳过整段代码，或者用掩码重排工作以减少发散。
+
+下一节，我们来看这些同样的子组概念如何应用到通过**非一致索引**访问内存与资源。
+
+xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc[上一节：子组洗牌、广播与算术运算] | xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc[下一节：非一致索引：子组中的资源数组]

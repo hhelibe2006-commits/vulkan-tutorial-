@@ -1,0 +1,12 @@
+{
+  "id": "b047",
+  "words": 5610,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc",
+      "target": "zh/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc",
+      "words": 5610,
+      "title": "Engine Architecture: Resource Management"
+    }
+  ]
+}

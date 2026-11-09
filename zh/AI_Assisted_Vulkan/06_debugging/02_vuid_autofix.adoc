@@ -1,0 +1,93 @@
+:pp: {plus}{plus}
+
+= VUID 自动修复：借助验证层排查问题
+
+== 简介
+
+Vulkan **验证层**是你手头最有用的工具之一——它能抓住从错误的结构体大小到微妙的同步隐患等大量错误。但单条验证错误本身就足够密集，尤其对刚接触 Vulkan 的人来说，往往很难解析。
+
+AI 助手可以把 VUID（Valid Usage ID）与你的实际 C{pp} 源码对应起来，给出具体的修复建议，而不是让你自己去解码那串错误信息。
+
+== VUID、位置与规范上下文
+
+一套有用的自动修复流程要综合三类信息：**VUID** 本身（Vulkan 规范中某条规则的稳定标识符）、出问题的调用在你的 C{pp} 源码中的**位置**，以及**规范上下文**——规则原文，MCP 服务器可以从 `vk.xml` 中实时拉取，这样助手就不必依赖过时的训练数据。
+
+三者齐备后，助手不仅能告诉你存在类型不匹配，还能指出：你的着色器因为要往里写数据而期望 `storage_buffer`，而你的 C{pp} 代码却把它声明为 `uniform_buffer`——并给出与代码其余部分风格一致的修复方案。
+
+== 示例：描述符不匹配
+
+假设你在实现一套无绑定纹理系统，运行程序后看到：
+
+[source,text]
+----
+VALIDATION ERROR: [ VUID-VkDescriptorSetLayoutBinding-descriptorType-01510 ]
+Object: 0x5555559868f0 | Message: pBindings[0].descriptorType is VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+but shader expects VK_DESCRIPTOR_TYPE_STORAGE_BUFFER...
+----
+
+=== 第 1 步：带着上下文提问
+
+把错误和相关代码一起交给助手，不要只给错误。
+
+**提示词：** *“我遇到了这个 VUID：[PASTE ERROR]。以下是我的 `DescriptorSetLayout` 创建代码：[PASTE CODE]。基于我们引擎的 `Buffer` 类，为什么会发生这种类型不匹配？”*
+
+=== 第 2 步：让它把着色器代码与 C{pp} 代码对上
+
+借助对着色器代码和 C{pp} 初始化代码的 RAG 访问，一个合理的回答大致是这样：
+
+**“你的着色器期望 `storage_buffer`，因为你在片段阶段往里写数据。但你的 C{pp} 代码把它初始化成了 `uniform_buffer`。你需要把描述符类型改成 `STORAGE_BUFFER`，并确保 `VkBufferUsageFlags` 里包含 `STORAGE_BUFFER_BIT`。”**
+
+=== 第 3 步：应用修复
+
+好的助手会按你现有 RAII 包装器的风格给出改动，并提示连带影响——例如这次改动可能让你超出 `maxDescriptorSetStorageBuffers` 上限，这一点即便对经验丰富的开发者也很容易漏掉。
+
+== 让 VUID 列表保持最新
+
+这套流程中真正有用的一环，是让 MCP 去查询实时的 Vulkan 规范，相关内容见 xref:AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc[上下文桥：模型上下文协议（MCP）]。你的助手可以直接读取磁盘上的 `vk.xml`，因此新版本 Vulkan 引入的 VUID，在你更新 SDK 的当天它就能知道，与底层模型的训练时间无关。
+
+== 实操步骤：执行一次 VUID 自动修复
+
+=== 第 1 步：隔离并载入上下文
+
+从终端复制 VUID 字符串，然后确认相关代码已经载入你的助手（Goose 或 IDE 聊天窗口）。
+
+[source,bash]
+----
+# Example: Pointing Goose to the renderer and shader code
+goose session --instruction "Analyze Renderer.cpp and main.frag. We have a VUID error to solve."
+----
+
+=== 第 2 步：请求关联
+
+给出确切的错误，并要求它对照你引擎的逻辑进行检查。
+
+[source,text]
+----
+I am encountering this validation error:
+[ VUID-VkDescriptorSetLayoutBinding-descriptorType-01510 ]
+Message: pBindings[0].descriptorType is VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+but shader expects VK_DESCRIPTOR_TYPE_STORAGE_BUFFER.
+
+Based on our 'DescriptorSetManager' class, why is this mismatch occurring?
+----
+
+=== 第 3 步：应用前先验证
+
+应用建议的修复之前，先让它检查管线其他位置有没有副作用。
+
+[source,text]
+----
+Explain why changing to STORAGE_BUFFER resolves this rule.
+Will this require any changes to our memory alignment logic or
+buffer usage flags in 'Buffer.cpp'?
+----
+
+应用修复并重新运行程序。如果验证层不再报错，说明修复生效了。
+
+在 IDE 聊天界面里，这一步往往简化为粘贴 VUID，让助手直接找到并修好问题——这条快路径对常见情况很管用。上面那种显式的提示词结构，在本地模型上更值得使用：相比开放式的“修一下这个”，本地模型在请求边界清晰时表现更好。
+
+== 小结
+
+用 AI 打通验证错误与源码，能省掉大量在规范、错误字符串和代码之间的手工交叉比对。推理过程仍然值得核对，尤其是涉及内存布局或同步的部分——但对于日常的 VUID 分诊，它确实省时间。
+
+下一节：xref:AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc[AI 与 RenderDoc 集成：自动化 GPU 分析]

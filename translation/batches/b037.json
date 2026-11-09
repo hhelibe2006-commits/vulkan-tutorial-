@@ -1,0 +1,36 @@
+{
+  "id": "b037",
+  "words": 5469,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc",
+      "words": 2002,
+      "title": "Interpolation & Blending"
+    },
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/06_conclusion.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/06_conclusion.adoc",
+      "words": 993,
+      "title": "Skeletal & Compute Skinning: Conclusion"
+    },
+    {
+      "source": "en/Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc",
+      "words": 335,
+      "title": "Tooling & The Production Pipeline"
+    },
+    {
+      "source": "en/Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc",
+      "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc",
+      "words": 1271,
+      "title": "Blender-to-Vulkan Workflow"
+    },
+    {
+      "source": "en/Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc",
+      "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc",
+      "words": 868,
+      "title": "Validation: The Khronos glTF-Validator"
+    }
+  ]
+}

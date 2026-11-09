@@ -1,0 +1,30 @@
+{
+  "id": "b005",
+  "words": 5751,
+  "files": [
+    {
+      "source": "en/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc",
+      "target": "zh/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc",
+      "words": 1310,
+      "title": "Window surface"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/01_Presentation/01_Swap_chain.adoc",
+      "target": "zh/03_Drawing_a_triangle/01_Presentation/01_Swap_chain.adoc",
+      "words": 2950,
+      "title": "Swap chain"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/01_Presentation/02_Image_views.adoc",
+      "target": "zh/03_Drawing_a_triangle/01_Presentation/02_Image_views.adoc",
+      "words": 706,
+      "title": "Image views"
+    },
+    {
+      "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc",
+      "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc",
+      "words": 785,
+      "title": "Introduction"
+    }
+  ]
+}

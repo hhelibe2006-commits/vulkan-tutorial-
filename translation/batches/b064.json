@@ -1,0 +1,36 @@
+{
+  "id": "b064",
+  "words": 5506,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc",
+      "words": 3130,
+      "title": "Subsystems: Vulkan for Physics Simulation"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/06_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/06_conclusion.adoc",
+      "words": 885,
+      "title": "Subsystems: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/index.adoc",
+      "words": 60,
+      "title": "Subsystems"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/01_introduction.adoc",
+      "words": 493,
+      "title": "Tooling: Introduction"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/02_cicd.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/02_cicd.adoc",
+      "words": 938,
+      "title": "Tooling: CI/CD for Vulkan Projects"
+    }
+  ]
+}

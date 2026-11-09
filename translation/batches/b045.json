@@ -1,0 +1,24 @@
+{
+  "id": "b045",
+  "words": 5889,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/03_what_are_micromaps.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/03_what_are_micromaps.adoc",
+      "words": 2236,
+      "title": "Micromaps: Teaching the Hardware What It Already Should Know"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/04_hardware_traversal_with_omm.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/04_hardware_traversal_with_omm.adoc",
+      "words": 1698,
+      "title": "Inside the Traversal: How the GPU Uses Your Micromap"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/05_implementation_overview.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/05_implementation_overview.adoc",
+      "words": 1955,
+      "title": "Building Opacity Micromaps in the Simple Engine"
+    }
+  ]
+}

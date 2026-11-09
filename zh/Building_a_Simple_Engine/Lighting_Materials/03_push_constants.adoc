@@ -1,0 +1,130 @@
+= 推送常量
+
+本节将探讨推送常量。它是 Vulkan 中一个强大的特性，让我们能高效地把少量数据传给着色器，而无需描述符集带来的开销。
+
+== 什么是推送常量？
+
+推送常量是一种直接把少量数据发给着色器的方式。统一缓冲区需要描述符集和内存分配，而推送常量是命令缓冲区本身的一部分。因此它们非常适合小块的、频繁变化的数据。
+
+推送常量的一些关键特性：体积很小（通常最多 128 字节，取决于设备）、每次绘制时更新很快，而且不需要描述符集或分配，因为它们就存在于命令缓冲区上。管线中启用它的任何着色器阶段都可以读取。
+
+== 何时使用推送常量
+
+对于变化频繁的、每次绘制的小参数，就用推送常量——这正是我们按对象调整的材质旋钮（基础颜色、金属度、粗糙度）。如果数据超过设备的推送常量上限，或者不常变化，则应改用统一缓冲区。
+
+== 在着色器中定义推送常量
+
+在 GLSL（或 SPIR-V）中，推送常量用带 `push_constant` 布局限定符的 uniform 块来定义：
+
+[source,glsl]
+----
+layout(push_constant) uniform PushConstants {
+    vec4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    int baseColorTextureSet;
+    int physicalDescriptorTextureSet;
+    int normalTextureSet;
+    int occlusionTextureSet;
+    int emissiveTextureSet;
+    float alphaMask;
+    float alphaMaskCutoff;
+} material;
+----
+
+在我们引擎所用的 Slang 中，语法略有不同：
+
+[source,slang]
+----
+struct PushConstants {
+    float4 baseColorFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    int baseColorTextureSet;
+    int physicalDescriptorTextureSet;
+    int normalTextureSet;
+    int occlusionTextureSet;
+    int emissiveTextureSet;
+    float alphaMask;
+    float alphaMaskCutoff;
+};
+
+[[vk::push_constant]] PushConstants material;
+----
+
+== 在 Vulkan 中设置推送常量
+
+要在 Vulkan 中用 vk::raii 使用推送常量，我们需要：
+
+1. 创建管线布局时定义一个推送常量范围。
+2. 用 `commandBuffer.pushConstants` 把数据发送给着色器。
+
+下面是我们定义推送常量范围的方式：
+
+[source,cpp]
+----
+// Set up push constant range for material properties
+vk::PushConstantRange pushConstantRange;
+pushConstantRange.setStageFlags(vk::ShaderStageFlagBits::eFragment) // Which shader stages can access the push constants
+               .setOffset(0)
+               .setSize(sizeof(PushConstantBlock)); // Size of our push constant data
+
+// Create pipeline layout with push constants
+vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+pipelineLayoutInfo.setSetLayoutCount(1)
+                 .setPSetLayouts(&*descriptorSetLayout)
+                 .setPushConstantRangeCount(1)
+                 .setPPushConstantRanges(&pushConstantRange);
+
+// Create pipeline layout with vk::raii
+vk::raii::PipelineLayout pipelineLayout = device.createPipelineLayout(pipelineLayoutInfo);
+----
+
+下面是我们向着色器发送数据的方式：
+
+[source,cpp]
+----
+// Define material properties
+PushConstantBlock pushConstants{};
+pushConstants.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
+pushConstants.metallicFactor = 1.0f;
+pushConstants.roughnessFactor = 0.5f;
+pushConstants.baseColorTextureSet = 0;
+pushConstants.physicalDescriptorTextureSet = 1;
+pushConstants.normalTextureSet = 2;
+pushConstants.occlusionTextureSet = 3;
+pushConstants.emissiveTextureSet = 4;
+pushConstants.alphaMask = 0.0f;
+pushConstants.alphaMaskCutoff = 0.5f;
+
+// Push constants to shader using vk::raii
+commandBuffer.pushConstants(
+    *pipelineLayout,
+    vk::ShaderStageFlagBits::eFragment, // Which shader stages will receive the data
+    0, // Offset
+    sizeof(PushConstantBlock), // Size
+    &pushConstants // Data
+);
+----
+
+== 推送常量与统一缓冲区对比
+
+推送常量对小块、频繁变化的数据很高效，但也有局限。对于更大的数据集，或者不常变化的数据，统一缓冲区往往是更好的选择。
+
+下面是两者的对比：
+
+|===
+| 特性 | 推送常量 | 统一缓冲区
+| 大小 | 有限（通常 128 字节） | 大得多
+| 更新机制 | 在命令缓冲区中直接下命令 | 内存映射或暂存缓冲区
+| 描述符集 | 不需要 | 需要
+| 内存分配 | 不需要 | 需要
+| 更新频率 | 适合频繁更新 | 更适合不常更新
+| 访问速度 | 快 | 稍慢
+|===
+
+在我们的 PBR 实现中，材质属性用推送常量，光照信息和变换矩阵用统一缓冲区。
+
+下一节，我们会实现一个基础光照着色器，它用推送常量传递材质属性。
+
+xref:Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc[上一页：光照模型] | xref:Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc[下一页：PBR 光照实现]

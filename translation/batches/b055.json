@@ -1,0 +1,42 @@
+{
+  "id": "b055",
+  "words": 5904,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc",
+      "words": 1038,
+      "title": "Vulkan Integration"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc",
+      "words": 687,
+      "title": "Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc",
+      "words": 1435,
+      "title": "Shadows: Ray Query Integration"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/index.adoc",
+      "words": 72,
+      "title": "Lighting & Materials: Basic lighting models and push constants"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/01_introduction.adoc",
+      "words": 567,
+      "title": "Loading Models: Introduction"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc",
+      "words": 2105,
+      "title": "Loading Models: Asset Pipeline Concepts"
+    }
+  ]
+}

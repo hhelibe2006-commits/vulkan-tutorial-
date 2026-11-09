@@ -1,0 +1,192 @@
+:pp: {plus}{plus}
+
+= 代理式自动化与性能审计
+
+== 简介：自动化系统验证
+
+Vulkan 开发不只是最初的实现，还包含大量持续的正确性与性能工作。本节讲如何用 AI 代理（比如 **Goose**）处理更高层级、跨文件的任务——那些需要在整个引擎范围内追踪某样东西，而不是只在 IDE 里打开一个文件的任务。
+
+以这种方式工作的代理，能帮你暴露那些一次只盯一个文件时容易忽略的低效之处和难以复现的故障。它不是万无一失的，它的建议仍然需要审阅，但它做这些枯燥的交叉比对工作比手工快。
+
+== 这里的自主代理有何不同
+
+IDE 助手只回答关于你当前打开文件的问题，而自主代理可以把构建系统状态、测试日志和源码同时放进上下文里。这让它对两类任务很有用：
+
+- **阅读 CI/CD 日志。** 夜间“无头”构建日志往往很长，肉眼很难解析。代理可以通读它们，试着找出特定硬件上失败的真实原因。
+- **扫描低效之处。** 它可以在你的命令缓冲区录制逻辑中查找冗余的状态变更，或者范围过宽的同步屏障。
+
+把它的输出当作调查的起点，而不是已验证的诊断——在据此行动之前，先拿具体结论去对照日志或代码。
+
+== 示例：追查一次夜间测试失败
+
+Vulkan 引擎常常在远程硬件集群上跑自动化测试套件。当测试在某款特定硬件上失败时（比如某台 Mali GPU 运行机），日志可能长达数万行，手工调试会很慢。
+
+一个典型流程是：夜间构建失败，你把日志指给代理，让它调查，它会利用你配好的上下文桥，去查失败的那台设备的硬件限制。
+
+在一个案例里，代理发现出问题的运行机报告的 `maxComputeWorkGroupInvocations` 限制被某个 bloom 着色器超出了——该着色器把每组线程数硬编码为 512，而设备只支持 256。它建议把着色器改成用特化常量表示工作组大小，更新 C{pp} 侧在运行时设置该常量，并触发一次新的 CI 构建来验证修复。这类结果值得复核而不是盲目合并，但它省掉了手工比对硬件限制表与着色器常量的时间。
+
+== 在 CI 中运行代理
+
+代理式自动化不必只停留在本机——你也可以把它放进 CI/CD 流水线。在无头环境（比如 GitHub Actions 运行器）中使用 **Goose**，可以把构建失败的初步诊断自动化。
+
+=== 配置 GitHub Action
+
+下面这个工作流会在构建任务失败时触发基于代理的诊断：
+
+[source,yaml]
+----
+name: Agentic Build Guard
+on:
+  workflow_run:
+    workflows: ["Build and Test"]
+    types: [completed]
+
+jobs:
+  agentic-diagnosis:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Goose
+        run: |
+          curl -fsSL https://github.com/block/goose/releases/download/stable/goose-linux-amd64 -o goose
+          chmod +x goose
+          sudo mv goose /usr/local/bin/
+      - name: Run Diagnosis
+        env:
+          GOOSE_PROVIDER: openrouter
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          ./scripts/agentic_ci_diagnosis.sh
+----
+
+=== 诊断脚本
+
+`agentic_ci_diagnosis.sh` 把构建日志和 PR 差异交给代理，并要求它找出失败原因：
+
+[source,bash]
+----
+#!/bin/bash
+# scripts/agentic_ci_diagnosis.sh
+
+# 1. Collect context: The build failure log and the current diff
+BUILD_LOG=$(cat build_output.txt | tail -n 100)
+PR_DIFF=$(git diff origin/main...HEAD)
+
+# 2. Command the agent to resolve the failure
+goose session --instruction "
+I have a build failure in my Vulkan engine CI.
+BUILD LOG EXCERPT:
+$BUILD_LOG
+
+PR DIFF:
+$PR_DIFF
+
+Identify the cause of the failure. If it is a compilation error or a
+Vulkan validation error (VUID), propose a fix in a new branch
+'fix/ci-failure' and create a PR comment with the explanation.
+"
+----
+
+把生成的 PR 评论或分支当作待审阅的修复建议，而不是自动合并的东西——任何代理生成的改动都应如此，尤其是从截断的日志片段里得出的那种。
+
+=== GitHub Copilot Autofix
+
+与基于 Goose 的 CI 步骤不同，**GitHub Copilot Autofix** 可以抓住另一类问题：CodeQL 的静态分析发现，例如未检查的 `vkMapMemory` 返回值，或描述符更新中潜在的缓冲区溢出。
+
+1.  **配置代码扫描。** 在 `.github/workflows/codeql.yml` 添加一个 GitHub Actions 工作流来运行 CodeQL，Copilot Autofix 正是基于它产生的告警工作。
++
+[source,yaml]
+----
+name: "CodeQL Analysis"
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: 'cpp'
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+----
+
+2.  **在仓库设置中启用 Autofix。** 进入 **Settings > Code security and analysis**，把 **GitHub Copilot Autofix** 打开。
+
+3.  **审阅建议的修复。** 当 CodeQL 在拉取请求上标出问题时，Copilot Autofix 会在告警下追加一个 “Propose a fix” 小节。点击 **“Fix with Copilot”**，可以在把建议改动提交到分支之前先行审阅——就像审阅任何其他建议补丁一样。
+
+CI 里的 Goose 与 Copilot Autofix 覆盖的范围不同：Goose 更适合你明确要求它调查的、跨多个文件的大改动，而 Autofix 是随着具体静态分析告警出现而作出反应。两者都不能替代正常的代码评审。
+
+=== 语义化合并冲突解决
+
+图形引擎里的合并冲突常常涉及同步逻辑或资源管理，文本级合并工具无法安全地推理这些内容。代理可以看清每个分支实际想做什么，并给出一个同时保留双方改动的合并方案——不过与任何合并一样，结果仍值得检查代理可能漏掉的竞态条件或顺序问题。
+
+[source,bash]
+----
+# Example command for semantic conflict resolution
+goose session --instruction "
+The current PR has merge conflicts with 'main' in 'Renderer.cpp'.
+Analyze the conflicting blocks. One side introduces Descriptor Buffers
+while the other refactors the Command Pool management.
+Resolve the conflict by integrating both features, ensuring that the new
+Descriptor Buffer paths correctly use the updated Command Pool lifecycle.
+"
+----
+
+你也可以在合并之前，让代理检查两个分支在语义层面是否可能冲突——比如不会表现为文本冲突的管线不兼容或同步隐患。
+
+== 运行 GPU 状态审计
+
+这里的性能审计指的是查找冗余工作，而不是正确性 bug。你可以把 **Goose** 与 **RenderDoc CLI（`rdc-cli`）** 搭配，对捕获的一帧自动做第一轮检查。
+
+=== 第 1 步：捕获并导出
+
+为你的帧生成一份 RenderDoc 捕获（`.rdc`），然后把命令列表导出成代理可读的文本格式：
+
+[source,bash]
+----
+# Export the draw calls and their state to a structured text file
+rdc-cli replay --cmds --pipeline-state output_state.txt capture_frame.rdc
+----
+
+=== 第 2 步：执行审计
+
+把 `output_state.txt` 连同你的具体问题一起交给 Goose：
+
+[source,text]
+----
+Goose, audit 'output_state.txt'.
+Look for redundant 'vkCmdBindPipeline' calls in the 'ShadowPass'.
+Also, identify any 'vkCmdPipelineBarrier' calls that use
+'VK_PIPELINE_STAGE_ALL_COMMANDS_BIT' and suggest more specific
+alternatives for a depth-only pass.
+----
+
+=== 第 3 步：查看发现
+
+在一次运行中，代理发现影子管线每帧被绑定三次，因为绘制调用是按材质而不是按管线状态排序的，于是建议调整 `DrawBucket` 的排序，优先按管线分组。它还标出一个使用 `BOTTOM_OF_PIPE_BIT` 的深度缓冲区屏障正在让 GPU 停等，建议收窄为 `LATE_FRAGMENT_TESTS_BIT`，好让下一个通道更早开始顶点工作。这两条在确信之前都值得用性能分析器确认，但对于你本来要手工扫状态转储的特定调查来说，它们是合理的起点。
+
+查看完发现后，你可以让 Goose 直接把重构应用到 `Renderer.cpp`。
+
+== 小结
+
+代理驱动的自动化适合那些数据量大、跨文件、手工做很枯燥的验证工作：读冗长的 CI 日志、扫描命令缓冲区状态找浪费、对照硬件限制检查设计。它不能替代审阅，输出应当核对而不是照单全收，但它能明显减少在这类查阅和跨大型引擎交叉比对上花的时间。
+
+接下来这一节进入部署，讲这些 AI 辅助工作流如何应用到 Android、iOS 和嵌入式目标。
+
+下一节：xref:AI_Assisted_Vulkan/08_deployment/01_introduction.adoc[桌面、移动与嵌入式部署]

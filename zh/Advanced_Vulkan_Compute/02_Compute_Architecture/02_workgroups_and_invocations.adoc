@@ -1,0 +1,84 @@
+:pp: {plus}{plus}
+
+= 工作组与调用：三维网格
+
+== 简介
+
+在基础计算教程中，我们用了简单的一维派发。这对简单任务确实够用，但它并不代表 GPU 实际调度工作的方式。要编写高性能内核，你需要理解 Vulkan 的 3D 网格系统如何映射到 GPU 的物理硅片。
+
+网格系统不只是给纹理做索引的便利手段；它定义了你负载如何被细分，以及如何在硬件上被调度。
+
+== 三层结构
+
+当你定义一次计算派发时，你面对的是一组层次化的单元。把这些维度设对，是迈向高性能的第一步。
+
+1.  **全局派发网格**：这是整个工作负载，由 `vkCmdDispatch(x, y, z)` 定义。
+2.  **工作组**：全局网格被细分为工作组。GPU 的硬件调度器把这些工作组分配给物理计算单元。
+3.  **调用**：每个工作组包含多个独立线程，由着色器中的 `local_size` 定义。
+
+=== 工作组局部性
+
+在前一节中，我们提到工作组不能被拆分到多个物理**计算单元**（CU，AMD/Intel）或**流式多处理器**（SM，NVIDIA）上。这意味着同一工作组内的所有调用都在同一个硬件块上物理执行。
+
+这种局部性是一项关键的设计约束。它让同一工作组中的调用能够共享一种快速本地内存——即 **LDS**（本地数据存储）或 **groupshared** 内存；但它也意味着工作组的大小受单个 CU/SM 物理资源的限制。如果你的工作组太大，GPU 根本无法调度它。
+
+== 索引的数学
+
+Vulkan 提供若干内置变量，帮你确定自己在网格中的位置。在 Slang 中，这些通常以 `SV_DispatchThreadID`、`SV_GroupThreadID`、`SV_GroupID` 等语义作为入口函数的参数传入。
+
+下面看看它们在一个典型着色器中如何关联：
+
+[source,slang]
+----
+[numthreads(16, 16, 1)]
+void main(
+    uint3 groupID      : SV_GroupID,           // gl_WorkGroupID
+    uint3 localID      : SV_GroupThreadID,     // gl_LocalInvocationID
+    uint3 globalID     : SV_DispatchThreadID   // gl_GlobalInvocationID
+) {
+    // globalID: The unique index for this thread in the entire grid
+    // Formula: globalID = groupID * numthreads + localID
+    uint x = globalID.x;
+    uint y = globalID.y;
+
+    // Process pixel (x, y)
+}
+----
+
+使用 2D 或 3D 网格能让空间类任务（如图像处理或物理模拟）干净得多。你不必手动计算一维索引，可以直接使用与数据结构匹配的 `.xy` 或 `.xyz` 坐标。
+
+== 选择最优尺寸
+
+一个常见错误是只根据数据「刚好装下」来选择工作组大小。例如，如果你处理一张 10x10 的图像，你可能会选 (10, 10, 1) 的工作组大小。
+
+然而，GPU 以 32 或 64 个为一批执行调用——称为**子组**、**warp**（NVIDIA）或**波前**（AMD）。如果你的工作组大小不是硬件原生批大小的整数倍，你就在让硅片空转。这称为**内部碎片**。
+
+=== 32/64 法则
+
+*   **NVIDIA** GPU 通常偏好 **32** 的倍数（warp）。
+*   **AMD** GPU 通常偏好 **64** 的倍数（波前），不过现代 RDNA 架构也能处理 32。
+*   **Intel** GPU 的大小可变（8、16、32）。
+*   **移动端** GPU 差异最大：Arm Mali 与 Qualcomm Adreno 报告的 subgroup 大小可能从 4 到 128 不等，每组最大调用数可能低至 128（桌面为 1024）。绝不要硬编码这些值——在运行时查询它们，参见 xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc[Android 上的计算]。
+
+对许多*桌面*负载来说，一个安全且可移植的选择是 **64** 或 **256** 的工作组大小（例如 `16x16` 或 `8x8x4`）。这能确保大多数硬件把 **SIMD**（单指令多数据）通道填满。在移动端，应优先选择更小的工作组，并遵守设备报告的 `maxComputeWorkGroupInvocations`，同时保持为其实际 `subgroupSize` 的整数倍。
+
+== 派发工作
+
+当你调用 `vkCmdDispatch(groupCountX, groupCountY, groupCountZ)` 时，你是在定义 `local_size` 块要重复多少次。
+
+如果你的图像尺寸为 `width` x `height`，工作组大小为 `16x16`，那么派发看起来是这样：
+
+[source,cpp]
+----
+uint32_t groupCountX = (width + 15) / 16;
+uint32_t groupCountY = (height + 15) / 16;
+commandBuffer.dispatch(groupCountX, groupCountY, 1);
+----
+
+注意这里用了「向上取整」（`(width + 15) / 16`）。这样即使图像尺寸不是 16 的整数倍，也不会漏掉最后几个像素。在着色器里，你随后要做边界检查：`if (x < width && y < height)`。
+
+== 接下来
+
+理解工作组如何映射到硬件，是 GPU 计算的基础。但把工作映射到硬件只是故事的一半；我们还需要让硬件保持忙碌。下一节我们讲**占用率**，以及如何隐藏 VRAM 的巨大延迟。
+
+xref:Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc[上一篇：计算架构与执行模型：简介] | xref:Advanced_Vulkan_Compute/02_Compute_Architecture/03_occupancy_and_latency_hiding.adoc[下一篇：占用率与延迟隐藏：让 GPU 保持忙碌]

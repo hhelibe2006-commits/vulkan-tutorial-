@@ -1,0 +1,163 @@
+:pp: {plus}{plus}
+= 物理驱动的程序化倾斜
+
+== 为什么角色需要倾斜
+
+第三人称动作游戏中最常见的一种视觉瑕疵——任何知道该看什么的玩家都能看到——就是角色以完全竖直的姿态跑过拐角。在现实中，当一个人（或任何有质量的物体）转弯时，惯性会把他向外推，而他则向内倾斜来抵消。自行车骑手用力压弯；短跑运动员整个身体前倾；士兵猛地转身回应一声响动。所有这些都包含躯干特有的倾斜，我们把它读作「动量」与「重量」。
+
+当这种倾斜缺失时，角色会显得没有重量。他们看上去像是沿着轨道滑行，而不是在一个对其有阻力的世界中运动。给角色加上哪怕一点点由物理推导出的倾斜——尤其是在加速、减速和转弯时——都会显著改善质量感与存在感。
+
+好消息是，这不需要完整的物理模拟。倾斜角度是角色当前速度向量及其变化率的函数，两者都能从物理模拟的输出中算出（或者，如果你有角色控制器，就从角色控制器中算出）。然后我们可以把这种倾斜作为程序化旋转施加到脊柱关节上，叠加在基础动画之上。
+
+== 倾斜的物理原理
+
+在计算倾斜之前，我们先理解它究竟是什么。当角色向前加速时，惯性会抵抗速度的变化。从角色的参考系来看，这感觉像是一个向后的力——这就是为什么奔跑时你会前倾，而急刹车时会略微后仰。倾斜角度由水平加速度与垂直重力加速度之比决定：
+
+`lean_angle = atan2(horizontal_acceleration, gravity)`
+
+对于一个在标准重力（9.8 m/s²）的星球上以 5 m/s² 加速的角色，倾斜角度约为 `atan2(5, 9.8) ≈ 27 degrees`。这是相当大的倾斜——就是你在短跑运动员身上看到的那种——它也反映了这样一个事实：激进的加速需要一个明显的向前倾角，才能让身体的重心保持在双脚之上。
+
+对于转弯，物理原理略有不同。当角色沿圆周运动时，向心加速度会把它拉向转弯的圆心。为抵消它所需的倾斜是：
+
+`lean_angle = atan2(v² / r, gravity)`
+
+其中 `v` 是速度，`r` 是转弯半径。这就是为什么同样速度下更急的转弯需要更大的倾斜，也是为什么更快的转弯比更慢的转弯需要更大的倾斜。
+
+在实践中，我们从角色的速度历史中计算加速度向量与向心加速度，把它们合并成一个「有效重力」向量，然后倾斜脊柱使其与该向量对齐。
+
+== 计算倾斜向量
+
+我们需要角色上一帧的速度以及速度的变化量（加速度）。如果你使用物理引擎，这两者都可以从角色控制器的刚体上获得。如果你使用运动学角色控制器（也就是直接移动角色的那种），你就需要自己记录上一帧的速度并计算差值：
+
+[source,cpp]
+----
+struct CharacterMotionState {
+    glm::vec3 velocity;           // Current world-space velocity
+    glm::vec3 previous_velocity;  // Velocity from last frame
+    glm::vec3 smoothed_lean_vec;  // Low-pass filtered lean direction
+};
+
+// Compute the "effective downward" direction that the character perceives
+// due to their motion. The spine should align perpendicular to this direction.
+glm::vec3 compute_lean_vector(
+    const CharacterMotionState& motion,
+    float                       gravity,     // Positive value (e.g. 9.8)
+    float                       delta_time,
+    float                       lean_strength) // Scale factor; 1.0 = physically accurate
+{
+    // Linear acceleration from velocity change
+    glm::vec3 accel = (motion.velocity - motion.previous_velocity) / delta_time;
+
+    // For lean, we care about the horizontal component of acceleration.
+    // Vertical acceleration (e.g., falling) should not tilt the spine.
+    glm::vec3 horizontal_accel(accel.x, 0, accel.z);
+
+    // The effective gravity that the character "feels" in their reference frame
+    // is the sum of real gravity (downward) and the reaction to their acceleration
+    // (opposite to their acceleration direction).
+    // We negate horizontal_accel because lean opposes the acceleration direction.
+    glm::vec3 effective_gravity(
+        -horizontal_accel.x * lean_strength,
+        -gravity,
+        -horizontal_accel.z * lean_strength
+    );
+
+    return glm::normalize(effective_gravity);
+}
+----
+
+`lean_strength` 参数是一个调参旋钮。取 1.0 会得到物理上准确的倾斜角度，这对游戏角色来说可能过于极端（27 度的倾斜在冲刺的运动员身上看起来很自然，但对一个还挥着剑的游戏角色来说可能显得夸张）。对游戏角色而言，0.3 到 0.7 之间的值通常看起来最好——足以传达重量与动量，又不会让角色看起来马上要摔倒。
+
+== 将倾斜应用到脊柱
+
+倾斜向量算好后，我们把它作为脊柱的旋转施加。脊柱的「上」轴（躯干所指的方向）应当与有效重力向量的相反方向对齐——换句话说，脊柱应当朝与感知到的重力拉力相反的方向倾斜。
+
+我们用与注视链相同的方式把倾斜分配到脊柱的各个关节上：每个关节承担总倾斜角的一部分，且下段脊柱关节贡献得比上段更多（倾斜源自髋部，并通过脊柱向上传递）：
+
+[source,cpp]
+----
+struct LeanController {
+    std::vector<uint32_t> spine_joints;   // Ordered from pelvis to upper spine
+    std::vector<float>    joint_weights;  // Per-joint share (should sum to 1)
+    glm::vec3 local_up_axis;             // The joint's "up" in local space
+    float     max_lean_degrees;          // Safety cap on total lean
+    float     smoothing_speed;           // How quickly lean responds to velocity changes
+};
+
+void apply_physics_lean(
+    std::vector<Node>&          nodes,
+    const LeanController&       controller,
+    const CharacterMotionState& motion,
+    float                       gravity,
+    float                       delta_time,
+    float                       lean_strength,
+    glm::vec3&                  smoothed_lean_vec) // persistent state
+{
+    // Compute the raw lean vector from this frame's physics data
+    glm::vec3 raw_lean_vec = compute_lean_vector(motion, gravity, delta_time, lean_strength);
+
+    // Smooth it over time to prevent jittery lean from noisy acceleration data
+    float t = glm::clamp(controller.smoothing_speed * delta_time, 0.0f, 1.0f);
+    smoothed_lean_vec = glm::normalize(glm::mix(smoothed_lean_vec, raw_lean_vec, t));
+
+    // The world "up" direction
+    const glm::vec3 world_up(0, 1, 0);
+
+    // The lean angle is the angle between world_up and the smoothed lean vector
+    float lean_angle = std::acos(glm::clamp(glm::dot(smoothed_lean_vec, -world_up), -1.0f, 1.0f));
+    if (lean_angle < glm::radians(0.5f)) return; // Less than half a degree; skip
+
+    // Clamp to the maximum allowed lean
+    lean_angle = std::min(lean_angle, glm::radians(controller.max_lean_degrees));
+
+    // The axis around which we lean is perpendicular to both world_up and the lean vector
+    glm::vec3 lean_axis = glm::cross(-world_up, smoothed_lean_vec);
+    if (glm::length(lean_axis) < 1e-6f) return; // No lean direction; moving straight up/down
+    lean_axis = glm::normalize(lean_axis);
+
+    // Distribute the lean across the spine joints
+    for (size_t i = 0; i < controller.spine_joints.size(); ++i) {
+        uint32_t joint_idx   = controller.spine_joints[i];
+        float    joint_angle = lean_angle * controller.joint_weights[i];
+        if (joint_angle < 1e-5f) continue;
+
+        Node& joint = nodes[joint_idx];
+        glm::quat world_correction = glm::angleAxis(joint_angle, lean_axis);
+        glm::quat new_world_rot    = world_correction * joint.get_world_rotation();
+
+        glm::quat parent_world_rot = (joint.parent_index != INVALID_NODE_INDEX)
+            ? nodes[joint.parent_index].get_world_rotation()
+            : glm::quat(1, 0, 0, 0);
+
+        joint.local_rotation = glm::inverse(parent_world_rot) * new_world_rot;
+        joint.mark_dirty();
+        update_world_matrices_subtree(nodes, joint_idx);
+    }
+}
+----
+
+== 把倾斜与注视和 IK 结合
+
+到此为止，我们有了三个都会修改脊柱与头部关节的程序化层：脚部放置 IK（调整骨盆高度与腿链）、注视（旋转颈部与头部关节）、以及物理驱动的倾斜（倾斜脊柱关节）。这三者都需要协同工作而互不干扰。
+
+关键在于**施加顺序**。对场景图的程序化修正按顺序施加，每一层都在前一层的结果之上构建。对典型人形角色而言，正确的顺序是：
+
+1. **播放基础动画。** 这会用关键帧数据设置所有关节的局部旋转。此时场景图反映的是动画姿态。
+
+2. **传播世界矩阵。** 运行脏标记更新，为所有节点计算世界矩阵。
+
+3. **施加脚部放置 IK。** 这会调整骨盆位移与腿链旋转。此时脚部位置相对于地形已经正确。
+
+4. **再次传播世界矩阵。** 腿部修正改变了所有腿部后代的世界矩阵；在继续之前我们需要最新的世界矩阵。
+
+5. **施加物理驱动的倾斜。** 这会倾斜脊柱关节。倾斜施加在动画与脚部修正之上。
+
+6. **再次传播世界矩阵。**
+
+7. **施加注视。** 这会旋转颈部与头部。把注视放在最后施加，它就能响应脊柱倾斜后的朝向——这正是真实颈部在身体倾斜时会做的事。
+
+8. **最终的世界矩阵传播。** 场景图现在已准备好供蒙皮计算着色器使用。
+
+每帧执行多遍世界矩阵传播可能看起来开销很大。但在实践中，对于一个骨架约有 60 个关节的人形角色，每一遍传播不过是每个关节几次矩阵乘法——在微秒级内轻松完成。与随后的绘制调用和计算派发相比，总开销可以忽略不计。
+
+xref:Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc[上一篇：注视控制器] | xref:Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc[下一篇：程序化动画：小结与下一步]

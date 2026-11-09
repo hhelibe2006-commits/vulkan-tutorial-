@@ -1,0 +1,182 @@
+= 优化技巧：压榨芯片性能
+:pp: ++
+:stem: latexmath
+
+性能分析已经找出了你的瓶颈。你知道哪些层很慢，也清楚自己是受限于内存带宽还是计算吞吐量。现在，是时候应用这些**优化配方**，把原型变成生产级的推理引擎了。
+
+在本章中，我们将掌握 GPU 优化的三大支柱：**数据复用**（分块，Tiling）、**指令效率**（融合，Fusion）和**硬件加速**（FP16/量化）。这些不只是微优化；只要应用得当，它们能比朴素实现带来 **10 倍到 50 倍**的加速。
+
+== GPU 内存层级：光速
+
+要优化，你必须理解「距离的代价」。
+
+[cols="1,2,2"]
+|===
+| 内存类型 | 延迟（约） | 带宽
+
+| **寄存器**
+| 1 个周期
+| > 100 TB/s
+
+| **共享内存（L1）**
+| 20-30 个周期
+| 10-20 TB/s
+
+| **VRAM（DRAM）**
+| 400-800 个周期
+| 0.5-2 TB/s
+|===
+
+你的着色器每次从 VRAM 读取数据，就像一个人开车横穿全国去倒一杯水。**优化的艺术，就是把那杯水留在厨房（共享内存）里，或者干脆端在手上（寄存器）。**
+
+== 共享内存分块：软件缓存
+
+大多数 ML 内核（卷积、矩阵乘法）都**受内存限制**。计算单元渴望数据，但内存总线太慢。解决办法是**共享内存**——一块直接位于计算单元上的高速内存池。
+
+=== 概念：分块与晕圈
+想想一个 3x3 卷积。每个输出像素都需要一块 3x3 的输入。如果你朴素地计算 256 个输出像素（16x16 工作组）：
+*   每个线程加载 9 个像素。
+*   总加载次数：latexmath:[256 \times 9 = 2,304]。
+
+在**分块**（Tiled）方法中，各线程协作把一整块 18x18 的「瓦片」加载到共享内存里。
+*   总加载次数：latexmath:[18 \times 18 = 324]。
+*   **收益**：VRAM 流量减少 latexmath:[7\times]。
+
+=== 实现分块
+要实现这一点，我们必须计算**局部 ID**（在线块内的位置），并处理**晕圈**（边缘周围需要的额外像素）。
+
+[source,glsl]
+----
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// 16x16 output + 1 pixel halo on each side = 18x18
+shared float tile[18][18];
+
+void main() {
+    ivec2 localPos = ivec2(gl_LocalInvocationID.xy);
+    ivec2 globalPos = ivec2(gl_GlobalInvocationID.xy);
+
+    // 1. Cooperative Load: Each thread loads its 'center' pixel
+    // Shift by 1 to leave room for the top/left halo
+    tile[localPos.y + 1][localPos.x + 1] = inputData[globalPos];
+
+    // 2. Halo Load: Specific threads load the edges
+    if (localPos.x == 0) tile[localPos.y + 1][0] = inputData[globalPos - ivec2(1, 0)];
+    if (localPos.x == 15) tile[localPos.y + 1][17] = inputData[globalPos + ivec2(1, 0)];
+    if (localPos.y == 0) tile[0][localPos.x + 1] = inputData[globalPos - ivec2(0, 1)];
+    if (localPos.y == 15) tile[17][localPos.x + 1] = inputData[globalPos + ivec2(0, 1)];
+
+    // 3. Memory Handshake
+    memoryBarrierShared();
+    barrier();
+
+    // 4. Compute: Every read now comes from fast shared memory!
+    float sum = 0.0;
+    for(int m = -1; m <= 1; m++) {
+        for(int n = -1; n <= 1; n++) {
+            sum += tile[localPos.y + 1 + m][localPos.x + 1 + n] * weights[...];
+        }
+    }
+}
+----
+
+=== 避免存储体冲突
+共享内存按**存储体**（bank）组织。如果同一个 warp 中的两个线程同时访问*同一个*存储体里的不同数据，GPU 就会停顿。这就是**存储体冲突**。
+
+**专业提示**：如果你的分块宽度是存储体数量（通常是 32）的倍数，就把宽度加 1：`shared float tile[18][19]`。这样会「打乱」内存布局，使纵向的列不再落入同一个存储体。
+
+== 内核融合：对抗内存墙
+
+在一个典型的网络中，你可能会看到：**卷积 latexmath:[\to] 偏置加法 latexmath:[\to] 批归一化 latexmath:[\to] ReLU**。
+
+如果你把这些实现成四个独立的内核，就等于对 VRAM 写了四遍、读了四遍。
+[latexmath]
+++++
+\text{Naive Traffic} = \text{Read(In)} + \text{Write(Conv)} + \text{Read(Conv)} + \text{Write(Bias)} + \dots
+++++
+
+**内核融合**把它们合并成一次计算派发。中间值留在 GPU 的**寄存器**里。
+
+=== 融合配方
+一个专业的「融合卷积」内核看起来是这样的：
+
+[source,glsl]
+----
+void main() {
+    // 1. The Heavy Work
+    float sum = performConvolution(); // Stays in registers!
+
+    // 2. The 'Free' Operations
+    // These take 0.001ms because the GPU was already waiting for memory
+    sum += bias[channel];
+    sum = (sum - mean) * invStdDev;
+    sum = max(0.0, sum);
+
+    // 3. ONE write to VRAM
+    outputData[idx] = sum;
+}
+----
+
+对于 MobileNet 或 ResNet 这类深度网络，融合是单一最有效的优化手段——它们层数很多、每层都很小，而且受带宽限制。
+
+== 向量化：NC/4HW4 布局
+
+大多数 GPU 的内存总线宽 128 位。如果你只读一个 `float`（32 位），就只用到潜在带宽的 25%。
+
+先进的 ML 引擎使用 **NC/4HW4** 布局，也就是把 4 个通道归为一组，放进单个 `vec4`。
+
+*   缓冲区不再是 `float data[]`，而是 `vec4 data[]`。
+*   一条加载指令现在能一次取回 4 个通道。
+*   GPU 硬件针对 `vec4` 点积做了优化。
+
+[latexmath]
+++++
+\text{Throughput Gain} \approx 4\times
+++++
+
+在你的着色器中，内层循环变成了：
+[source,glsl]
+----
+vec4 input_v = inputBuffer[idx];
+vec4 weight_v = weightBuffer[idx];
+sum += dot(input_v, weight_v);
+----
+
+== 子组混洗：无需内存的通信
+
+如果你需要在线程之间共享数据（比如在 Max-Pool 或 Softmax 中），不要立刻伸手去用共享内存。改用**子组混洗**（需要 `GL_KHR_shader_subgroup_basic`）。
+
+混洗允许线程 0「伸手」直接从线程 1 的寄存器里读取数据。
+
+[source,glsl]
+----
+float myValue = ...;
+// Find the maximum value across all 32 threads in the warp
+float maxVal = subgroupMax(myValue);
+----
+
+这比共享内存**快 10 倍**，因为它完全不接触任何内存控制器——整个过程都发生在执行单元的寄存器堆内。
+
+== 异步计算：让一切重叠
+
+Vulkan 允许你把工作提交到多个**队列**。如果你的 ML 推理跑在**计算队列**上，它就能与**图形队列**上的 UI 渲染同时运行。
+
+*   **秘诀**：如果你的 GPU 在忙于光栅化阴影时还有空闲的计算单元，计算队列就会「填补空隙」，让你的 ML 推理实际只占 **0 毫秒**的帧时间。
+
+=== 多队列握手
+用**时间线信号量**来协调：
+1.  图形队列发出「帧就绪」信号。
+2.  计算队列等待，执行预处理 + 推理，发出「结果就绪」信号。
+3.  图形队列等待，在下一帧渲染 AI 标注。
+
+== 总结：优化工作流
+
+1.  **融合**一切。绝不把中间结果写入 VRAM。
+2.  把数据**向量化**成 `vec4`（NC/4HW4），以打满内存总线。
+3.  用共享内存对高强度卷积**分块**。
+4.  归约（Max、Sum）时**使用子组**，避免共享内存停顿。
+5.  用异步计算让所有工作**重叠**起来。
+
+借助这些技术，你已经把 Vulkan 实现从一个能跑的原型，变成了能在最苛刻环境中实时运行 AI 的高性能引擎。
+
+xref:ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc[上一篇：性能分析：精通 Roofline 模型] | xref:ML_Inference/Desktop_Applications/01_introduction.adoc[下一篇：桌面应用]

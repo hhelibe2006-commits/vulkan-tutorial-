@@ -1,0 +1,393 @@
+:pp: {plus}{plus}
+
+= 加载模型：实现模型加载系统
+:doctype: book
+:sectnums:
+:sectnumlevels: 4
+:toc: left
+:icons: font
+:source-highlighter: highlightjs
+:source-language: c++
+
+== 实现模型加载系统
+
+=== 以 glTF 知识为基础
+
+正如我们在 xref:15_GLTF_KTX2_Migration.adoc[迁移到现代资产格式：glTF 与 KTX2] 一章中学到的，glTF 是一种现代的 3D 格式，支持 PBR 材质、动画和场景层级等广泛特性。本章我们将利用这些能力，构建一个更健壮的引擎。
+
+上一章讲解了加载 glTF 模型的基础，本章则聚焦于把加载到的数据组织成规范的场景图，并实现动画支持。这种做法让我们能够创建更复杂、更动态的场景。
+
+本章不仅会实现模型加载的技术细节，还会讨论设计背后的架构决策，以及开发者如何在应用中有效使用这套系统。理解这些概念，对于构建可维护、可扩展的引擎至关重要。
+
+=== 搭建引擎的模型系统
+
+我们从与上一章相同的 tinygltf 库配置开始：
+
+[source,cpp]
+----
+// Include tinygltf for model loading
+#include <tiny_gltf.h>
+----
+
+不过，我们不把模型数据直接加载进顶点缓冲区和索引缓冲区，而是创建一套更有条理的方案，用恰当的数据类来表示场景。
+
+=== 定义数据结构
+
+为了处理 glTF 提供的丰富数据，我们需要定义几个数据结构：
+
+[source,cpp]
+----
+// Vertex structure with position, normal, color, and texture coordinates
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec3 color;
+    glm::vec2 texCoord;
+
+    // Binding and attribute descriptions for Vulkan
+    static vk::VertexInputBindingDescription getBindingDescription() {
+        return { 0, sizeof(Vertex), vk::VertexInputRate::eVertex };
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions() {
+        return {
+            vk::VertexInputAttributeDescription( 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos) ),
+            vk::VertexInputAttributeDescription( 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) ),
+            vk::VertexInputAttributeDescription( 2, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color) ),
+            vk::VertexInputAttributeDescription( 3, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord) )
+        };
+    }
+
+    // Equality operator and hash function for vertex deduplication
+    bool operator==(const Vertex& other) const {
+        return pos == other.pos && normal == other.normal && color == other.color && texCoord == other.texCoord;
+    }
+};
+
+// Structure for PBR material properties
+struct Material {
+    glm::vec4 baseColorFactor = glm::vec4(1.0f);
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
+    glm::vec3 emissiveFactor = glm::vec3(0.0f);
+
+    int baseColorTextureIndex = -1;
+    int metallicRoughnessTextureIndex = -1;
+    int normalTextureIndex = -1;
+    int occlusionTextureIndex = -1;
+    int emissiveTextureIndex = -1;
+};
+
+// Structure for a mesh with vertices, indices, and material
+struct Mesh {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    int materialIndex = -1;
+};
+----
+
+=== 为什么需要场景图
+
+场景图是一种树状数据结构，用于组织图形场景的空间表示。虽然用简单的集合或映射来存储 3D 对象看似诱人，但场景图有几项关键优势：
+
+==== 使用场景图的优势
+
+* *层级变换*：场景图允许子对象继承父对象的变换。当你移动、旋转或缩放某个父节点时，它的所有子节点都会自动相对父节点进行变换。对于角色这类复杂模型，这一点必不可少——移动躯干时，相连的四肢也应随之移动。
+
+* *空间组织*：场景图依据对象之间的空间关系来组织它们，使剔除、碰撞检测和细节层次管理等操作更容易实现。
+
+* *动画支持*：层级结构对骨骼动画至关重要，骨骼动画中的运动会沿着骨骼链传播。
+
+* *场景管理*：场景图便于实现场景的保存与加载、实例化（在不同位置复用同一个模型）以及动态修改场景等操作。
+
+==== 场景图与简单集合的对比
+
+与简单的对象映射或对象数组不同，场景图：
+
+* 维护对象之间的父子关系
+* 沿层级自动向下传播变换
+* 为遍历算法（渲染、拾取、碰撞）提供自然的结构
+* 支持从局部坐标到全局坐标的变换
+
+例如，面对一个平坦的对象集合，如果你想移动一个角色及其全部装备，就得逐件更新每个物件。而使用场景图，你只需移动角色节点，所有挂载的装备都会自动跟随移动。
+
+==== 场景图与空间划分系统（游戏地图）的对比
+
+有必要区分场景图与空间划分系统（在引擎开发中常被称为「游戏地图」）：
+
+* *场景图*关注对象之间的层级关系与变换。
+* *空间划分系统*关注如何高效地在空间中组织对象，以便进行碰撞检测、可见性判定和物理计算。
+
+场景图依据逻辑关系（例如一个角色及其装备）来组织对象，而空间划分系统则依据对象在游戏世界中的物理位置来组织对象。
+
+===== 常见的空间划分系统
+
+游戏开发中会用到多种空间划分技术：
+
+* *八叉树（Octrees）*：递归地把 3D 空间划分为八个相等的卦限。适用于对象分布不均的大型开放世界。八叉树会自适应对象密度，在拥挤区域做更多细分。
+
+* *二叉空间分割（BSP）*：用平面递归地划分空间。对室内环境尤其高效，并因 Doom、Quake 等早期第一人称射击游戏而流行。
+
+* *四叉树（Quadtrees）*：八叉树的 2D 等价物，递归地把空间划分为四个象限。常用于 2D 游戏，或 3D 游戏中的地形。
+
+* *轴对齐包围盒（AABB）树*：依据包围盒组织对象，形成一种层次结构，从而实现高效的碰撞检测。
+
+* *传送门系统（Portal Systems）*：把世界划分为由「传送门」连接的「房间」。这种方法对区域分明的室内环境尤其有效。
+
+* *空间哈希（Spatial Hashing）*：把 3D 位置映射到哈希表，从而以常数时间查询邻近对象。适用于粒子系统以及其他包含大量尺寸相近对象的场景。
+
+* *包围体层次结构（BVH）*：构建由层层嵌套的包围体组成的树，从而实现高效的光线投射与碰撞检测。
+
+===== 流行引擎中的空间划分
+
+不同的游戏引擎使用不同的空间划分系统，而且往往会组合多种方案：
+
+* *Unreal Engine*：对整体世界使用八叉树，对精细的室内环境使用 BSP。它还有一个名为「Unreal Visibility Determination」的自定义系统，把传送门与潜在可见集结合起来。
+
+* *Unity*：在物理与渲染中实现了一套四叉树/八叉树混合系统。导航方面则使用导航网格系统。
+
+* *CryEngine/CRYENGINE*：室外环境用八叉树，室内区域用传送门系统。
+
+* *Godot*：物理引擎使用 BVH 树，渲染使用八叉树。
+
+* *Source Engine（Valve）*：以 BSP（二叉空间分割）配合名为「Potentially Visible Set」（PVS）的传送门系统而闻名。
+
+* *id Tech（id Software）*：早期版本（Doom、Quake）开创了 BSP 的应用。后续版本则组合使用 BSP、八叉树和传送门系统。
+
+* *Frostbite（EA）*：为大规模可破坏环境使用了层级网格系统结合八叉树。
+
+在实践中，许多现代引擎采用混合方案，根据游戏世界不同部分的特定需求选择合适的划分系统。
+
+=== 架构决策
+
+在设计模型系统时，我们做了几项关键的架构决策：
+
+* *基于节点的结构*：我们采用基于节点的方案，每个节点都可以拥有网格、变换和子节点。这为复杂的场景层级提供了灵活性。
+
+* *关注点分离*：我们把几何数据（顶点、索引）与材质属性和变换分离开，从而更高效地使用内存，也更便于更新。
+
+* *为动画做好准备*：我们的设计包含专门用于动画的结构，支持关键帧插值以及不同的动画通道（平移、旋转、缩放）。
+
+* *内存管理*：我们采用集中式所有权模型，由 Model 类拥有所有节点，从而简化清理并防止内存泄漏。
+
+* *高效遍历*：我们同时维护层级结构（`nodes`）和扁平列表（`linearNodes`），以高效支持不同的遍历方式。
+
+=== 开发者如何使用模型系统
+
+下面是一位开发者在应用中通常如何使用这套模型系统：
+
+==== 加载与初始化模型
+
+[source,cpp]
+----
+// Create and load a model
+Model* characterModel = new Model();
+loadFromFile(characterModel, "character.gltf");
+
+// Find specific nodes in the model
+Node* headNode = characterModel->findNode("Head");
+Node* weaponAttachPoint = characterModel->findNode("RightHand");
+
+// Attach additional objects to the model
+Model* weaponModel = new Model();
+loadFromFile(weaponModel, "weapon.gltf");
+weaponAttachPoint->children.push_back(weaponModel->nodes[0]);
+----
+
+==== 更新模型并播放动画
+
+[source,cpp]
+----
+// Play an animation
+float deltaTime = 0.016f; // 16ms or ~60 FPS NB: Keep this relative to frame
+instead of a constant in actual code as some systems are faster resulting in
+faster animation on a constant that isn't tied to the frame time.
+characterModel->updateAnimation(0, deltaTime); // Play the first animation
+
+// Manually transform nodes
+headNode->rotation = glm::rotate(headNode->rotation, glm::radians(15.0f), glm::vec3(0, 1, 0)); // Look to the side
+----
+
+==== 渲染模型
+
+[source,cpp]
+----
+void renderModel(Model* model, VkCommandBuffer commandBuffer) {
+    // Traverse all nodes in the model
+    for (auto& node : model->linearNodes) {
+        if (node->mesh.indices.size() > 0) {
+            // Get the global transformation matrix
+            glm::mat4 nodeMatrix = node->getGlobalMatrix();
+
+            // Update uniform buffer with the node's transformation
+            updateUniformBuffer(nodeMatrix);
+
+            // Bind the appropriate material
+            if (node->mesh.materialIndex >= 0) {
+                bindMaterial(model->materials[node->mesh.materialIndex]);
+            }
+
+            // Draw the mesh
+            vkCmdDrawIndexed(commandBuffer,
+                static_cast<uint32_t>(node->mesh.indices.size()),
+                1, 0, 0, 0);
+        }
+    }
+}
+----
+
+=== 回到教程
+
+现在你已经从假想的开发者视角看到了模型系统 API 的用法，是时候把这份功能实现了。
+在接下来的几节中，我们将带你实现场景图、动画系统，以及让引擎运转起来的模型类。
+
+=== 实现场景图
+
+现在我们来看场景图结构的实现：
+
+[source,cpp]
+----
+// Structure for a node in the scene graph
+struct Node {
+    Node* parent = nullptr;
+    std::vector<Node*> children;
+    Mesh mesh;
+    glm::mat4 matrix = glm::mat4(1.0f);
+
+    // For animation
+    glm::vec3 translation = glm::vec3(0.0f);
+    glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    glm::vec3 scale = glm::vec3(1.0f);
+
+    glm::mat4 getLocalMatrix() {
+        return glm::translate(glm::mat4(1.0f), translation) *
+               glm::toMat4(rotation) *
+               glm::scale(glm::mat4(1.0f), scale) *
+               matrix;
+    }
+
+    glm::mat4 getGlobalMatrix() {
+        glm::mat4 m = getLocalMatrix();
+        Node* p = parent;
+        while (p) {
+            m = p->getLocalMatrix() * m;
+            p = p->parent;
+        }
+        return m;
+    }
+};
+----
+
+=== 动画结构
+
+为了支持动画，我们还需要一些额外的结构：
+
+[source,cpp]
+----
+// Structure for animation keyframes
+struct AnimationChannel {
+    enum PathType { TRANSLATION, ROTATION, SCALE };
+    PathType path;
+    Node* node = nullptr;
+    uint32_t samplerIndex;
+};
+
+// Structure for animation interpolation
+struct AnimationSampler {
+    enum InterpolationType { LINEAR, STEP, CUBICSPLINE };
+    InterpolationType interpolation;
+    std::vector<float> inputs;  // Key frame timestamps
+    std::vector<glm::vec4> outputsVec4;  // Key frame values (for rotations)
+    std::vector<glm::vec3> outputsVec3;  // Key frame values (for translations and scales)
+};
+
+// Structure for animation
+struct Animation {
+    std::string name;
+    std::vector<AnimationSampler> samplers;
+    std::vector<AnimationChannel> channels;
+    float start = std::numeric_limits<float>::max();
+    float end = std::numeric_limits<float>::min();
+    float currentTime = 0.0f;
+};
+----
+
+=== Model 类
+
+现在我们可以定义一个 Model 类，把所有内容整合起来：
+
+[source,cpp]
+----
+// Structure for a model with nodes, meshes, materials, textures, and animations
+struct Model {
+    std::vector<Node*> nodes;
+    std::vector<Node*> linearNodes;
+    std::vector<Material> materials;
+    std::vector<Animation> animations;
+
+    ~Model() {
+        for (auto node : linearNodes) {
+            delete node;
+        }
+    }
+
+    Node* findNode(const std::string& name) {
+        auto nodeIt = std::ranges::find_if(linearNodes, [&name](auto const& node) {
+            return node->name == name;
+        });
+        return (nodeIt != linearNodes.end()) ? *nodeIt : nullptr;
+    }
+
+    void updateAnimation(uint32_t index, float deltaTime) {
+        assert(!animations.empty() && index < animations.size());
+
+
+
+        Animation& animation = animations[index];
+        animation.currentTime += deltaTime;
+        if (animation.currentTime > animation.end) {
+            animation.currentTime = animation.start;
+        }
+
+        for (auto& channel : animation.channels) {
+            AnimationSampler& sampler = animation.samplers[channel.samplerIndex];
+
+            // Find the current key frame using binary search
+            auto keyFrameIt = std::ranges::lower_bound(sampler.inputs, animation.currentTime);
+            if (keyFrameIt != sampler.inputs.end() && keyFrameIt != sampler.inputs.begin()) {
+                size_t i = std::distance(sampler.inputs.begin(), keyFrameIt) - 1;
+                float t = (animation.currentTime - sampler.inputs[i]) / (sampler.inputs[i + 1] - sampler.inputs[i]);
+
+                    switch (channel.path) {
+                        case AnimationChannel::TRANSLATION: {
+                            glm::vec3 start = sampler.outputsVec3[i];
+                            glm::vec3 end = sampler.outputsVec3[i + 1];
+                            channel.node->translation = glm::mix(start, end, t);
+                            break;
+                        }
+                        case AnimationChannel::ROTATION: {
+                            glm::quat start = glm::quat(sampler.outputsVec4[i].w, sampler.outputsVec4[i].x, sampler.outputsVec4[i].y, sampler.outputsVec4[i].z);
+                            glm::quat end = glm::quat(sampler.outputsVec4[i + 1].w, sampler.outputsVec4[i + 1].x, sampler.outputsVec4[i + 1].y, sampler.outputsVec4[i + 1].z);
+                            channel.node->rotation = glm::slerp(start, end, t);
+                            break;
+                        }
+                        case AnimationChannel::SCALE: {
+                            glm::vec3 start = sampler.outputsVec3[i];
+                            glm::vec3 end = sampler.outputsVec3[i + 1];
+                            channel.node->scale = glm::mix(start, end, t);
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+};
+----
+
+=== 后续步骤：加载 glTF 文件
+
+现在我们已经设计好模型系统的架构，并实现了核心数据结构，下一步就是真正从 glTF 文件加载 3D 模型。下一章我们将探讨如何用 tinygltf 库解析 glTF 文件，并把加载到的数据填入场景图。我们会学习如何从 glTF 文件中提取网格、材质、纹理和动画，并把它们转换为引擎内部的表示。
+
+xref:Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc[上一篇：加载模型：资产管线概念] | xref:Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc[下一篇：加载模型：理解 glTF]

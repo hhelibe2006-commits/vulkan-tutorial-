@@ -1,0 +1,123 @@
+:pp: {plus}{plus}
+= 针对移动 GPU 的优化
+
+== 不同的目标函数
+
+在桌面上，我们几乎只针对**时间**优化：这次派发要花多少毫秒？而在移动和嵌入式设备上，目标函数多了两项，它们往往比原始延迟*更*重要：
+
+*   **能量**——每消耗一焦耳，都是电池的消耗和热量的产生。
+*   **持续性能**——运行一秒很快、却触发**热降频**的内核，平均而言比在功耗包络内稳定运行的内核更慢。
+
+这重新框定了前几章的所有内容。最快的内核，往往正是触碰 DRAM 最少的那个。
+
+== 首要任务是减少 DRAM 流量
+
+由于外部内存带宽主导了移动端的功耗预算，你的首要优化杠杆是*数据搬运*，而不是算术。
+
+*   **融合通道（pass）。** 两个各自读写一份全分辨率缓冲区的内核，要付出两次 DRAM 往返。把它们融合成单个内核、把中间结果留在寄存器或共享内存中，可以把带宽减半。
+*   **积极使用共享内存和子组。** 我们在桌面上为了*速度*而用的 LDS 分块（第 3 章）和子组洗牌（第 4 章），在移动端主要是*功耗*优化——把数据留在片上可以避开昂贵的 DRAM 跳转。
+*   **压缩与打包。** 用仍然正确的最小精度存储中间结果（见下文），并把多个值打包进一个字，以减少事务次数。
+
+=== 实例：融合模糊与色调映射
+
+假设一条摄影流水线先对图像做模糊，然后应用色调映射曲线。朴素的做法是两次派发：
+
+[source,slang]
+----
+// Pass 1: read src (R), write blurred (W) -> one full-image read + one full-image write
+// Pass 2: read blurred (R), write final (W) -> another full read + full write
+----
+
+对一张 1200 万像素、FP16（每通道 2 字节、4 个通道）的图像，单向大约 96 MB，来回共四趟：约 384 MB 的 DRAM 流量。在每搬运一兆字节都要付出可测量的电池与热量代价的手机上，这就是主导成本——相比之下算术几乎免费。
+
+把两个阶段融合进单个内核，让模糊后的像素留在寄存器里并立刻做色调映射，就消除了中间缓冲区的写入*和*读取：
+
+[source,slang]
+----
+[numthreads(8, 8, 1)]   // 64 invocations: safe under a 128-invocation limit
+void fusedBlurToneMap(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= imageSize)) return;        // bounds check, see Chapter 2
+
+    half4 blurred = boxBlur(srcImage, id.xy);   // gather happens via texture cache
+    half4 mapped  = toneMap(blurred);           // stays in registers, no DRAM hop
+    dstImage[id.xy] = mapped;                    // single write to DRAM
+}
+----
+
+这把往返流量减半（约 192 MB 而非 384 MB），还省掉了一次全尺寸分配。在移动端，这常常是能拿到的最大单项收益，而且不花任何算术代价。
+
+== 利用 16 位精度
+
+大多数现代移动 GPU 执行 **FP16** 的速度是 FP32 的两倍，而且关键在于搬运的字节数减半。对于能容忍精度降低的工作负载——图像处理、许多 ML 推理内核、音频——把存储和算术切换到 16 位，往往是不花什么代价的 2 倍提升。
+
+由于本教程以 Slang 为主，这里给出 Slang 版的半精度内核：其中的 `half` 直接映射到 16 位浮点数，编译器会替你发出 16 位 SPIR-V 能力：
+
+[source,slang]
+----
+RWStructuredBuffer<half> values;
+
+[numthreads(64, 1, 1)]
+void scale(uint3 id : SV_DispatchThreadID)
+{
+    // Half-precision math: half the bytes moved, less power, often 2x throughput.
+    values[id.x] = values[id.x] * half(1.5);
+}
+----
+
+等价的 GLSL 把所需扩展显式写了出来，这在阅读厂商示例时很有用：
+
+[source,glsl]
+----
+#extension GL_EXT_shader_16bit_storage    : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(set = 0, binding = 0) buffer Data { float16_t values[]; };
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    values[i] = values[i] * float16_t(1.5);
+}
+----
+
+无论用哪种，你都必须创建设备时启用 `VkPhysicalDeviceShaderFloat16Int8Features::shaderFloat16` 以及对应的 16 位存储特性（参见上一节的防御式特性启用代码），并且*始终*验证数值在你的用例中仍然可接受。一个有用的技巧是：累加留在 FP32，而把输入和输出存成 FP16——这就是协作矩阵一章的混合精度思路，只不过用在带宽上而不是张量单元上。
+
+== 把工作组尺寸调到合适
+
+在桌面上养成的「直接用 256 或 1024 个调用」的习惯，在移动端是有害的：
+
+*   尊重上一节查询到的 `maxComputeWorkGroupInvocations`（可能是 128）和 `maxComputeSharedMemorySize`（可能是 16 KB）。
+*   优先选择设备报告的 `subgroupSize` 的整数倍作为工作组大小，以免浪费执行通道。
+*   更小的工作组可以提升狭窄移动核心上的**占用率**，并减轻共享内存压力。要做性能分析，不要臆断。
+
+== 管理热量与频率
+
+手机无法持续维持 GPU 的峰值频率。在几秒重负载之后，调频器会降低频率以留在热包络内，你测到的吞吐量随之下降。实用策略：
+
+*   **测持续，不测峰值。** 用几十秒而不是单次派发来跑基准，才能看到降频后的稳态。
+*   **摊平，不要爆发。** 对后台或周期性的工作，以较低频率把计算分散到多帧，每焦耳能交付的总工作量往往比全速爆发再降频更多。
+*   **谨慎使用 `VK_EXT_global_priority`。** 提升队列优先级可能饿死系统其余部分，并让热量与用户体验的权衡更糟。
+
+== 在真实设备上做性能分析
+
+模拟器和桌面 GPU 在移动性能上会骗你。请在实际硬件上使用厂商工具：
+
+*   link:https://developer.arm.com/Tools%20and%20Software/Arm%20Performance%20Studio[**Arm Performance Studio**（原 Streamline）] (https://developer.arm.com/Tools%20and%20Software/Arm%20Performance%20Studio) —— Mali 与 Immortalis GPU 的主要性能分析套件。其中包含用于时间线级 CPU/GPU 计数器的 **Arm Streamline**、用于逐着色器估算寄存器与吞吐量的 **Mali Offline Compiler**，以及 **Mali Texture Compression Tool**。免费下载，宿主平台支持 Windows/Linux/macOS。
+
+*   link:https://developer.qualcomm.com/software/snapdragon-profiler[**Qualcomm Snapdragon Profiler**] (https://developer.qualcomm.com/software/snapdragon-profiler) —— 在 Adreno 设备上捕获 GPU 计数器、内存带宽以及 Vulkan 命令缓冲区轨迹。它还捆绑了用于更底层着色器分析的 **Adreno GPU Profiler**。需要高通开发者账号（免费）。
+
+*   link:https://developer.imaginationtech.com/pvrtune/[**Imagination PVRTune**] (https://developer.imaginationtech.com/pvrtune/) —— 面向 PowerVR/BXT/IMG 芯片的 GPU 计数器捕获与时间线查看器。可与 **PVRShaderEditor**（离线着色器分析）和 **PowerVR SDK** 工具配合使用。免费下载。
+
+*   link:https://gpuinspector.dev/[**Android GPU Inspector (AGI)**] (https://gpuinspector.dev/) —— Google 的开源、厂商中立的性能分析器。它捕获完整的**帧追踪**，包括所有 Vulkan API 调用、资源生命周期，以及在受支持的设备上的硬件性能计数器。当你不确定该先抓哪个厂商的工具时，它是最好的起点；它适用于 Mali、Adreno 以及其他暴露 `VK_LAYER_performance_counters` 层的驱动。
+
+=== 读懂分析器告诉你的信息
+
+它们都会给出这里最关键的指标——外部内存**读/写字节数**——以及 ALU 利用率和占用率。一个好习惯是：先算出你内核的*理论*最小流量（输入字节 + 输出字节），再与性能分析器报告的实测外部读写字节数对比。如果你搬运的量是理论最小值的 3–4 倍，说明有冗余的 DRAM 流量，可以用融合或缓存消除掉。这是性能审计一章 Roofline 分析在移动端的等价物，只是坐标轴上是*字节与焦耳*而不是 FLOPS。
+
+对于基于 `clvk` 的工作负载，AGI 的 Vulkan 层捕获特别有用：因为 `clvk` 会把你的 OpenCL 调用翻译成 Vulkan 命令，AGI 能准确显示生成了哪些 `vkCmdDispatch` 调用，以及屏障和内存流量落在哪里。
+
+== 小结
+
+优化移动端计算，首要看*带宽与瓦特*，其次才是算术。融合通道，用共享内存和子组把数据留在片上，在正确性允许的地方降到 FP16，按设备的真实限制把工作组调到合适大小，并在硬件上用厂商分析器验证持续性能。养成这些习惯后，你为桌面写的同一批内核，就能成为电池供电设备上的良好公民。
+
+xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc[上一节：Android 上的计算] | xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc[下一节：超越移动：嵌入式与无头计算]

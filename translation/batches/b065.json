@@ -1,0 +1,24 @@
+{
+  "id": "b065",
+  "words": 5285,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc",
+      "words": 1328,
+      "title": "Tooling: Debugging with VK_KHR_debug_utils and RenderDoc"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc",
+      "words": 2451,
+      "title": "Tooling: Crash Handling and GPU Crash Dumps"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Tooling/05_extensions.adoc",
+      "target": "zh/Building_a_Simple_Engine/Tooling/05_extensions.adoc",
+      "words": 1506,
+      "title": "Tooling: Vulkan Extensions for Robustness"
+    }
+  ]
+}

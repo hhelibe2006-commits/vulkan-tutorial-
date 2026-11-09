@@ -1,0 +1,183 @@
+:pp: {plus}{plus}
+= 蒙皮热力图：可视化权重绘制
+
+== 热力图能揭示什么
+
+骨骼蒙皮过程完全由存储在 `JOINTS_0` 与 `WEIGHTS_0` 顶点属性中的逐顶点关节索引和权重值驱动。这些数据在正常渲染中不可见——它们产生的形变看得见，权重本身却看不见。一旦蒙皮出问题——肩膀处几何体被捏出褶皱、某个顶点死死黏在错误的骨骼上、某个区域在动画中拉伸得离谱——原因几乎总是关节权重不对。但如果没有可视化权重的手段，诊断这类问题就极其困难。
+
+蒙皮热力图是一种渲染模式：其中每个像素的颜色不由材质的 PBR 属性决定，而由对应顶点的蒙皮权重数据决定。最有用的热力图是**主骨骼热力图**：按哪个关节对顶点影响最大来为每个顶点着色。它能立刻显示出每根骨骼的「领地」——每根骨骼主要控制网格的哪一块区域——并让关节边界错误变得一目了然。一个本该染成骨骼 B 颜色、却染成骨骼 A 颜色的顶点，就意味着权重绘制有误，会导致该顶点跟随错误的骨骼。
+
+第二种有用的热力图是**权重分布热力图**：按影响该顶点的关节数量以及权重分布的均匀程度，用一个热力色阶（蓝 → 绿 → 红）为每个顶点着色。完全受单一骨骼影响的顶点显示为纯蓝色（或其他表示行为简单、可预测的「冷」色）。四个影响几乎相等的顶点显示为红色（复杂，容易出瑕疵）。这种热力图能帮你找出权重绘制变得杂乱、或复杂到并非出自美术意图的区域。
+
+== 实现热力图渲染模式
+
+热力图的实现方式，是把标准的 PBR 片元着色器替换成一个诊断着色器，后者从顶点数据中读取关节索引与权重，再把它们转换成颜色。由于蒙皮数据本来就是顶点格式的一部分，不需要额外的缓冲区——我们只要把相关属性经顶点管线传到片元阶段，在那里计算颜色即可：
+
+[source,slang]
+----
+// Camera data — declared as a push constant for simplicity.
+struct CameraPushConstants { float4x4 view_proj; };
+[[vk::push_constant]] CameraPushConstants camera;
+
+// Vertex data without embedded joint indices/weights —
+// joint data is stored in separate parallel buffers (same pattern as skinning.slang).
+struct Vertex {
+    float3 position;
+    float3 normal;
+    float4 tangent;
+    float2 texcoord;
+};
+
+// Five bindings: vertex geometry, joint matrices, joint indices, joint weights, joint colors.
+[[vk::binding(0, 0)]] StructuredBuffer<Vertex>    vertices;
+[[vk::binding(1, 0)]] StructuredBuffer<float4x4>  joint_matrices;  // For world position
+[[vk::binding(2, 0)]] StructuredBuffer<uint4>     joint_indices;
+[[vk::binding(3, 0)]] StructuredBuffer<float4>    joint_weights;
+[[vk::binding(4, 0)]] StructuredBuffer<float4>    joint_colors;   // One RGBA per joint
+
+// Vertex shader passes joint data to the fragment stage for coloring.
+struct VertexOut {
+    float4 position : SV_Position;
+    float4 weights  : TEXCOORD0;
+    uint4  joints   : TEXCOORD1;
+};
+
+[shader("vertex")]
+VertexOut vertex_main(uint vertex_id : SV_VertexID)
+{
+    Vertex v   = vertices[vertex_id];
+    uint4 j_idx = joint_indices[vertex_id];
+    float4 j_w  = joint_weights[vertex_id];
+
+    // Apply skinning to get world position (same LBS as skinning.slang)
+    float4x4 skin_matrix =
+        j_w.x * joint_matrices[j_idx.x] +
+        j_w.y * joint_matrices[j_idx.y] +
+        j_w.z * joint_matrices[j_idx.z] +
+        j_w.w * joint_matrices[j_idx.w];
+
+    VertexOut out;
+    out.position = mul(camera.view_proj, mul(skin_matrix, float4(v.position, 1.0)));
+    out.weights  = j_w;
+    out.joints   = j_idx;
+    return out;
+}
+
+// Colors each pixel by the dominant (highest-weight) joint using a per-joint color table.
+[shader("fragment")]
+float4 fragment_dominant_bone(VertexOut input) : SV_Target
+{
+    uint  dominant = 0;
+    float max_w    = input.weights.x;
+
+    if (input.weights.y > max_w) { max_w = input.weights.y; dominant = 1; }
+    if (input.weights.z > max_w) { max_w = input.weights.z; dominant = 2; }
+    if (input.weights.w > max_w) { max_w = input.weights.w; dominant = 3; }
+
+    uint actual_joint = input.joints[dominant];
+    return joint_colors[actual_joint];
+}
+----
+
+`jointColors` 缓冲区为骨架中的每个关节保存一种 RGBA 颜色。这些颜色应在视觉上彼此区分，使相邻骨骼的领地能够立即分辨。一个简单的做法是让颜色沿 HSV 色环均匀分布：
+
+[source,cpp]
+----
+std::vector<glm::vec4> generate_joint_colors(uint32_t joint_count)
+{
+    std::vector<glm::vec4> colors(joint_count);
+    for (uint32_t i = 0; i < joint_count; ++i) {
+        float hue = static_cast<float>(i) / joint_count; // 0..1
+        // Convert HSV (hue, 1, 1) to RGB
+        float h = hue * 6.0f;
+        float x = 1.0f - std::abs(std::fmod(h, 2.0f) - 1.0f);
+        glm::vec3 rgb;
+        if      (h < 1) rgb = {1, x, 0};
+        else if (h < 2) rgb = {x, 1, 0};
+        else if (h < 3) rgb = {0, 1, x};
+        else if (h < 4) rgb = {0, x, 1};
+        else if (h < 5) rgb = {x, 0, 1};
+        else            rgb = {1, 0, x};
+        colors[i] = glm::vec4(rgb, 1.0f);
+    }
+    return colors;
+}
+----
+
+== 解读热力图
+
+观察一个权重绘制良好的角色的主骨骼热力图，你应当看到界限分明的色块，并在边界处有平滑的渐变。大腿应完全是同一种颜色，小腿应是另一种颜色。两者在膝盖处的过渡应是一条狭窄的带状区域，皮肤在那里于两根骨骼之间混合。
+
+**要查找的问题：**
+
+如果某一种颜色的小块出现在另一种颜色的领地中间——比如红色区域里冒出一个黄色顶点——那就是游离的顶点组归属：某个顶点被误指派给了错误的骨骼。动画过程中该顶点会跟随错误的骨骼，产生可见几何位移的「像素点」。在 Blender 中，你可以对受影响的骨骼使用权重绘制模式来定位这个顶点。
+
+如果两根骨骼之间的颜色过渡非常突兀——颜色骤然改变、没有混合区——这说明权重绘制在两根骨骼之间完全没有平滑衰减。网格会在关节处出现尖锐折痕，而不是平滑形变。请在过渡区加入权重梯度。
+
+如果整个网格只有一种颜色，那要么角色非常简单（只有一根骨骼影响所有顶点，这很罕见），要么权重数据没有正确导出（所有顶点都默认归到了第一根骨骼）。
+
+== 权重分布热力图
+
+对于权重分布热力图，片元着色器为每个顶点计算一个「复杂度分数」——即有多少个关节对它产生明显影响——再映射到热力色阶：
+
+[source,slang]
+----
+[shader("fragment")]
+float4 fragment_weight_distribution(VertexOut input) : SV_Target
+{
+    // Count how many joints have non-trivial influence on this vertex.
+    // "Non-trivial" means weight > 0.05 (5% or more).
+    float complexity = 0.0f;
+    float4 w = input.weights;
+    if (w.x > 0.05f) complexity += 1.0f;
+    if (w.y > 0.05f) complexity += 1.0f;
+    if (w.z > 0.05f) complexity += 1.0f;
+    if (w.w > 0.05f) complexity += 1.0f;
+
+    // Normalize to 0..1 range (0 = single bone, 1 = four bones)
+    float t = (complexity - 1.0f) / 3.0f;
+
+    // Map to a blue (simple) -> green (moderate) -> red (complex) heat scale
+    float3 cool_color = float3(0, 0, 1);
+    float3 warm_color = float3(1, 0, 0);
+    float3 mid_color  = float3(0, 1, 0);
+
+    float3 color;
+    if (t < 0.5f) color = lerp(cool_color, mid_color, t * 2.0f);
+    else          color = lerp(mid_color, warm_color, (t - 0.5f) * 2.0f);
+
+    return float4(color, 1.0f);
+}
+----
+
+权重绘制良好的角色，除主要关节（肩、髋、膝、肘）之外处处都应显示为蓝色和绿色区域，而那些关节处正是你期望、也确实需要多种骨骼影响的地方。如果网格的大片区域是红色，说明这些区域的权重绘制复杂得没有必要，清理一下或许有益。
+
+== 运行时切换到热力图模式
+
+要在运行时在常规 PBR 管线与热力图管线之间切换，你有两种选择：
+
+1. **多管线**：用同一个 `VkPipelineLayout` 创建两个独立的 `VkPipeline` 对象。一条管线使用 PBR 片元着色器，另一条使用热力图片元着色器。渲染时直接绑定所需的那条管线即可。
+2. **特化常量**：用 Vulkan 特化常量在单个片元着色器内部切换热力图逻辑。
+
+如果选择多管线方案（推荐，因为更清晰），你必须确保在热力图模式下 `jointColors` 缓冲区已经绑定：
+
+[source,cpp]
+----
+// Bind the appropriate pipeline
+if (render_mode == RenderMode::HEATMAP) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, heatmap_pipeline);
+
+    // Bind the joint colors buffer (assumes it's in a separate descriptor set)
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+                           2, 1, &joint_colors_descriptor_set, 0, nullptr);
+} else {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pbr_pipeline);
+}
+
+// Issue the draw call as usual
+vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
+----
+
+这样你就能在引擎里实时审计资产，这比依赖 3D 工具中的静态分析有效得多。
+
+xref:Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc[上一章：调试绘制器] | xref:Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc[下一章：RenderDoc 分析]

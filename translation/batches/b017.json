@@ -1,0 +1,18 @@
+{
+  "id": "b017",
+  "words": 4212,
+  "files": [
+    {
+      "source": "en/15_GLTF_KTX2_Migration.adoc",
+      "target": "zh/15_GLTF_KTX2_Migration.adoc",
+      "words": 2796,
+      "title": "Migrating to Modern Asset Formats: glTF and KTX2"
+    },
+    {
+      "source": "en/16_Multiple_Objects.adoc",
+      "target": "zh/16_Multiple_Objects.adoc",
+      "words": 1416,
+      "title": "Rendering Multiple Objects"
+    }
+  ]
+}

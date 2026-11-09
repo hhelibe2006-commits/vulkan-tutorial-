@@ -1,0 +1,35 @@
+:pp: {plus}{plus}
+= 移动与嵌入式计算：简介
+
+== 概览
+
+本系列到目前为止，我们大体上假设的是一个"大机器"环境：一块独立的桌面或工作站 GPU，配有数 GB 专用 VRAM、宽阔的内存总线和充裕的功耗预算。但世界上绝大多数支持 Vulkan 的设备根本不是桌面 GPU——而是手机、平板、车载仪表、机顶盒、无人机和单板计算机里的**移动**与**嵌入式**处理器。
+
+Vulkan 从一开始就被设计为跨平台 API，其中自然也包括这些在功耗和面积上受限的设备。事实上，如今安装量最大的 Vulkan 驱动群体运行在 **Android** 手机上。如果你想让自己的计算工作负载触达数十亿台设备，就不能把移动端当成事后才考虑的事。
+
+本章介绍移动与嵌入式平台上的计算开发，从开发环境搭建一直讲到优化与可移植性。内容涵盖 Android Studio 与 NDK 配置，如何把 Vulkan 上的 OpenCL 工具链（`clvk`/`clspv`）集成进 Android 与嵌入式 Linux 项目，以及如何配置 CLion 对 Raspberry Pi、NVIDIA Jetson 这类设备做 SSH 远程开发。至于更高层的 Android 打包，主教程的 xref:14_Android.adoc[Android] 一章仍是首要参考；这里我们聚焦*计算特有*的问题，以及当底层硬件从桌面 GPU 换成基于瓦片的移动 GPU 时，哪些地方会发生变化。
+
+== 为什么移动计算重要
+
+移动 GPU 早已不是玩具。来自 Arm（Mali、Immortalis）、Qualcomm（Adreno）、Imagination（PowerVR）以及 Apple（iOS 上经由 MoltenVK）的现代移动芯片支持：
+
+*   **计算着色器**，具备完整的工作组与共享内存语义。
+*   **子组操作**（第 4 章讲的 "Wave" 内建函数），通常具有固定或可查询的子组大小。
+*   **16 位存储与算术**（FP16/Int16），在这类设备上往往比 32 位*更快、更省电*。
+*   **缓冲区设备地址**、**描述符索引**，以及越来越多运行 `clvk` 这类分层生态所需的特性。
+
+这让移动端成为设备端机器学习推理、计算摄影、实时视频处理和物理模拟的绝佳目标——这些正是我们一路构建的工作负载。
+
+== 为什么嵌入式计算重要
+
+除了口袋里的手机，Vulkan 计算还越来越多地运行在长尾的**嵌入式**系统上：车载信息娱乐与驾驶辅助单元、工业视觉系统、机器人控制器、数字标牌，以及 Raspberry Pi（经由 `v3dv` 驱动）或 NVIDIA Jetson 模块这类单板计算机。这些设备与移动端共享许多约束——功耗有限、内存共享、散热受限——但也有自己的额外要求：实时性、安全认证、无头运行，以及异常漫长的产品生命周期。
+
+== 本章路线图
+
+1.  **Android 上的计算**：配置 Android Studio、NDK 和 Gradle 着色器编译；如何派发并读取计算结果；在 Android 上用 `clvk` 获得 OpenCL 可移植性；以及基于瓦片的移动 GPU 的架构特性。
+2.  **针对移动 GPU 的优化**：功耗、带宽与精度策略——减少 VRAM 流量、利用 FP16、让设备保持凉爽——并附上厂商性能分析工具的链接。
+3.  **超越移动：嵌入式与无头 Vulkan 计算**：CLion、Raspberry Pi 与 NVIDIA Jetson 的开发环境搭建；在嵌入式 Linux 上运行 `clvk`；无显示环境下的无头 Vulkan 计算；以及一份完整的工具参考表。
+
+读完本章你会明白，"高级计算"并不是桌面的专属领域——同样的并行思维依然适用，只是*约束*更紧，而这正是精心工程最能体现价值的地方。
+
+xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc[上一篇：AI 辅助的优化与改进] | xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc[下一篇：Android 上的计算]

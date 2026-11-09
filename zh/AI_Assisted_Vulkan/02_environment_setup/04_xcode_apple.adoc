@@ -1,0 +1,87 @@
+:pp: {plus}{plus}
+
+= Xcode 与 Apple Silicon
+
+== 简介
+
+Apple 平台上的 Vulkan 总是要经过一层转译，因为 Apple 并不原生支持 Vulkan。**MoltenVK** 和 **KosmicKrisp** 是两种选择，它们的取舍各有不同。**KosmicKrisp** 是基于 Mesa、专为 Apple Silicon 构建的实现，使用 Metal 4 支持现代 Vulkan（最高 1.4）；它目前面向 macOS 26+，并正在扩展到 iOS（A14+）。**MoltenVK** 是更早、兼容范围更广的桥接层，从 Intel Mac 到最新的 iPhone 和 iPad 都支持，对于需要覆盖大量设备的生产应用来说通常是更稳妥的选择。
+
+AI 助手在这里的用处，主要是管理两者之间的差异，并在需要切换时协助迁移工作。
+
+== AI 真正有用的地方：迁移与打包
+
+Apple 上 Vulkan 开发中最乏味的部分，通常是为了同时支持两种桥接层所需的按条件编译和独立构建目标，而不是图形逻辑本身。这里是适合委托的地方：把约束讲清楚（例如「iOS 目标需要 MoltenVK 以保证兼容性，但为 A14+ 保留一条实验性的 KosmicKrisp 路径」），让助手起草构建配置和表面创建代码（`vkCreateMacOSSurfaceMVK` 与 `vkCreateIOSSurfaceMVK`，或它们在 KosmicKrisp 中的等价物），然后再审阅——这正是那种重复、规格明确、容易检查却很容易手工写错的重构工作。
+
+== Xcode 26 中的原生与代理式工具
+
+Xcode 26 包含 **Predictive Code Completion** 和 **Swift Assist**，这些端侧模型面向 Swift 和 Apple 专属代码。它们对 Vulkan 项目中 Swift/SwiftUI 那一侧很有用——例如重构那些使用 `VK_EXT_scalar_block_layout` 的计算着色器数据结构，以便在 M4 Max 上获得更好的缓存行为。
+
+对于更大、跨文件的工作——跨平台重构、编译修复循环——像 **Goose** 这样的外部代理仍然值得与 Xcode 内置工具并用，而不是用它们取代内置工具。Xcode 负责内层循环（Swift 补全、它的 Instruments 性能分析器）；外部代理负责外层循环。
+
+== 配置工作流
+
+=== 第 1 步：用 Swift Assist 做 Swift/C{pp} 桥接
+
+[source,swift]
+----
+// Example SwiftUI wrapper generated with Swift Assist
+import SwiftUI
+import MetalKit
+
+struct MetalView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        let layer = CAMetalLayer()
+        view.layer.addSublayer(layer)
+        // AI will add native scaling and MoltenVK handle here
+        return view
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+----
+
+=== 第 2 步：用 Goose 做跨平台重构
+
+[source,text]
+----
+# Example agent instruction for a MoltenVK/KosmicKrisp migration
+Goose, refactor our 'surface_creation.cpp' to support
+both MoltenVK and KosmicKrisp. Ensure we use the
+'vkCreateIOSSurfaceMVK' call for universal iOS support,
+but enable a high-performance path for macOS 26+
+using the new KosmicKrisp Metal 4 features.
+----
+
+=== 第 3 步：通过 Ollama 做本地推理
+
+Apple Silicon 的统一内存意味着本地模型能使用的内存远多于在典型独立显卡上的情形。像 **Qwen 3-Coder** 这样的 30B 模型，可以在拥有 48GB 以上可用内存的 M 系列 Max/Ultra 芯片上本地运行。
+
+[source,bash]
+----
+# Run the 30B model locally on Apple Silicon
+ollama run qwen3-coder:30b
+----
+
+=== 第 4 步：为入门硬件准备更小的模型
+
+在内存为 16GB 或 24GB 的基础款 M3 或 M4 上，30B 模型很可能太大了。**Mistral-Nemo (12B)** 或 **Llama 4 (17B)** 能在 Apple 的 Neural Engine 上高效运行，并为你的 Vulkan 帧缓冲区和纹理流式加载留出更多内存。
+
+== 为什么统一内存对本地推理很重要
+
+在典型 PC 上，本地模型受限于 GPU 的显存大小。而在 Mac 上，模型与操作系统共享同一个内存池，所以一台 64GB 内存的机器可以让本地模型使用其中的大部分——你可以在本地运行 30B 模型，同时仍为大型纹理数组留出余量，而这在 12–16GB 的独立显卡上要困难得多。Apple 的 **MLX** 框架让模型能专门在 Neural Engine 上高效运行，这一点同样有帮助。
+
+== 取舍
+
+**管理 Xcode 原生 AI 与外部代理之间的交接**是主要的摩擦点——没有哪个单一工具能同时覆盖 Swift 一侧和繁重的 Vulkan 重构。常见的变通做法是使用基于终端的代理（Aider），或在 Xcode 旁边运行 Goose 触发器。
+
+**它有用的地方：着色器转译错误。** 当 MoltenVK 或 KosmicKrisp 无法把 SPIR-V 转成 Metal 时，产生的错误单看往往难以解析。把日志喂给一个同时了解 Vulkan 规范和 MSL 的模型，是缩小范围、定位是哪条 SPIR-V 指令出错以及如何调整 GLSL/Slang 源码的合理办法。KosmicKrisp 用户还可以设置 `MESA_KK_DEBUG=msl`，直接查看生成的 MSL，与 AI 的解释对照。
+
+=== 继续之前
+
+本教程余下部分假设你的 Apple 环境具备：Xcode 26 原生的 Swift/C{pp} 桥接补全、一个用于跨文件重构的代理（如 Goose，由 Claude 4.6 这类云端模型支撑），以及通过 Ollama/MLX 运行的本地模型以快速迭代。这些都就位后，请继续阅读 xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[Goose：自主代理与本地智能]，完成代理与本地推理的搭建。
+
+== 小结
+
+Apple 上的 Vulkan 开发意味着要在两层之间工作——Swift/Metal 与 Vulkan/C{pp}——而 AI 助手最有用的地方，是让 MoltenVK 与 KosmicKrisp 之间的样板代码和转译层差异不再吞噬你的时间，无论你的目标是广泛兼容，还是 KosmicKrisp 较新的特性集。
+
+xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[上一篇：环境搭建] | xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[下一篇：Goose：自主代理与本地智能]

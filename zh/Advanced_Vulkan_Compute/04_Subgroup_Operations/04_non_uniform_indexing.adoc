@@ -1,0 +1,73 @@
+:pp: {plus}{plus}
+
+= 非一致索引：子组中的资源数组
+
+== 描述符的限制
+
+在传统 Vulkan 中，**描述符集**（纹理或缓冲区等资源的集合）在一次绘制调用或派发中是“一致”的。这意味着工作组中的每个线程都必须从给定的描述符集索引访问同一个资源。
+
+但如果你有一个纹理数组，想让线程 A 访问索引 5 的纹理，而同一子组中的线程 B 想访问索引 12 呢？在早期的 Vulkan 中，这会导致未定义行为甚至设备崩溃。
+
+**非一致索引**正是为此而生。
+
+== 非一致索引（描述符索引）
+
+Vulkan 的**描述符索引**（自 1.2 起成为标准，并在 1.4 中进一步完善）允许你用变量作为描述符数组的索引。不过，由于子组中的线程以锁步方式执行，硬件需要知道某个索引何时可能在子组内“不一致”（non-uniform）。
+
+在 Slang（继承自 HLSL）中，我们用 `NonUniformResourceIndex` 函数告诉编译器：“这个索引对每个线程都可能不同，所以不要把它当作一致值来优化。”
+
+[source,slang]
+----
+// An array of textures in a descriptor set
+Texture2D textures[];
+
+// Each thread picks its own texture based on a material ID
+uint materialID = getMaterialID();
+
+// We must explicitly mark the index as non-uniform
+float4 color = textures[NonUniformResourceIndex(materialID)].Sample(sampler, uv);
+----
+
+=== GLSL: nonuniformEXT
+
+在 GLSL 中，这需要 `GL_EXT_nonuniform_qualifier` 扩展。这里不用函数调用，而是一个特殊关键字：`nonuniformEXT`。
+
+[source,glsl]
+----
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(binding = 0) uniform sampler2D textures[];
+
+// The GLSL equivalent of NonUniformResourceIndex
+uint materialID = getMaterialID();
+vec4 color = texture(textures[nonuniformEXT(materialID)], uv);
+----
+
+如果不用 `nonuniformEXT`，编译器可能认为 `materialID` 对子组中所有线程都相同，从而优化这次访问，结果就会出错（所有线程拿到同一个纹理值，很可能来自第一个线程的索引）。
+
+== 为什么这属于子组特性？
+
+你可能会奇怪，为什么这放在子组章节而不是内存章节。原因在于硬件如何执行这条指令。
+
+当子组遇到非一致索引时，GPU 必须把这次访问**标量化**（对每个唯一索引串行执行访问）。它实际上遍历了子组中出现的所有唯一索引：
+
+1.  找出所有想要纹理 5 的线程。
+2.  为这些线程执行加载。
+3.  找出所有想要纹理 12 的线程。
+4.  为这些线程执行加载。
+
+这个过程由硬件处理，但它依赖的正是上一节讨论的子组划分逻辑。明白这种“循环”发生在子组层面，你就能更好地预判发散资源访问带来的性能影响。
+
+== 性能最佳实践
+
+*   **尽量减少发散**：如果子组中的 32 个线程访问同一个纹理，硬件只需做一次加载。如果 32 个线程访问*不同*的纹理，加载操作可能要慢上最多 32 倍。
+*   **子组排序**：如果工作负载很大，可以考虑对它排序，让同一子组中的线程更可能访问相同或相邻的资源。
+
+
+== 结语
+
+子组操作代表了 GPU 编程的一次范式转变。从“工作组级同步”转向“感知波前的通信”，你就能释放现代 GPU 架构的全部潜力。
+
+下一章，我们会退后一步，看看这些 Vulkan 计算概念如何与更广阔的生态互动，先从 **Vulkan 上的 OpenCL** 开始。
+
+xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc[上一节：子组划分：Ballot 与 Match] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc[下一节：异构生态：Vulkan 上的 OpenCL]

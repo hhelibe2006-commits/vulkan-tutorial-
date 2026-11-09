@@ -1,0 +1,51 @@
+= VK_EXT_robustness2——为真实引擎提供更安全的默认值
+
+Vulkan 让你跑得飞快、贴近硬件。这也意味着一个错误的索引或越界访问可能产生未定义结果。`VK_EXT_robustness2` 把这一点收紧，让错误可预期地失败，而不是破坏内存或产生闪烁。
+
+== 它带来什么
+
+* 健壮的缓冲区访问 2——越界的缓冲区读取返回零；写入被丢弃。
+* 健壮的图像访问 2——越界的图像坐标按规范钳制或返回零。
+* 空描述符——描述符可以留成「空」，着色器看到的是已定义的零值，而不是未定义行为（UB）。
+
+这些行为让引擎更宽容，无论是在学生反复试验时，还是在纹理流式加载时。
+
+== 我们在这里如何使用它
+
+* 设备创建时，如果支持，我们启用该扩展和特性结构体。
+* 着色器按合法范围来写，但如果某个流式纹理或可选绑定暂时缺失，采样空描述符是已定义且安全的。
+* Forward+／反射路径避免在帧中途编辑描述符；于是 robustness2 充当额外的安全网。
+
+== 何时启用
+
+对于教学示例和工具，只要设备支持就始终启用。对于要发行的项目，你仍然可以保持开启；在现代驱动上性能开销通常可以忽略，而这份安全性值得。
+
+== 代码里该看哪里
+
+* 设备扩展／特性启用：
+** `renderer_core.cpp`
+** `vulkan_device.cpp`
+* Ray Query 着色器中的边界检查与防御式索引：
+** `shaders/ray_query.slang`（针对 `geometryInfoCount` / `materialCount` 的边界检查）
+* 安全的描述符更新模式（这样就不必依赖 robustness 来保证正确性）：
+** `renderer_rendering.cpp`（逐帧安全点）
+** `Descriptor_Indexing_UpdateAfterBind.adoc`
+
+== 要点
+
+* robustness 不能替代良好的同步与生命周期规则；它只是补充它们。
+* 空描述符和「安全的零值」读取让流式加载和特性开关不那么脆弱。
+
+== 后续工作想法
+
+如果你想对 robustness 做压力测试（又不把引擎变成调试工具）：
+
+* 增加一个仅开发期的「故障注入」开关，在受控的着色器路径中故意喂入越界索引。
+* 增加一个小型运行时报告，打印当前设备上是否启用了 `VK_EXT_robustness2`。
+* 增加一个单元测试风格的 GPU 测试场景，覆盖缺失纹理／缺失缓冲区的情况，同时保持 VVL 干净。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc[光线查询渲染]

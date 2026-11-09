@@ -1,0 +1,34 @@
+:pp: {plus}{plus}
+
+= 高级 MCP 工具与自动化
+
+== 简介：超越通用辅助
+
+到目前为止，我们把 **模型上下文协议（MCP）** 主要当作只读桥梁来用，让 AI 查看我们的文档和源码。MCP 能做的还不止这些：你可以给 AI 提供工具，让它直接在 Vulkan 生态里动手操作，而不只是阅读。
+
+本节讲如何构建专门的 MCP 服务器，让你的 AI 助手能查询 Vulkan Registry、检查硬件限制，并协助管理引擎的性能，而不是只依赖它在已打开文件里读到的内容。
+
+== 核心概念：MCP 服务器即插件
+
+MCP 服务器的工作方式类似 AI 助手的插件。AI 自身无法查询数据库，也无法运行性能分析器，而 MCP 服务器为它提供了一个定义明确、可调用的接口来做这些事。
+
+1.  **注册表工具：** 让 AI 查询实时的 `vk.xml` 文件。
+2.  **GPU 信息工具：** 让 AI 从 `gpuinfo.org` 这类数据库查询硬件限制（例如 `maxDescriptorSetSampledImages`）。
+3.  **性能分析工具：** 让 AI 读取你引擎的计时日志，标出可能的瓶颈。
+
+把这些工具开放给自主代理（比如 **Goose**），它就能自己完成多步查询——把规范与你的代码交叉比对，无需你手工来回复制数据。它的输出仍然值得核对：这些工具减少的是手工查阅，而不是免去验证结果。
+
+== 为什么这对 Vulkan 有用
+
+Vulkan 开发中有大量查资料的工作：规范（XML）、硬件限制（JSON 数据库）、性能数据（计时日志）。只要给 AI 模型直接访问这些结构化数据的通道，它处理起来就相当不错，而不需要你手工粘贴。
+
+没有 MCP 时，把数据复制进聊天窗口的人是你。接上注册表或硬件限制工具后，你就可以问得更具体——“Adreno 750 上的最大描述符数量是多少，我们的预算放得下吗？”——然后让代理自己去查。
+
+== 本节内容
+
+1.  **xref:AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc[Vulkan Registry 与 GPUInfo MCP]：** 让你的助手实时访问规范与硬件限制。
+2.  **xref:AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc[代理式自动化与性能审计]：** 用代理协助分析 CI/CD 失败，并查找命令缓冲区录制逻辑中的低效之处。
+
+读完本节，你会拥有一小组自定义工具，让你的 AI 助手针对你的具体硬件目标和构建流程更有用，而不只是回答通用的 Vulkan 问题。
+
+下一节：xref:AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc[Vulkan Registry 与 GPUInfo MCP]

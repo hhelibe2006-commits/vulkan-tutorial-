@@ -1,0 +1,290 @@
+= 验证 ML 正确性：追寻数值真相
+:pp: ++
+:stem: latexmath
+
+你已经修掉了 Vulkan 特有的 bug——验证层不再出声，RenderDoc 显示描述符集绑定正确，命令缓冲区提交也毫无障碍。可你的图像分类器仍然把一张「金毛寻回犬」的照片预测成「烤面包机」。
+
+这是 ML 开发中最令人沮丧的阶段：**无声数值失败**。你的实现是一个「正确」的 Vulkan 程序，却是一个「不正确」的数学模型。与崩溃不同，数值 bug 不会让世界停下来，它只会悄悄腐蚀世界。
+
+本章我们要学习如何证明你的数学是对的。我们会在 PyTorch 的高级世界与 Vulkan SPIR-V 内核的底层世界之间架起桥梁，用数学验证找出实现与现实发生分歧的确切位置。
+
+== 真相的哲学：为什么「大体正确」就是错误
+
+在图形学里，如果某个像素的蓝色调得稍微不对，没人会死。而在机器学习里，「稍微不对」可能是灾难性的。如果你在做医学影像工具或自主无人机，深层里 0.1% 的数值漂移就可能把分类从「肿瘤」翻成「健康」，或者从「障碍物」翻成「晴空」。
+
+ML 中的 bug 是**病理性的**。由于神经网络本质上是一长串矩阵乘法，链条起点处一个微小的误差就像从山上滚下的雪球，到最后就是一场垃圾数据的雪崩。
+
+要构建可靠的 AI，你必须采用科学家的心态：**你的实现是一个假说，黄金参考才是真相。**
+
+== 黄金参考策略
+
+调试神经网络的唯一方法，就是把它与一份**黄金参考**对比——一份你无条件信任的、已知正确的实现。通常这就是在 PyTorch、TensorFlow 或 ONNX Runtime（CPU）中运行的原始模型。
+
+策略简单而严谨：
+
+1.  **采集**：在一次前向传播中，从黄金参考中提取**每一层**的输出。
+2.  **对比**：用完全相同的输入运行你的 Vulkan 实现，并「转储」每个对应计算着色器的输出。
+3.  **二分查找**：找到结果开始分歧的*第一*层。bug 必定出在该层的着色器或其输入配置中。
+
+== 量化「正确性」：误差指标
+
+在对比之前，我们需要给「相同」下个数学定义。在浮点运算里，两个数很少完全相等。我们需要把误差量化出来。
+
+=== 1. 平均绝对误差（MAE）
+最简单的指标。它告诉你结果与真值之间的平均「距离」。
+
+[latexmath]
+++++
+MAE = \frac{1}{N} \sum_{i=1}^{N} |y_i - \hat{y}_i|
+++++
+
+*   **何时使用**：适合做总体健康检查。它容易解释（例如「平均每个像素偏差 0.001」）。
+*   **陷阱**：如果其余 100,000 个像素都完美，MAE 可能把一个「无穷大」或「NaN」掩盖掉。
+
+=== 2. 均方误差（MSE）
+因为对差值取了平方，MSE 对大误差的惩罚远重于小误差。
+
+[latexmath]
+++++
+MSE = \frac{1}{N} \sum_{i=1}^{N} (y_i - \hat{y}_i)^2
+++++
+
+*   **何时使用**：检测「离群值」。如果大部分像素都完美，只有一个像素错得离谱（即「萤火虫」），MSE 会暴涨，而 MAE 可能仍然很低。
+
+=== 3. 峰值信噪比（PSNR）
+当你的 ML 模型在重建图像时（比如光线追踪那一章里的降噪器），常用这个指标。
+
+[latexmath]
+++++
+PSNR = 10 \cdot \log_{10}\left(\frac{MAX^2}{MSE}\right)
+++++
+
+*   **何时使用**：越高越好。PSNR > 40dB 通常意味着图像在人眼中看起来完全一致。
+
+== 「Epsilon」问题（latexmath:[\epsilon]）
+
+为什么我们不能直接用 `if (a == b)`？
+
+浮点数是近似值。在 Vulkan 中，你的 GPU 可能使用与你的 Intel 或 AMD CPU 不同的「融合乘加」（FMA）指令。这些微小的舍入差异会经过数千次运算不断累积。
+
+=== 绝对容差与相对容差
+如果你检查绝对的 latexmath:[10^{-5}] 差值：
+
+*   对于数值 `0.1`，`0.00001` 的差异是合理的。
+*   对于数值 `1000.0`，由于浮点精度的运作方式，`0.00001` 的差异是**不可能**达到的（在 1000 附近，相邻浮点数之间的距离远大于 0.00001）。
+
+**ML 验证的黄金法则**：把**绝对**容差与**相对**容差结合起来用。
+
+[source,cpp]
+----
+bool isCorrect(float vulkan, float golden, float absTol = 1e-5f, float relTol = 1e-4f) {
+    float diff = std::abs(vulkan - golden);
+    // Pass if EITHER the absolute distance is tiny
+    // OR the relative distance is small (handles large numbers)
+    return (diff <= absTol) || (diff <= relTol * std::abs(golden));
+}
+----
+
+== 采集真相：一个 PyTorch 模板
+
+要验证你的模型，你需要一个充当「基准真值生成器」的脚本。我们用**前向钩子**来捕获中间数据，而不修改模型源码。
+
+[source,python]
+----
+import torch
+import torch.nn as nn
+import numpy as np
+import torchvision.models as models
+
+# 1. Load the model
+model = models.mobilenet_v2(pretrained=True)
+model.eval()
+
+# 2. Instrument the model (The "Hook" Pattern)
+activations = {}
+def get_activation(name):
+    def hook(model, input, output):
+        # DETACH is critical: prevents GPU memory leaks
+        # CPU converts to a format C++ can read easily
+        activations[name] = output.detach().cpu().numpy()
+    return hook
+
+# Register hooks for critical layers
+# You can find these names by running `print(model)`
+model.features[0].register_forward_hook(get_activation('layer_0_conv'))
+model.features[1].register_forward_hook(get_activation('layer_1_bottleneck'))
+model.classifier[1].register_forward_hook(get_activation('output_logits'))
+
+# 3. Create a Deterministic Input
+# Do NOT use random noise for verification! Use a fixed seed.
+torch.manual_seed(42)
+input_tensor = torch.randn(1, 3, 224, 224)
+
+# 4. Run Inference
+with torch.no_grad():
+    output = model(input_tensor)
+
+# 5. Save to Disk
+# NP.SAVE creates a binary file that is easy to map in C++
+np.save("ref_input.npy", input_tensor.numpy())
+for name, tensor in activations.items():
+    np.save(f"ref_{name}.npy", tensor)
+    print(f"Captured {name}: Shape {tensor.shape}")
+----
+
+== 读回 GPU 数据：同步握手
+
+把「Vulkan 真相」读回 CPU 是最容易藏 bug 的地方。如果同步做得不对，你读到的就不是结果——而是未初始化的垃圾，或者三帧之前的结果。
+
+=== 多阶段回读
+要在 Vulkan 中安全地读取缓冲区，你必须穿越三个可见性域：
+
+1.  **计算域**：GPU 正在向 `DEVICE_LOCAL` 内存写入。
+2.  **传输域**：GPU 正在从 `DEVICE_LOCAL` 拷贝到 `HOST_VISIBLE` 内存。
+3.  **主机域**：CPU 正在从映射内存中读取。
+
+[source,cpp]
+----
+void verifyBuffer(vk::Buffer deviceBuffer, vk::DeviceSize size, const std::string& name) {
+    // 1. BARRIER: Wait for compute writes to finish
+    vk::BufferMemoryBarrier computeBarrier{
+        .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+        .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+        .buffer = deviceBuffer,
+        .size = size
+    };
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                        vk::PipelineStageFlagBits::eTransfer,
+                        {}, {}, computeBarrier, {});
+
+    // 2. COPY: Move to a staging buffer
+    cmd.copyBuffer(deviceBuffer, stagingBuffer, vk::BufferCopy(0, 0, size));
+
+    // 3. BARRIER: Ensure copy finishes before CPU maps memory
+    vk::BufferMemoryBarrier hostBarrier{
+        .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+        .dstAccessMask = vk::AccessFlagBits::eHostRead,
+        .buffer = stagingBuffer,
+        .size = size
+    };
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                        vk::PipelineStageFlagBits::eHost,
+                        {}, {}, hostBarrier, {});
+
+    // 4. SYNC: Wait for the entire command buffer to finish
+    graphicsQueue.submit(cmdBuffer, fence);
+    device.waitForFences(fence, VK_TRUE, UINT64_MAX);
+
+    // 5. READ: Map and compare
+    float* gpuData = static_cast<float*>(stagingMemory.mapMemory(0, size));
+    compareWithRef(gpuData, name);
+    stagingMemory.unmapMemory();
+}
+----
+
+== 系统化排查：分歧搜索
+
+如果最终预测是错的，沿着这条路径走：
+
+=== 1. 检查预处理
+转储你的 `preprocessedInput` 缓冲区。它与 `ref_input.npy` 一致吗？
+
+*   **常见 bug**：R/B 通道互换。红色像素进了蓝色通道，会彻底改变高层特征。
+*   **常见 bug**：归一化范围。你是先减去均值再除以标准差，还是只缩放到 [0, 1]？
+
+=== 2. 检查权重与布局
+Vulkan 计算内核出于性能考虑常常偏好**权重主序**布局，而 ONNX/PyTorch 使用**滤波器主序**布局。
+
+*   **滤波器主序（NCHW）**：`[Out_Channels, In_Channels, H, W]`
+*   **GPU 最优布局**：`[H, W, In_Channels, Out_Channels]`
+*   **bug**：如果你上传权重时没有转置成匹配着色器循环顺序的布局，那么每一次卷积都会算成垃圾。
+
+=== 3. 检查填充与步长
+如果第 1 层对得上，第 2 层却偏移了一个像素，那你的填充逻辑就是错的。
+
+*   **对称性**：你的填充是 `(1, 1, 1, 1)` 吗？还是不小心写成了 `(2, 0, 2, 0)`？
+*   **取整**：在池化层中，你的实现对输出尺寸是向下取整还是向上取整？Vulkan 与 PyTorch 必须一致。
+
+== 着色器中的数值稳定性：保住精度
+
+当你要对成千上万个值求和时（例如在一个大型全连接层中），运算顺序会产生影响。
+
+[latexmath]
+++++
+(a + b) + c \neq a + (b + c)
+++++
+
+在 Vulkan 着色器里，你可能会用**共享内存归约**来计算点积。取决于工作组大小，你求和的顺序可能与 PyTorch 在 CPU 上的顺序不同。
+
+=== 累加器技巧
+如果你为节省带宽而用 `float16` 存模型权重，**务必用 `float32` 累加**。
+
+[source,glsl]
+----
+// DANGEROUS: Accumulating in FP16 will lose precision rapidly
+float16_t sum = 0.0hf;
+for(...) sum += input[i] * weight[i];
+
+// CORRECT: Store inputs in FP16, but use FP32 for the math
+float sum = 0.0f;
+for(...) sum += float(input[i]) * float(weight[i]);
+----
+
+仅这一处改动，就能把你的 latexmath:[MAE] 降低两个数量级。
+
+== 解读误差模式：诊断表
+
+[cols="1,2,2"]
+|===
+| 误差模式 | 可能原因 | 解决方案
+
+| **小幅恒定偏移**
+| 浮点字面量精度（例如用了 `0.1` 而不是 `0.1f`）。
+| 在 GLSL 中显式使用 `f` 后缀。
+
+| **误差逐层增长**
+| 累加精度损失（对成千上万个小数值求和）。
+| 即使输入是 `float16`，也要用 `float32` 累加。
+
+| **大规模随机误差**
+| 描述符集不匹配或内存未初始化。
+| 用 RenderDoc 检查缓冲区绑定。
+
+| **整块区域归零**
+| 工作组派发数学（整数除法向下取整）。
+| 使用 `(N + Size - 1) / Size` 公式。
+
+| **棋盘状图案**
+| 内存布局不匹配（HWC 与 NCHW）。
+| 检查 `pixelIdx` 计算中的步长与偏移逻辑。
+|===
+
+== 把验证接入 CI
+
+专业的 ML 管线会在每次提交时运行验证。你应该给自己的 C++ 应用加一个 `--verify` 标志，让它：
+
+1.  加载从 PyTorch 采集的 `.npy` 文件。
+2.  在 Vulkan 设备上跑一次推理。
+3.  计算每一层的 latexmath:[MAE]。
+4.  仅当所有层都在容差内通过时，才以退出码 `0` 结束。
+
+[source,bash]
+----
+# Example verification command
+./my_vulkan_ml --verify --ref_dir ./golden_references --abs_tol 1e-5 --rel_tol 1e-4
+----
+
+如果这条命令在 CI 中失败，构建就被拒绝。这样能确保某个分支里的性能优化不会偷偷破坏模型的准确度。
+
+== 小结：信任，但要验证
+
+验证是业余爱好者和专业 ML 工程师之间的分水岭。通过实现严谨的逐层比对，你把神经网络的「魔法」变成了一个可求解的工程问题。
+
+*   **采集**来自 PyTorch 等可信框架的基准真值。
+*   **同步**你的 Vulkan 回读，正确使用屏障与栅栏。
+*   **量化**你的成功，借助 MAE 与 MSE 指标。
+*   **二分查找**你的网络，隔离出第一个分歧点。
+
+下一章我们假设你的实现已经 100% 正确，转向下一个挑战：**性能分析**。
+
+xref:ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc[上一篇：调试面向 ML 的 Vulkan 计算：驯服显式控制] | xref:ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc[下一篇：性能分析：精通 Roofline 模型]

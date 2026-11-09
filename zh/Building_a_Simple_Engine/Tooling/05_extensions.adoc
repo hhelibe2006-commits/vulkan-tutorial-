@@ -1,0 +1,377 @@
+:pp: {plus}{plus}
+
+= 工具链：提升健壮性的 Vulkan 扩展
+
+== 提升健壮性的 Vulkan 扩展
+
+Vulkan 的显式设计让开发者能细粒度地控制图形管线，但这种控制也伴随着责任。当应用犯错——比如访问越界内存或使用未初始化的资源——就可能出现未定义行为。本节将探讨能帮助应用更好地抵御这类问题的 Vulkan 扩展，重点介绍 VK_EXT_robustness2。
+
+=== 理解 Vulkan 中的未定义行为
+
+在深入健壮性扩展之前，先了解 Vulkan 应用中可能出现哪些未定义行为：
+
+1. *越界访问*：访问缓冲区或图像边界之外的内存
+2. *释放后使用*：在资源销毁之后继续使用它
+3. *未初始化内存*：读取尚未初始化的内存
+4. *无效描述符*：使用指向无效或不兼容资源的描述符
+5. *着色器执行错误*：除以零、无限循环等
+
+在标准 Vulkan 中，这些错误会导致不可预测的行为，包括：
+
+* 应用崩溃
+* GPU 挂起，需要重启系统
+* 渲染结果损坏
+* 安全漏洞
+* 不同硬件上行为不一致
+
+健壮性扩展旨在为这些场景提供更可预测的行为，通常只需付出很小的性能代价。
+
+=== VK_EXT_robustness2 扩展
+
+VK_EXT_robustness2 扩展是原始 VK_EXT_robustness 扩展的改进版本。它针对未定义行为提供了更全面的保护，尤其是越界访问。
+
+==== 关键特性
+
+VK_EXT_robustness2 提供了几项重要特性：
+
+1. *健壮的缓冲区访问*：对缓冲区的越界读取返回零值，而不是引发未定义行为
+2. *健壮的图像访问*：对图像的越界读取返回零值或透明黑
+3. *空描述符处理*：对空描述符的读取返回零值
+4. *健壮的缓冲区访问 2*：改进版本，还会通过丢弃越界写入来处理它们
+
+==== 启用 VK_EXT_robustness2
+
+下面看看如何启用并使用这个扩展。
+
+[source,cpp]
+----
+bool check_robustness2_support(vk::raii::PhysicalDevice& physical_device) {
+    // Check if the extension is supported
+    auto available_extensions = physical_device.enumerateDeviceExtensionProperties();
+
+    for (const auto& extension : available_extensions) {
+        if (strcmp(extension.extensionName, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void enable_robustness2(vk::DeviceCreateInfo& device_create_info,
+                       std::vector<const char*>& enabled_extensions) {
+    // Add the extension to the list of enabled extensions
+    enabled_extensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    device_create_info.setPEnabledExtensionNames(enabled_extensions);
+
+    // Set up the robustness2 features
+    vk::PhysicalDeviceRobustness2FeaturesEXT robustness2_features{};
+    robustness2_features.setRobustBufferAccess2(VK_TRUE);
+    robustness2_features.setRobustImageAccess2(VK_TRUE);
+    robustness2_features.setNullDescriptor(VK_TRUE);
+
+    // Add to the pNext chain
+    robustness2_features.pNext = device_create_info.pNext;
+    device_create_info.pNext = &robustness2_features;
+}
+
+vk::raii::Device create_robust_device(vk::raii::PhysicalDevice& physical_device,
+                                     vk::raii::Instance& instance) {
+    // Check for support
+    if (!check_robustness2_support(physical_device)) {
+        std::cerr << "VK_EXT_robustness2 is not supported on this device" << std::endl;
+        // Fall back to less robust behavior or abort
+    }
+
+    // Set up device creation
+    std::vector<const char*> enabled_extensions;
+    // Add your other required extensions here
+
+    vk::DeviceCreateInfo create_info{};
+    // Set up your queues, features, etc.
+
+    // Enable robustness2
+    enable_robustness2(create_info, enabled_extensions);
+
+    // Create the device
+    return vk::raii::Device(physical_device, create_info);
+}
+----
+
+==== 在实践中使用健壮访问
+
+启用该扩展后，健壮的缓冲区与图像访问会自动生效。不过，有几点需要考虑：
+
+1. *性能影响*：健壮访问会带来性能开销，因为 GPU 需要执行边界检查
+2. *不能替代正确性*：健壮性扩展让应用更有韧性，但不会修复底层的 bug
+3. *调试构建与发布构建*：可以考虑在开发和测试用的调试构建中启用健壮性，但要评估它对发布构建的性能影响
+
+下面是一个示例，说明健壮的缓冲区访问如何防止崩溃：
+
+[source,cpp]
+----
+// Without robust buffer access, this could crash or produce undefined results
+void potentially_dangerous_operation(vk::raii::CommandBuffer& cmd_buffer,
+                                    vk::raii::Buffer& buffer,
+                                    vk::raii::DescriptorSet& descriptor_set,
+                                    uint32_t dynamic_offset,
+                                    uint32_t buffer_size) {
+    // If dynamic_offset is too large, this would normally cause undefined behavior
+    // With robust buffer access, out-of-bounds reads will return zero
+    cmd_buffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute,
+        pipeline_layout,
+        0,
+        1,
+        &(*descriptor_set),
+        1,
+        &dynamic_offset
+    );
+
+    // Dispatch compute work that might read out of bounds
+    cmd_buffer.dispatch(buffer_size / 64 + 1, 1, 1);  // Potentially too many workgroups
+}
+----
+
+=== 其他健壮性扩展
+
+虽然本节的重点是 VK_EXT_robustness2，但还有其他扩展有助于提升应用健壮性：
+
+==== VK_KHR_buffer_device_address
+
+该扩展允许为缓冲区使用物理设备地址，这对高级技术很有用。它包含处理无效地址的健壮性特性（与 VK_EXT_robustness2 或核心 robustBufferAccess 等健壮访问特性结合使用时）：
+
+[source,cpp]
+----
+void enable_buffer_device_address(vk::DeviceCreateInfo& device_create_info,
+                                 std::vector<const char*>& enabled_extensions) {
+    enabled_extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    device_create_info.setPEnabledExtensionNames(enabled_extensions);
+
+    // Enable Buffer Device Address features
+    vk::PhysicalDeviceBufferDeviceAddressFeatures buffer_device_address_features{};
+    buffer_device_address_features.setBufferDeviceAddress(VK_TRUE);
+    buffer_device_address_features.setBufferDeviceAddressCaptureReplay(VK_TRUE);
+
+    // Optionally chain robustness features to ensure invalid addresses read as zero and writes are discarded
+    // (If you've already enabled VK_EXT_robustness2 elsewhere, this is not required here.)
+    vk::PhysicalDeviceRobustness2FeaturesEXT robustness2_features{};
+    robustness2_features.setRobustBufferAccess2(VK_TRUE);
+    robustness2_features.setRobustImageAccess2(VK_TRUE);
+    robustness2_features.setNullDescriptor(VK_TRUE);
+
+    // Chain features: robustness2 -> BDA -> existing pNext
+    robustness2_features.pNext = &buffer_device_address_features;
+    buffer_device_address_features.pNext = device_create_info.pNext;
+    device_create_info.pNext = &robustness2_features;
+}
+----
+
+==== VK_EXT_descriptor_indexing
+
+该扩展支持更灵活的描述符索引，包括与健壮性相关的能力，例如容忍越界索引（启用健壮访问时读取结果为零）、部分绑定的描述符集，以及绑定后更新。要真正利用这些行为，你需要同时启用设备特性和描述符集布局的绑定标志：
+
+[source,cpp]
+----
+void enable_descriptor_indexing(vk::DeviceCreateInfo& device_create_info,
+                               std::vector<const char*>& enabled_extensions) {
+    enabled_extensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+    device_create_info.setPEnabledExtensionNames(enabled_extensions);
+
+    vk::PhysicalDeviceDescriptorIndexingFeatures indexing_features{};
+    // Shader indexing capabilities (commonly needed alongside robustness)
+    indexing_features.setShaderSampledImageArrayNonUniformIndexing(VK_TRUE);
+    indexing_features.setShaderStorageBufferArrayNonUniformIndexing(VK_TRUE);
+
+    // Robustness-enabling behaviors
+    indexing_features.setRuntimeDescriptorArray(VK_TRUE);
+    indexing_features.setDescriptorBindingPartiallyBound(VK_TRUE);
+    indexing_features.setDescriptorBindingSampledImageUpdateAfterBind(VK_TRUE);
+    indexing_features.setDescriptorBindingStorageBufferUpdateAfterBind(VK_TRUE);
+    indexing_features.setDescriptorBindingUpdateUnusedWhilePending(VK_TRUE);
+
+    // Add to the pNext chain (can be chained together with VK_EXT_robustness2)
+    indexing_features.pNext = device_create_info.pNext;
+    device_create_info.pNext = &indexing_features;
+}
+----
+
+对于描述符数组，你还必须在创建布局时指定绑定标志：
+
+[source,cpp]
+----
+// Example: descriptor set layout with a runtime-sized array that can be partially bound
+vk::DescriptorSetLayoutBinding binding{};
+binding.binding = 0;
+binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+binding.descriptorCount = 128; // example array size; for true runtime arrays also enable variable descriptor counts
+binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+vk::DescriptorBindingFlags binding_flags =
+    vk::DescriptorBindingFlagBits::ePartiallyBound |
+    vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+
+vk::DescriptorSetLayoutBindingFlagsCreateInfo flags_ci{};
+flags_ci.setBindingCount(1);
+flags_ci.setPBindingFlags(&binding_flags);
+
+vk::DescriptorSetLayoutCreateInfo dsl_ci{};
+dsl_ci.setPBindings(&binding);
+dsl_ci.setBindingCount(1);
+// Required when using update-after-bind flags
+// (some descriptor types require pool and layout flags to match update-after-bind usage)
+dsl_ci.flags |= vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
+
+dsl_ci.pNext = &flags_ci;
+
+vk::raii::DescriptorSetLayout set_layout{device, dsl_ci};
+----
+
+如果你需要在运行时真正可变长度的描述符数组，还要启用可变描述符数量，并使用相应的分配信息：
+
+[source,cpp]
+----
+// Enable the device feature
+// indexing_features.setDescriptorBindingVariableDescriptorCount(VK_TRUE); // do this where features are enabled
+
+uint32_t max_descriptors_for_set0 = 1024; // requested at allocation time
+
+vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_counts_info{};
+variable_counts_info.setDescriptorSetCount(1);
+variable_counts_info.setPDescriptorCounts(&max_descriptors_for_set0);
+
+vk::DescriptorSetAllocateInfo alloc_info{};
+alloc_info.setDescriptorPool(descriptor_pool);
+alloc_info.setDescriptorSetCount(1);
+alloc_info.setPSetLayouts(&*set_layout);
+alloc_info.pNext = &variable_counts_info;
+
+auto descriptor_sets = vk::raii::DescriptorSets{device, alloc_info};
+----
+
+Note: 在 VK_EXT_robustness2 的 nullDescriptor = VK_TRUE 与描述符索引的部分绑定行为共同作用下，未绑定的数组元素会被读取为零，而不是触发未定义行为。
+
+=== 将健壮性扩展与调试工具结合
+
+为了获得最大效果，请把健壮性扩展与前几节讨论的调试工具结合起来：
+
+[source,cpp]
+----
+class RobustVulkanApplication {
+public:
+    RobustVulkanApplication() {
+        initialize_vulkan();
+    }
+
+    void run() {
+        // Main application loop
+        while (!should_close()) {
+            try {
+                update();
+                render();
+            } catch (const vk::SystemError& e) {
+                // Handle recoverable Vulkan errors
+                std::cerr << "Vulkan error: " << e.what() << std::endl;
+                // Attempt recovery
+                if (!recover_from_error()) {
+                    break;
+                }
+            }
+        }
+
+        cleanup();
+    }
+
+private:
+    void initialize_vulkan() {
+        // Create instance with validation layers in debug builds
+        #ifdef _DEBUG
+        enable_validation_layers = true;
+        #else
+        enable_validation_layers = false;
+        #endif
+
+        instance = create_instance();
+
+        // Set up debug messenger if validation is enabled
+        if (enable_validation_layers) {
+            debug_messenger = create_debug_messenger(instance);
+        }
+
+        // Select physical device
+        physical_device = select_physical_device(instance);
+
+        // Check for robustness support
+        has_robustness2 = check_robustness2_support(physical_device);
+
+        // Create logical device with robustness if available
+        device = create_device(physical_device);
+
+        // Initialize other Vulkan resources
+        // ...
+    }
+
+    vk::raii::Device create_device(vk::raii::PhysicalDevice& physical_device) {
+        std::vector<const char*> extensions;
+        // Add required extensions
+
+        vk::DeviceCreateInfo create_info{};
+        // Set up queues, etc.
+
+        // Enable robustness if available
+        if (has_robustness2) {
+            enable_robustness2(create_info, extensions);
+        }
+
+        // Enable other robustness-related extensions
+        enable_buffer_device_address(create_info, extensions);
+        enable_descriptor_indexing(create_info, extensions);
+
+        return vk::raii::Device(physical_device, create_info);
+    }
+
+    bool recover_from_error() {
+        // Attempt to recover from errors
+        // This might involve recreating swapchain, command buffers, etc.
+        try {
+            // Reset command buffers
+            // Recreate swapchain if needed
+            // ...
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to recover: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    // Vulkan objects
+    vk::raii::Context context;
+    vk::raii::Instance instance{nullptr};
+    vk::raii::DebugUtilsMessengerEXT debug_messenger{nullptr};
+    vk::raii::PhysicalDevice physical_device{nullptr};
+    vk::raii::Device device{nullptr};
+
+    // Flags
+    bool enable_validation_layers = false;
+    bool has_robustness2 = false;
+};
+----
+
+=== 使用健壮性扩展的最佳实践
+
+要充分利用健壮性扩展：
+
+1. *检查支持情况*：在使用扩展之前，始终先确认它是否受支持
+2. *回退行为*：为不支持这些扩展的设备实现回退行为
+3. *性能测试*：测量启用健壮性特性带来的性能影响
+4. *与验证层结合*：在开发期间使用验证层尽早发现问题
+5. *不要依赖健壮性*：修复底层问题，而不是依赖健壮性扩展来掩盖它们
+6. *记录使用情况*：清楚记录应用需要哪些扩展以及原因
+
+=== 结语
+
+Vulkan 健壮性扩展，尤其是 VK_EXT_robustness2，为提升应用对未定义行为的抵御能力提供了宝贵的工具。把这些扩展与恰当的错误处理、验证层和调试工具结合起来，你就能构建出更稳定、更可靠的 Vulkan 应用。
+
+在下一节也是最后一节中，我们将总结关于 Vulkan 应用工具链所学的内容，并讨论如何在你自己的项目中应用这些技术。
+
+xref:Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc[上一篇：工具链：崩溃处理与 GPU 崩溃转储] | xref:Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc[下一篇：工具链：打包与分发]

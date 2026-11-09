@@ -1,0 +1,463 @@
+:pp: {plus}{plus}
+= Android 上的计算
+
+== 搭建 Android 开发环境
+
+在写下第一行 Android 上的 Vulkan 计算代码之前，你需要一套可用的原生开发环境。本节逐一介绍各个组成部分，从 IDE 安装到构建系统中的着色器编译。
+
+=== Android Studio
+
+link:https://developer.android.com/studio[Android Studio] (https://developer.android.com/studio) 是 Android 开发的官方 IDE，也是唯一为 NDK 原生调试器提供一流支持的 IDE。下载适用于你的宿主操作系统的最新稳定版并安装。免费的社区版就足够了。
+
+首次启动后，打开 **Settings → Appearance & Behavior → System Settings → Android SDK → SDK Tools**，并安装：
+
+*   **NDK (Side by side)** —— Native Development Kit。选择最新的稳定版。NDK 捆绑了为 ARM64 Android 编译 C{pp} 所需的 `aarch64-linux-android` Clang 工具链。
+*   **CMake** —— Android Studio 自带与 Gradle 构建集成的 CMake。安装 CMake 3.22 或更高版本。
+
+符合规范的 Vulkan 1.0 实现所要求的最低 Android API 级别是 **API 24（Android 7.0）**。对于 Vulkan 1.1 以及本教程涉及的大多数特性，你需要 **API 28+**。对于 Vulkan 1.3 的特性（包括本系列贯穿使用的 `VK_KHR_synchronization2` 屏障 API），请以 **API 33+** 为目标。
+
+=== Vulkan 计算应用的项目结构
+
+Android Studio 的「Native C{pp}」项目模板已经提供了合适的骨架。你的原生源码和 CMake 构建脚本位于 `app/src/main/cpp/` 下：
+
+[source]
+----
+app/
+├── src/
+│   └── main/
+│       ├── AndroidManifest.xml
+│       ├── assets/           ← compiled .spv shader files go here
+│       ├── cpp/
+│       │   ├── CMakeLists.txt
+│       │   └── compute_app.cpp
+│       └── jniLibs/
+│           └── arm64-v8a/    ← clvk shared library goes here (see below)
+----
+
+你的 `CMakeLists.txt` 通过 NDK 找到系统 Vulkan 头文件，并链接到系统 Vulkan 加载器：
+
+[source,cmake]
+----
+cmake_minimum_required(VERSION 3.22)
+project(my_compute_app)
+
+# Android provides Vulkan headers and the loader stub; they are part of the NDK.
+find_library(vulkan-lib vulkan)
+
+add_library(my_compute SHARED compute_app.cpp)
+
+target_link_libraries(my_compute
+    ${vulkan-lib}
+    android          # for AAssetManager
+    log)             # for __android_log_print
+
+# Use C++20 for the structured bindings and std::stop_token used in this tutorial.
+target_compile_features(my_compute PRIVATE cxx_std_20)
+----
+
+`app/build.gradle`（Kotlin DSL）中对应的代码块把 Gradle 指向那个 CMakeLists：
+
+[source,kotlin]
+----
+android {
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                cppFlags("-std=c++20")
+                arguments("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+}
+----
+
+=== 把着色器编译纳入 Gradle 构建
+
+最终进入 `assets/` 的 `.spv` 文件应当在构建时自动生成，而不是作为二进制文件提交进仓库。添加一个自定义 Gradle 任务，在 `preBuild` 阶段之前调用你的着色器编译器。
+
+下面的示例使用 **Slang**（`slangc`），它是本教程系列的首选着色语言。从 link:https://github.com/shader-slang/slang/releases[github.com/shader-slang/slang/releases] 下载发布版二进制文件，把它放到 `PATH` 上的某个位置（或者在 Gradle 任务里硬编码路径）。
+
+[source,kotlin]
+----
+// build.gradle.kts  (app module)
+tasks.register<Exec>("compileShaders") {
+    val srcDir  = file("src/main/cpp/shaders")
+    val outDir  = file("src/main/assets")
+    outDir.mkdirs()
+
+    // Compile every .slang file in the shaders directory.
+    srcDir.listFiles { f -> f.extension == "slang" }?.forEach { shader ->
+        commandLine(
+            "slangc",
+            shader.absolutePath,
+            "-profile", "spirv_1_5",
+            "-o", File(outDir, shader.nameWithoutExtension + ".spv").absolutePath
+        )
+    }
+    description = "Compile Slang shaders to SPIR-V assets"
+}
+
+tasks.named("preBuild") { dependsOn("compileShaders") }
+----
+
+如果团队改用 **GLSL**，就把 `slangc` 换成 `glslangValidator -V`。调用方式类似；关键在于编译出的 `.spv` 要落到 `src/main/assets/`，这样 `AAssetManager` 才能在运行时打开它（参见下一节中的着色器加载代码）。
+
+=== 部署到设备并使用 ADB
+
+Android 调试桥（`adb`）随 Android SDK 一起提供（`platform-tools/adb`）。把它的目录加入 `PATH`。Vulkan 计算开发中的常用命令：
+
+[source,bash]
+----
+# Confirm device is visible and show its Android/API versions.
+adb devices -l
+
+# Check which Vulkan version the device reports (requires jq).
+adb shell cmd gpu vkjson | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['devices'][0]['properties']['apiVersion'])"
+
+# Watch logcat output, filtered to your app tag and the Vulkan validation layer.
+adb logcat -s MyComputeApp VALIDATION
+
+# Push a file (e.g., a test dataset) directly to the app's sandbox.
+adb push test_input.bin /data/local/tmp/test_input.bin
+
+# Pull a result file back to the host.
+adb pull /data/local/tmp/result.bin ./result.bin
+----
+
+=== 在 Android Studio 中用 LLDB 调试原生代码
+
+当你在 **Debug** 模式下运行时，Android Studio 会自动把 LLDB 调试器附加到你的原生代码上。在 `Run/Debug Configuration` 中，于 **Debugger** 下选择 **Dual**（Java + Native），纯 NDK 应用则选 **Native**。此后，在 C{pp} 文件里打断点、查看 `VkResult` 变量、单步跟踪派发代码，都与桌面 LLDB 会话完全一样。
+
+要进行 GPU 层面的调试——检查描述符集、跟踪 VRAM 占用、捕获命令缓冲区录制——请使用 **Android GPU Inspector (AGI)**，它独立于 Android Studio。下载链接见下面的性能分析一节。
+
+== 从桌面派发到移动派发
+
+好消息是，Vulkan 计算管线在 Android 上和桌面上是*同一个对象*。你在前几章写的 `VkPipeline`、`VkDescriptorSet`、`vkCmdDispatch` 以及屏障代码，可以不做任何修改地编译并运行。变化的是派发*周围*的一切：如何创建设备、如何获得 SPIR-V、如何查询能力，以及在统一内存架构上如何回读结果。
+
+如果你还没有为 Android 构建过 Vulkan 应用，先读主教程的 xref:14_Android.adoc[Android] 一章。它讲解了 `VK_KHR_android_surface` 扩展、`ANativeWindow` 以及 Gradle/NDK 构建流程。这里我们假设你已经有一个能运行的 Android Vulkan 应用，并想给它加上计算功能。
+
+== 加载驱动：Android 上的 Vulkan 加载器
+
+在大多数 Android 8.0+ 设备上，系统自带 Vulkan 加载器；但为了最大兼容性（也为了在开发期间用上最新的验证层），常见的做法是捆绑 NDK 里的 **Vulkan 加载器**，并用 `volk` 这类函数指针加载器动态加载 `libvulkan.so`。这正是本教程其它地方采用的模式：
+
+[source,cpp]
+----
+// Load the Vulkan entry points provided by the Android system driver.
+if (volkInitialize() != VK_SUCCESS) {
+    // No Vulkan-capable driver on this device — fall back to a CPU path.
+    return false;
+}
+----
+
+真正要发布的应用程序，对于没有符合规范的 Vulkan 驱动的设备，始终应当有优雅的降级方案。
+
+== 把 SPIR-V 交付到设备上
+
+在桌面上，你通常在构建时把 Slang 或 GLSL 着色器编译成 SPIR-V，再从磁盘加载 `.spv` 文件。在 Android 上，同样的 `.spv` 可以原样使用——唯一的区别是它*放在哪里*以及你*如何读取它*。标准做法是在 Gradle 构建期间编译着色器（由 Gradle 任务调用 `slangc` 或 `glslangValidator`），再把生成的 `.spv` 作为 APK **asset** 打包。运行时你通过 `AAssetManager` 而不是 `std::ifstream` 来读取它：
+
+[source,cpp]
+----
+// 'mgr' comes from the ANativeActivity / android_app you already have.
+std::vector<uint32_t> loadSpirvAsset(AAssetManager* mgr, const char* name) {
+    AAsset* asset = AAssetManager_open(mgr, name, AASSET_MODE_BUFFER);
+    if (!asset) throw std::runtime_error("missing shader asset");
+    size_t size = AAsset_getLength(asset);
+    std::vector<uint32_t> code(size / sizeof(uint32_t));
+    AAsset_read(asset, code.data(), size);
+    AAsset_close(asset);
+    return code;
+}
+----
+
+这个 `std::vector<uint32_t>` 与在桌面上完全一样，直接喂给 `VkShaderModuleCreateInfo`。SPIR-V 本身没有任何移动端特有的东西；除非查询到的限制迫使你改用不同的工作组大小，否则*不要*另外维护一套「移动端」着色器。
+
+== 查询手机实际能做什么
+
+移动驱动在暴露的限制和特性上差异极大。在派发之前，查询对计算至关重要的限制，并*把你的工作组配置钳制到这些限制之内*：
+
+[source,cpp]
+----
+VkPhysicalDeviceProperties props{};
+vkGetPhysicalDeviceProperties(physicalDevice, &props);
+
+const uint32_t maxInvocations = props.limits.maxComputeWorkGroupInvocations;
+const uint32_t maxSharedBytes = props.limits.maxComputeSharedMemorySize;
+const uint32_t* maxCount       = props.limits.maxComputeWorkGroupCount;
+const uint32_t* maxSize        = props.limits.maxComputeWorkGroupSize;
+----
+
+有两项限制，对移动开发者的影响远比桌面开发者频繁：
+
+*   **`maxComputeSharedMemorySize`** 在移动端往往*小得多*（常见 16 KB，而桌面是 32–64 KB）。按桌面 LDS 预算调优的分块或归约内核，在手机上可能直接创建管线失败。
+*   **`maxComputeWorkGroupInvocations`** 在某些芯片上低至 128。一个 `local_size_x = 256`、在你的笔记本上跑得很好的着色器，到这里会被驱动拒绝。
+
+做子组相关的工作时，要显式查询子组大小和支持的操作——许多移动 GPU 根据厂商不同，报告的 `subgroupSize` 可能是 4、8、16、32 *或* 64：
+
+[source,cpp]
+----
+VkPhysicalDeviceSubgroupProperties subgroup{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES
+};
+VkPhysicalDeviceProperties2 props2{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+    .pNext = &subgroup
+};
+vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+// subgroup.subgroupSize and subgroup.supportedOperations tell you what is safe.
+----
+
+绝不要在移动端硬编码子组大小。如果你需要保证得到一个完整子组，就用 `VK_EXT_subgroup_size_control`；否则就查询后分支处理。
+
+== 只启用你真正用到的特性
+
+一个健壮的移动应用与一个在竞品手机上崩溃的应用，最大的差别就在*防御式的特性启用*。桌面应用常常可以假定 FP16 和缓冲区设备地址存在，但在移动端，你必须逐项检查特性，只启用设备报告支持的部分。把特性结构体串成链，查询它们，再把同一条链传给 `VkDeviceCreateInfo`：
+
+[source,cpp]
+----
+VkPhysicalDeviceShaderFloat16Int8Features f16{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES
+};
+VkPhysicalDevice16BitStorageFeatures storage16{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+    .pNext = &f16
+};
+VkPhysicalDeviceFeatures2 features2{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    .pNext = &storage16
+};
+vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+
+// Decide your shader variant from what is ACTUALLY supported.
+const bool useFp16 = f16.shaderFloat16 && storage16.storageBuffer16BitAccess;
+
+// Pass the very same (now-populated) chain to device creation so the
+// features you rely on are turned on:
+VkDeviceCreateInfo deviceInfo{
+    .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+    .pNext = &features2,
+    // ...queue create infos, enabled extensions...
+};
+----
+
+如果 `useFp16` 返回 false，就退回 FP32 管线，而不是直接失败。就是「查询、决策、启用、回退」这一个模式，让计算应用能够移植到碎片化的 Android 设备大军上。
+
+== 基于瓦片的 GPU 改变了规则
+
+移动 GPU 最重要的一条架构事实是：几乎全都是**基于瓦片的延迟渲染（Tile-Based Deferred Rendering，TBDR）**或基于瓦片的立即模式设计。GPU 拥有一小块非常快的**片上瓦片内存**，而通往统一系统 RAM 的主存带宽相对稀缺且*耗电*。
+
+对图形而言，这带来了那句著名的建议：避免在帧中途做 `vkCmdLoadOp`/`storeOp` 的往返。对**计算**而言，后果同样重要：
+
+*   你对设备内存中某个 `VkBuffer` 读写的每个字节，都消耗真实的**能量**，而不只是时间。在移动端，DRAM 流量往往是你功耗预算中的主导项。
+*   这使第 3、4 章的子组和共享内存技术比在桌面上*更*有价值：把数据留在片上不只是速度优化，它直接延长电池续航、避免热降频。
+
+一个把大块中间缓冲区反复经 DRAM 倒腾的朴素内核，在手机上或许「能跑」，但会在几秒内耗光电池并触发降频。下一节我们会回到这个话题。
+
+== 在统一内存上回读结果
+
+几乎所有移动和嵌入式 GPU 都与 CPU 共享同一物理内存池（**统一内存架构**，UMA）。这对计算回读是一份礼物：通常存在既 `DEVICE_LOCAL` 又 `HOST_VISIBLE` 的内存类型，因此你往往可以省掉在独立桌面 GPU 上必不可少的暂存缓冲区拷贝。
+
+[source,cpp]
+----
+// Prefer a heap that is both device-local and host-visible (typical on UMA mobile parts).
+VkMemoryPropertyFlags want =
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+----
+
+你仍然需要正确的同步。派发之后，插入一个屏障使着色器的写入对主机*可用*（available），然后在映射并读取缓冲区之前等待栅栏——这正是同步章节所确立的纪律。UMA 去掉了拷贝，但没有去掉可见性操作的需要。下面是完整的回读路径：
+
+[source,cpp]
+----
+// 1. Record dispatch, then a buffer barrier into the HOST domain.
+VkBufferMemoryBarrier2 toHost{
+    .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+    .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+    .srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+    .dstStageMask  = VK_PIPELINE_STAGE_2_HOST_BIT,
+    .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT,
+    .buffer        = resultBuffer,
+    .size          = VK_WHOLE_SIZE,
+};
+VkDependencyInfo dep{
+    .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+    .bufferMemoryBarrierCount = 1,
+    .pBufferMemoryBarriers    = &toHost,
+};
+vkCmdPipelineBarrier2(cmd, &dep);
+vkEndCommandBuffer(cmd);
+
+// 2. Submit and wait on a fence (NOT vkQueueWaitIdle on the UI thread).
+vkQueueSubmit2(computeQueue, 1, &submitInfo, fence);
+vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+
+// 3. Map the UMA buffer directly — no staging copy needed.
+void* mapped = nullptr;
+vkMapMemory(device, resultMemory, 0, VK_WHOLE_SIZE, 0, &mapped);
+// If the memory type is NOT HOST_COHERENT, invalidate it first:
+//   vkInvalidateMappedMemoryRanges(...) before reading.
+std::memcpy(hostResults.data(), mapped, byteCount);
+vkUnmapMemory(device, resultMemory);
+----
+
+唯一移动端特有的微妙之处是一致性：如果你分配的堆是主机可见但*非* `HOST_COHERENT`（在某些芯片上很常见），你必须在 `memcpy` 之前调用 `vkInvalidateMappedMemoryRanges`，否则可能读到 CPU 缓存里的过期数据。
+
+== 让派发远离主线程
+
+Android 在主（UI）线程上派发 UI 和输入事件，阻塞它超过几毫秒就会弹出「应用无响应」（ANR）对话框。耗时的计算必须从工作线程提交，并用 `VkFence` 或时间线信号量同步回来，绝不能在 UI 线程上用 `vkQueueWaitIdle` 卡住渲染线程。
+
+一个实用的模式是拥有一个专用的计算线程，它从队列中取出任务、提交、等待栅栏，再把结果回传给 UI/渲染线程：
+
+[source,cpp]
+----
+void computeWorker(std::stop_token stop) {
+    while (!stop.stop_requested()) {
+        Job job = jobQueue.popBlocking();      // wait for work
+        recordAndSubmit(job);                  // vkQueueSubmit2(..., job.fence)
+        vkWaitForFences(device, 1, &job.fence,  // block HERE, off the UI thread
+                        VK_TRUE, UINT64_MAX);
+        vkResetFences(device, 1, &job.fence);
+        postResultToMainThread(job);           // e.g. via a lock-free queue
+    }
+}
+----
+
+还要注意，Android 可能在某次派发还在进行时调用你的 `onPause`/`onDestroy` 并拆掉 `ANativeWindow`。为你的计算提交加上保护，让它们在生命周期转换时要么完成、要么干净地取消，并且绝不要从计算线程去碰交换链。
+
+== 在 Android 上使用 clvk
+
+第 5 章介绍了 `clvk`：一个构建在 Vulkan 之上的、符合规范的 OpenCL 3.0 运行时。在 Android 上，同一个库能让你把已有的 OpenCL C 内核——以及任何调用 `clCreateContext`、`clEnqueueNDRangeKernel` 之类函数的宿主代码——跑在设备的 Vulkan 驱动上，而无需改动内核或宿主应用代码的任何一行。
+
+=== 为 Android 构建 clvk
+
+为 Android 交叉编译 `clvk` 需要 NDK。克隆 `clvk` 及其依赖，然后传入 CMake 的 Android 工具链文件：
+
+[source,bash]
+----
+# On your host Linux or macOS build machine.
+git clone --recursive https://github.com/kpet/clvk.git
+cd clvk && mkdir build-android && cd build-android
+
+cmake .. \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_PLATFORM=android-28 \
+    -DCLVK_COMPILER_AVAILABLE=OFF   # disable the JIT compiler; use pre-compiled SPIR-V
+
+ninja OpenCL
+----
+
+`CLVK_COMPILER_AVAILABLE=OFF` 标志让 `clvk` 不再捆绑用于运行时内核编译的 `clspv`（它体积很大）。取而代之，在构建时于*主机*上用 `clspv` 把 OpenCL C 内核编译成 SPIR-V，把生成的 `.spv` 作为 APK asset 打包，并在运行时加载。这与你用于原生 Vulkan 着色器的模式相同，并且消除了设备上的 JIT 编译开销。
+
+构建产物是 `libOpenCL.so`。把它复制到 Android 项目的 `jniLibs/arm64-v8a/` 目录，Gradle 打包器就会把它放进 APK。
+
+=== 从 NDK 代码加载 clvk 的 OpenCL 库
+
+大多数 Android 设备上没有系统 OpenCL 加载器。在调用任何 OpenCL 函数之前，于启动时显式加载 `clvk` 的 `libOpenCL.so`：
+
+[source,cpp]
+----
+#include <dlfcn.h>
+
+void* clvkLib = dlopen("libOpenCL.so", RTLD_NOW | RTLD_LOCAL);
+if (!clvkLib) {
+    // clvk not available — fall back to a native Vulkan path or skip CL code.
+    LOGE("clvk not found: %s", dlerror());
+    return false;
+}
+// Resolve function pointers through the ICD loader that clvk implements.
+auto clCreateContext_fn = (clCreateContext_fn_t)dlsym(clvkLib, "clCreateContext");
+// ... resolve remaining functions ...
+----
+
+对真实项目来说，更干净的做法是使用为 Android 编译的 **OpenCL-ICD-Loader**（link:https://github.com/KhronosGroup/OpenCL-ICD-Loader[github.com/KhronosGroup/OpenCL-ICD-Loader]），并设置 `OPENCL_ICD_LOADER_DISABLE_LAYER_SETTINGS=ON`。在 JNI 中、调用任何 OpenCL 函数之前设置环境变量 `OPENCL_ICD_FILENAMES`，把它指向 `clvk` 的 `libOpenCL.so`：
+
+[source,cpp]
+----
+// Call this once in your JNI_OnLoad or early init.
+setenv("OPENCL_ICD_FILENAMES",
+       "/data/app/<your.package>/lib/arm64/libOpenCL.so",
+       1 /* overwrite */);
+----
+
+=== Android 上完整的 clvk 工作流
+
+下面是完整的流程：内核在主机上用 `clspv` 编译，作为 APK asset 打包，运行时通过由 `clvk` 支撑的 OpenCL API 派发：
+
+*主机构建步骤（在 Gradle `compileShaders` 任务期间于桌面运行）：*
+
+[source,bash]
+----
+# Compile the OpenCL C kernel to SPIR-V.
+clspv scale.cl -o scale.spv --spv-version=1.5
+# The .spv file is added to src/main/assets/ and packed into the APK.
+----
+
+*设备运行时（NDK C{pp}）：*
+
+[source,cpp]
+----
+// 1. Read the pre-compiled SPIR-V from the APK asset.
+AAsset* asset = AAssetManager_open(mgr, "scale.spv", AASSET_MODE_BUFFER);
+size_t   spvSize = AAsset_getLength(asset);
+std::vector<uint8_t> spv(spvSize);
+AAsset_read(asset, spv.data(), spvSize);
+AAsset_close(asset);
+
+// 2. Create an OpenCL context on the first available platform (= clvk / Vulkan).
+cl_platform_id platform;
+clGetPlatformIDs(1, &platform, nullptr);
+cl_device_id device;
+clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
+cl_context ctx = clCreateContext(nullptr, 1, &device, nullptr, nullptr, nullptr);
+
+// 3. Build a program from SPIR-V (no runtime compilation needed).
+cl_program program = clCreateProgramWithIL(ctx, spv.data(), spv.size(), nullptr);
+clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
+
+// 4. Create a kernel object and buffers, enqueue the work, read back results.
+cl_kernel kernel = clCreateKernel(program, "scale", nullptr);
+cl_command_queue queue = clCreateCommandQueueWithProperties(ctx, device, nullptr, nullptr);
+
+cl_mem buf = clCreateBuffer(ctx, CL_MEM_READ_WRITE, sizeof(float) * N, nullptr, nullptr);
+clSetKernelArg(kernel, 0, sizeof(cl_mem), &buf);
+size_t globalSize = N;
+clEnqueueNDRangeKernel(queue, kernel, 1, nullptr, &globalSize, nullptr, 0, nullptr, nullptr);
+clFinish(queue);                         // wait for GPU completion
+
+float result[N];
+clEnqueueReadBuffer(queue, buf, CL_TRUE, 0, sizeof(result), result, 0, nullptr, nullptr);
+----
+
+在底层，这些调用每一个都被 `clvk` 翻译成 Vulkan 命令，派发在你原生 Vulkan 代码会使用的同一个驱动上，用的也是 `vkCmdDispatch`。功能结果完全相同。
+
+=== Android 上何时用 clvk、何时用原生 Vulkan
+
+两种方案都站得住脚。正确的选择取决于你现有的代码库和约束条件：
+
+[cols="1,1,1"]
+|===
+|评估维度 |clvk / OpenCL |原生 Vulkan
+
+|已有 OpenCL 代码库 |*完美契合*——无需重写 |需要移植内核与宿主代码
+|子组与推送常量控制 |有限 |完整
+|二进制体积 |+1–2 MB（`libOpenCL.so`） |无额外开销
+|特性覆盖 |OpenCL 3.0 子集 |完整的 Vulkan 特性集
+|性能分析器支持 |有限（无法捕获 GPU 帧） |完整的 AGI / 厂商工具支持
+|===
+
+如果你要启动一个新的 Android 计算项目，且此前没有 OpenCL 投入，那么原生 Vulkan 计算给你更多控制权和更好的工具。如果你要移植已有的 OpenCL 库——视觉算法、ML 运行时或物理求解器——`clvk` 通常是做出可工作设备部署的最快路径。
+
+== 小结
+
+Android 上的计算就是你早已熟悉的 Vulkan，只是有三点需要注意：查询并尊重*严格得多*的设备限制；把 DRAM 流量当作功耗成本而非仅仅是延迟成本；利用统一内存简化回读，同时仍然遵守内存模型。对于新项目，直接针对 NDK 的 Vulkan 头文件构建，并使用 Android Studio 的原生调试器；对于移植已有的 OpenCL 代码库，把 `clvk` 作为共享库集成，并用 `clspv` 提前编译内核。下一节，我们会把这些观察变成具体的优化策略。
+
+xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc[上一节：移动与嵌入式计算：简介] | xref:Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc[下一节：针对移动 GPU 的优化]

@@ -1,0 +1,2744 @@
+[
+  {
+    "source": "CODE_OF_CONDUCT.adoc",
+    "target": "zh/CODE_OF_CONDUCT.adoc",
+    "words": 44,
+    "title": ""
+  },
+  {
+    "source": "CONTRIBUTING.adoc",
+    "target": "zh/CONTRIBUTING.adoc",
+    "words": 563,
+    "title": "Khronos Vulkan^®^ Tutorial Contributing"
+  },
+  {
+    "source": "CONTRIBUTORS.adoc",
+    "target": "zh/CONTRIBUTORS.adoc",
+    "words": 118,
+    "title": "Contributors to the tutorials (sorted alphabetically)"
+  },
+  {
+    "source": "README.adoc",
+    "target": "zh/README.adoc",
+    "words": 595,
+    "title": "Khronos Vulkan^®^ Tutorial"
+  },
+  {
+    "source": "attachments/android/README.adoc",
+    "target": "zh/attachments/android/README.adoc",
+    "words": 242,
+    "title": "Android Project for Vulkan Tutorial"
+  },
+  {
+    "source": "attachments/ml_inference/README.adoc",
+    "target": "zh/attachments/ml_inference/README.adoc",
+    "words": 1672,
+    "title": "ML Inference Examples"
+  },
+  {
+    "source": "attachments/ml_inference/rPi/README.adoc",
+    "target": "zh/attachments/ml_inference/rPi/README.adoc",
+    "words": 521,
+    "title": "Embedded Wildlife Cam (Raspberry Pi)"
+  },
+  {
+    "source": "attachments/openxr_engine/README.adoc",
+    "target": "zh/attachments/openxr_engine/README.adoc",
+    "words": 85,
+    "title": "OpenXR Engine"
+  },
+  {
+    "source": "attachments/siggraph2026_vk_tutorial/README.adoc",
+    "target": "zh/attachments/siggraph2026_vk_tutorial/README.adoc",
+    "words": 605,
+    "title": "SIGGRAPH 2026: How to write a Vulkan application"
+  },
+  {
+    "source": "attachments/simple_engine/Courses/README.adoc",
+    "target": "zh/attachments/simple_engine/Courses/README.adoc",
+    "words": 474,
+    "title": "Simple Engine — Course Modules"
+  },
+  {
+    "source": "attachments/simple_engine/android/README.adoc",
+    "target": "zh/attachments/simple_engine/android/README.adoc",
+    "words": 278,
+    "title": "Android Project for Vulkan Game Engine Tutorial"
+  },
+  {
+    "source": "en/00_Introduction.adoc",
+    "target": "zh/00_Introduction.adoc",
+    "words": 1490,
+    "title": "Khronos Vulkan^®^ Tutorial"
+  },
+  {
+    "source": "en/01_Overview.adoc",
+    "target": "zh/01_Overview.adoc",
+    "words": 2640,
+    "title": "Overview"
+  },
+  {
+    "source": "en/02_Development_environment.adoc",
+    "target": "zh/02_Development_environment.adoc",
+    "words": 3104,
+    "title": "Development Environment"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/00_Setup/00_Base_code.adoc",
+    "target": "zh/03_Drawing_a_triangle/00_Setup/00_Base_code.adoc",
+    "words": 1589,
+    "title": "Base code"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/00_Setup/01_Instance.adoc",
+    "target": "zh/03_Drawing_a_triangle/00_Setup/01_Instance.adoc",
+    "words": 1184,
+    "title": "Instance"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/00_Setup/02_Validation_layers.adoc",
+    "target": "zh/03_Drawing_a_triangle/00_Setup/02_Validation_layers.adoc",
+    "words": 2412,
+    "title": "Validation layers"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/00_Setup/03_Physical_devices_and_queue_families.adoc",
+    "target": "zh/03_Drawing_a_triangle/00_Setup/03_Physical_devices_and_queue_families.adoc",
+    "words": 1274,
+    "title": "Physical devices and queue families"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc",
+    "target": "zh/03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc",
+    "words": 1346,
+    "title": "Logical device and queues"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc",
+    "target": "zh/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc",
+    "words": 1310,
+    "title": "Window surface"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/01_Presentation/01_Swap_chain.adoc",
+    "target": "zh/03_Drawing_a_triangle/01_Presentation/01_Swap_chain.adoc",
+    "words": 2950,
+    "title": "Swap chain"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/01_Presentation/02_Image_views.adoc",
+    "target": "zh/03_Drawing_a_triangle/01_Presentation/02_Image_views.adoc",
+    "words": 706,
+    "title": "Image views"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc",
+    "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/00_Introduction.adoc",
+    "words": 785,
+    "title": "Introduction"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc",
+    "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc",
+    "words": 3059,
+    "title": "Shader modules"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/02_Fixed_functions.adoc",
+    "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/02_Fixed_functions.adoc",
+    "words": 2288,
+    "title": "Fixed functions"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/03_Dynamic_rendering.adoc",
+    "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/03_Dynamic_rendering.adoc",
+    "words": 344,
+    "title": "Dynamic Rendering"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/02_Graphics_pipeline_basics/04_Conclusion.adoc",
+    "target": "zh/03_Drawing_a_triangle/02_Graphics_pipeline_basics/04_Conclusion.adoc",
+    "words": 578,
+    "title": "Conclusion"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/03_Drawing/00_Dynamic_rendering.adoc",
+    "target": "zh/03_Drawing_a_triangle/03_Drawing/00_Dynamic_rendering.adoc",
+    "words": 376,
+    "title": "Dynamic Rendering"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc",
+    "target": "zh/03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc",
+    "words": 1682,
+    "title": "Command Buffers"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/03_Drawing/02_Rendering_and_presentation.adoc",
+    "target": "zh/03_Drawing_a_triangle/03_Drawing/02_Rendering_and_presentation.adoc",
+    "words": 2791,
+    "title": "Rendering and presentation"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc",
+    "target": "zh/03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc",
+    "words": 1105,
+    "title": "Frames in flight"
+  },
+  {
+    "source": "en/03_Drawing_a_triangle/04_Swap_chain_recreation.adoc",
+    "target": "zh/03_Drawing_a_triangle/04_Swap_chain_recreation.adoc",
+    "words": 1559,
+    "title": "Swap chain recreation"
+  },
+  {
+    "source": "en/04_Vertex_buffers/00_Vertex_input_description.adoc",
+    "target": "zh/04_Vertex_buffers/00_Vertex_input_description.adoc",
+    "words": 1117,
+    "title": "Vertex input description"
+  },
+  {
+    "source": "en/04_Vertex_buffers/01_Vertex_buffer_creation.adoc",
+    "target": "zh/04_Vertex_buffers/01_Vertex_buffer_creation.adoc",
+    "words": 1613,
+    "title": "Vertex buffer creation"
+  },
+  {
+    "source": "en/04_Vertex_buffers/02_Staging_buffer.adoc",
+    "target": "zh/04_Vertex_buffers/02_Staging_buffer.adoc",
+    "words": 1366,
+    "title": "Staging buffer"
+  },
+  {
+    "source": "en/04_Vertex_buffers/03_Index_buffer.adoc",
+    "target": "zh/04_Vertex_buffers/03_Index_buffer.adoc",
+    "words": 987,
+    "title": "Index buffer"
+  },
+  {
+    "source": "en/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc",
+    "target": "zh/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc",
+    "words": 2109,
+    "title": "Descriptor layout and buffer"
+  },
+  {
+    "source": "en/05_Uniform_buffers/01_Descriptor_pool_and_sets.adoc",
+    "target": "zh/05_Uniform_buffers/01_Descriptor_pool_and_sets.adoc",
+    "words": 1872,
+    "title": "Descriptor pool and sets"
+  },
+  {
+    "source": "en/06_Texture_mapping/00_Images.adoc",
+    "target": "zh/06_Texture_mapping/00_Images.adoc",
+    "words": 3907,
+    "title": "Images"
+  },
+  {
+    "source": "en/06_Texture_mapping/01_Image_view_and_sampler.adoc",
+    "target": "zh/06_Texture_mapping/01_Image_view_and_sampler.adoc",
+    "words": 1697,
+    "title": "Image view and sampler"
+  },
+  {
+    "source": "en/06_Texture_mapping/02_Combined_image_sampler.adoc",
+    "target": "zh/06_Texture_mapping/02_Combined_image_sampler.adoc",
+    "words": 1497,
+    "title": "Combined image sampler"
+  },
+  {
+    "source": "en/07_Depth_buffering.adoc",
+    "target": "zh/07_Depth_buffering.adoc",
+    "words": 2373,
+    "title": "Depth Buffering"
+  },
+  {
+    "source": "en/08_Loading_models.adoc",
+    "target": "zh/08_Loading_models.adoc",
+    "words": 1866,
+    "title": "Loading Models"
+  },
+  {
+    "source": "en/09_Generating_Mipmaps.adoc",
+    "target": "zh/09_Generating_Mipmaps.adoc",
+    "words": 2549,
+    "title": "Generating Mipmaps"
+  },
+  {
+    "source": "en/10_Multisampling.adoc",
+    "target": "zh/10_Multisampling.adoc",
+    "words": 1614,
+    "title": "Multisampling"
+  },
+  {
+    "source": "en/11_Compute_Shader.adoc",
+    "target": "zh/11_Compute_Shader.adoc",
+    "words": 5155,
+    "title": "Compute Shader"
+  },
+  {
+    "source": "en/12_Ecosystem_Utilities_and_Compatibility.adoc",
+    "target": "zh/12_Ecosystem_Utilities_and_Compatibility.adoc",
+    "words": 2233,
+    "title": "Ecosystem Utilities and GPU Compatibility"
+  },
+  {
+    "source": "en/13_Vulkan_Profiles.adoc",
+    "target": "zh/13_Vulkan_Profiles.adoc",
+    "words": 1573,
+    "title": "Vulkan Profiles: Simplifying Feature Detection"
+  },
+  {
+    "source": "en/14_Android.adoc",
+    "target": "zh/14_Android.adoc",
+    "words": 3770,
+    "title": "Android: Taking Your Vulkan App Mobile"
+  },
+  {
+    "source": "en/15_GLTF_KTX2_Migration.adoc",
+    "target": "zh/15_GLTF_KTX2_Migration.adoc",
+    "words": 2796,
+    "title": "Migrating to Modern Asset Formats: glTF and KTX2"
+  },
+  {
+    "source": "en/16_Multiple_Objects.adoc",
+    "target": "zh/16_Multiple_Objects.adoc",
+    "words": 1416,
+    "title": "Rendering Multiple Objects"
+  },
+  {
+    "source": "en/17_Multithreading.adoc",
+    "target": "zh/17_Multithreading.adoc",
+    "words": 1850,
+    "title": "Multithreading with Vulkan"
+  },
+  {
+    "source": "en/18_Ray_tracing.adoc",
+    "target": "zh/18_Ray_tracing.adoc",
+    "words": 14,
+    "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+  },
+  {
+    "source": "en/90_FAQ.adoc",
+    "target": "zh/90_FAQ.adoc",
+    "words": 320,
+    "title": "Frequently Asked Questions"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc",
+    "words": 848,
+    "title": "Environment Setup"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/02_jetbrains_clion_android_studio.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/02_jetbrains_clion_android_studio.adoc",
+    "words": 1230,
+    "title": "JetBrains CLion & Android Studio"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc",
+    "words": 636,
+    "title": "Visual Studio: Windows-Native Development"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc",
+    "words": 901,
+    "title": "Xcode & Apple Silicon"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc",
+    "words": 1203,
+    "title": "Goose: Autonomous Agent & Local Intelligence"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc",
+    "target": "zh/AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc",
+    "words": 666,
+    "title": "The Context Bridge: Model Context Protocol (MCP)"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/01_introduction.adoc",
+    "words": 556,
+    "title": "Model Selection & Specialization: Introduction"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/02_base_models.adoc",
+    "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/02_base_models.adoc",
+    "words": 1419,
+    "title": "Selecting the Base Model"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/03_hardware_vram.adoc",
+    "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/03_hardware_vram.adoc",
+    "words": 745,
+    "title": "Hardware & VRAM Budgeting"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc",
+    "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc",
+    "words": 1132,
+    "title": "MCP & RAG Specialization"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/03_model_selection_specialization/05_fine_tuning_lora.adoc",
+    "target": "zh/AI_Assisted_Vulkan/03_model_selection_specialization/05_fine_tuning_lora.adoc",
+    "words": 1241,
+    "title": "Fine-Tuning for Your Engine (LoRA)"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/01_introduction.adoc",
+    "words": 434,
+    "title": "Multimodal AI: Visual Reasoning Capabilities"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/02_multimodal_models.adoc",
+    "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/02_multimodal_models.adoc",
+    "words": 533,
+    "title": "Understanding Multimodal Models: Vision for Graphics"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/03_visual_bug_diagnosis.adoc",
+    "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/03_visual_bug_diagnosis.adoc",
+    "words": 618,
+    "title": "Visual Bug Diagnosis: Identifying Graphics Artifacts"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc",
+    "target": "zh/AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc",
+    "words": 380,
+    "title": "Setting Realistic Expectations: The Limits of Vision"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/05_workflow/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/05_workflow/01_introduction.adoc",
+    "words": 481,
+    "title": "Workflow: System Design to Implementation"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/05_workflow/02_phase_1_planning.adoc",
+    "target": "zh/AI_Assisted_Vulkan/05_workflow/02_phase_1_planning.adoc",
+    "words": 815,
+    "title": "Phase 1: System Design"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc",
+    "target": "zh/AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc",
+    "words": 621,
+    "title": "Phase 2: Implementation"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/05_workflow/04_phase_3_refactoring.adoc",
+    "target": "zh/AI_Assisted_Vulkan/05_workflow/04_phase_3_refactoring.adoc",
+    "words": 618,
+    "title": "Phase 3: Refactoring"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/06_debugging/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/06_debugging/01_introduction.adoc",
+    "words": 457,
+    "title": "Pro-Level Debugging with AI & RenderDoc"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc",
+    "target": "zh/AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc",
+    "words": 774,
+    "title": "VUID Auto-Fix: Working Through Validation Layers"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc",
+    "target": "zh/AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc",
+    "words": 762,
+    "title": "AI + RenderDoc Integration: Automated GPU Analysis"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc",
+    "target": "zh/AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc",
+    "words": 585,
+    "title": "Shader Debugging & Log Parsing"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc",
+    "target": "zh/AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc",
+    "words": 786,
+    "title": "AI-Assisted Trace Analysis: GFXReconstruct"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc",
+    "words": 433,
+    "title": "Advanced MCP Tooling & Automation"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc",
+    "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc",
+    "words": 646,
+    "title": "The Vulkan Registry & GPUInfo MCP"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc",
+    "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc",
+    "words": 1442,
+    "title": "Agentic Automation & Performance Audits"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/08_deployment/01_introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/08_deployment/01_introduction.adoc",
+    "words": 380,
+    "title": "Desktop, Mobile, and Embedded Deployment"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/08_deployment/02_android_ios_mobile.adoc",
+    "target": "zh/AI_Assisted_Vulkan/08_deployment/02_android_ios_mobile.adoc",
+    "words": 594,
+    "title": "Android & iOS Deployment"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc",
+    "target": "zh/AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc",
+    "words": 706,
+    "title": "Embedded & Safety Critical Systems"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/09_faq.adoc",
+    "target": "zh/AI_Assisted_Vulkan/09_faq.adoc",
+    "words": 842,
+    "title": "Common Questions & Troubleshooting (FAQ)"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/10_final_project.adoc",
+    "target": "zh/AI_Assisted_Vulkan/10_final_project.adoc",
+    "words": 1343,
+    "title": "Final Project: AI-Assisted Graphics Lab"
+  },
+  {
+    "source": "en/AI_Assisted_Vulkan/introduction.adoc",
+    "target": "zh/AI_Assisted_Vulkan/introduction.adoc",
+    "words": 709,
+    "title": "AI-Assisted Vulkan Development"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc",
+    "words": 643,
+    "title": "The Compute Architecture and Execution Model: Introduction"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/02_Compute_Architecture/02_workgroups_and_invocations.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/02_Compute_Architecture/02_workgroups_and_invocations.adoc",
+    "words": 813,
+    "title": "Workgroups and Invocations: The 3D Lattice"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/02_Compute_Architecture/03_occupancy_and_latency_hiding.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/02_Compute_Architecture/03_occupancy_and_latency_hiding.adoc",
+    "words": 732,
+    "title": "Occupancy and Latency Hiding: Keeping the GPU Busy"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/02_Compute_Architecture/04_vulkan_1_4_scalar_layouts.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/02_Compute_Architecture/04_vulkan_1_4_scalar_layouts.adoc",
+    "words": 1225,
+    "title": "Vulkan 1.4 Scalar Layouts: Tight Packing"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc",
+    "words": 430,
+    "title": "Memory Models and Consistency: Introduction"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/03_Memory_Models/02_vulkan_memory_model.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/03_Memory_Models/02_vulkan_memory_model.adoc",
+    "words": 629,
+    "title": "The Vulkan Memory Model: Availability, Visibility, and Domain Operations"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/03_Memory_Models/03_shared_memory_lds.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/03_Memory_Models/03_shared_memory_lds.adoc",
+    "words": 846,
+    "title": "Shared Memory (LDS): High-Speed Data Exchange"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/03_Memory_Models/04_memory_consistency.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/03_Memory_Models/04_memory_consistency.adoc",
+    "words": 728,
+    "title": "Memory Consistency: Slang Barriers and Pipeline Stalls"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/01_introduction.adoc",
+    "words": 410,
+    "title": "Subgroup Operations: The Hidden Power"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/02_cross_invocation_communication.adoc",
+    "words": 597,
+    "title": "Subgroup Shuffles, Broadcasts, and Arithmetic"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/03_subgroup_partitioning.adoc",
+    "words": 659,
+    "title": "Subgroup Partitioning: Ballot and Match"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc",
+    "words": 586,
+    "title": "Non-Uniform Indexing: Resource Arrays in Subgroups"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/01_introduction.adoc",
+    "words": 1385,
+    "title": "Heterogeneous Ecosystem: OpenCL on Vulkan"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc",
+    "words": 528,
+    "title": "Setup and Installation: Preparing Your Environment"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc",
+    "words": 464,
+    "title": "The clspv Pipeline: OpenCL C to SPIR-V"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc",
+    "words": 394,
+    "title": "Kernel Portability: OpenCL C for Vulkan"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc",
+    "words": 456,
+    "title": "clvk and Layering: OpenCL 3.0 on Vulkan"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc",
+    "words": 999,
+    "title": "A Practical Sample: Vulkan Rendering Powered by OpenCL"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/07_clspv_for_production.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/07_clspv_for_production.adoc",
+    "words": 1292,
+    "title": "clspv for Production: OpenCL C as Vulkan SPIR-V"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc",
+    "words": 391,
+    "title": "Advanced Data Structures on the GPU"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc",
+    "words": 1188,
+    "title": "GPU-Resident Trees: BVH and Octrees"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/03_global_atomic_management.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/03_global_atomic_management.adoc",
+    "words": 1103,
+    "title": "Global Atomic Management: Lock-Free Lists and Queues"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc",
+    "words": 757,
+    "title": "Device-Addressable Buffers: Pointer-like Flexibility"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/01_introduction.adoc",
+    "words": 358,
+    "title": "Indirect Dispatch and GPU-Driven Pipelines"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/02_indirect_dispatch.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/02_indirect_dispatch.adoc",
+    "words": 561,
+    "title": "Indirect Dispatch: Building Parameters on the GPU"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/03_gpu_side_command_generation.adoc",
+    "words": 381,
+    "title": "GPU-Side Command Generation: Autonomous Execution"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/04_multi_draw_indirect_mdi.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/07_GPU_Driven_Pipelines/04_multi_draw_indirect_mdi.adoc",
+    "words": 438,
+    "title": "Multi-Draw Indirect (MDI): Bridging Compute to Graphics"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/01_introduction.adoc",
+    "words": 403,
+    "title": "Asynchronous Compute Orchestration"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/02_concurrent_execution.adoc",
+    "words": 780,
+    "title": "Concurrent Execution and Synchronization 2"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/03_timeline_semaphores.adoc",
+    "words": 557,
+    "title": "Timeline Semaphores: Unified Synchronization"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/08_Asynchronous_Compute/04_queue_priority.adoc",
+    "words": 617,
+    "title": "Queue Priority: Managing Latency-Critical Workloads"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/01_introduction.adoc",
+    "words": 264,
+    "title": "Cooperative Matrices and Specialized Math"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/02_cooperative_matrices.adoc",
+    "words": 1013,
+    "title": "Working with Cooperative Matrices"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/09_Specialized_Math/03_mixed_precision.adoc",
+    "words": 802,
+    "title": "Mastering Mixed Precision: FP16 and Int8"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/01_introduction.adoc",
+    "words": 399,
+    "title": "Performance Auditing and Optimization"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/02_instruction_throughput.adoc",
+    "words": 575,
+    "title": "Analyzing Instruction Throughput: Compute-Bound vs. Memory-Bound"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/10_Performance_Optimization/03_divergence_audit.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/10_Performance_Optimization/03_divergence_audit.adoc",
+    "words": 659,
+    "title": "The Divergence Audit: Identifying and Refactoring Branch Divergence"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc",
+    "words": 450,
+    "title": "Diagnostics and AI-Assisted Compute Refinement: Introduction"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/02_compute_validation.adoc",
+    "words": 495,
+    "title": "Compute Validation and GPU-Assisted Debugging"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc",
+    "words": 801,
+    "title": "AI-Assisted Optimization and Refinement"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/01_introduction.adoc",
+    "words": 575,
+    "title": "Mobile and Embedded Compute: Introduction"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/02_android_compute.adoc",
+    "words": 3161,
+    "title": "Compute on Android"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/03_mobile_optimization.adoc",
+    "words": 1283,
+    "title": "Optimizing for Mobile GPUs"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc",
+    "words": 2997,
+    "title": "Beyond Mobile: Embedded and Headless Compute"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/conclusion.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/conclusion.adoc",
+    "words": 713,
+    "title": "Advanced Vulkan Compute: Conclusion"
+  },
+  {
+    "source": "en/Advanced_Vulkan_Compute/introduction.adoc",
+    "target": "zh/Advanced_Vulkan_Compute/introduction.adoc",
+    "words": 584,
+    "title": "Advanced Vulkan Compute: The Power of Parallelism"
+  },
+  {
+    "source": "en/Advanced_glTF/Debugging_Visual_Auditing/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/01_introduction.adoc",
+    "words": 322,
+    "title": "Debugging & Visual Auditing"
+  },
+  {
+    "source": "en/Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc",
+    "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/02_debug_drawers.adoc",
+    "words": 1733,
+    "title": "Debug Drawers: Visualizing Physics and Skeleton"
+  },
+  {
+    "source": "en/Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc",
+    "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/03_skinning_heatmaps.adoc",
+    "words": 1425,
+    "title": "Skinning Heatmaps: Visualizing Weight Painting"
+  },
+  {
+    "source": "en/Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc",
+    "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/04_renderdoc_analysis.adoc",
+    "words": 969,
+    "title": "RenderDoc Analysis: Inspecting the Compute Skinning Output"
+  },
+  {
+    "source": "en/Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/05_conclusion.adoc",
+    "words": 752,
+    "title": "Debugging: Summary & Series Conclusion"
+  },
+  {
+    "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/01_introduction.adoc",
+    "words": 881,
+    "title": "Morph Targets & Facial Animation"
+  },
+  {
+    "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc",
+    "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/02_shape_key_ingestion.adoc",
+    "words": 1222,
+    "title": "Shape Key Ingestion: Parsing Morph Targets from glTF"
+  },
+  {
+    "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc",
+    "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/03_bindless_morph_buffers.adoc",
+    "words": 1911,
+    "title": "Bindless Morph Buffers & Compute Integration"
+  },
+  {
+    "source": "en/Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Morph_Targets_Facial_Animation/04_conclusion.adoc",
+    "words": 758,
+    "title": "Morph Targets: Summary & What's Next"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/01_introduction.adoc",
+    "words": 1388,
+    "title": "Physics Integration: Colliders & Ragdolls"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/02_bone_proxy_colliders.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/02_bone_proxy_colliders.adoc",
+    "words": 1436,
+    "title": "Bone Proxy Colliders"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/03_constraints_and_joint_limits.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/03_constraints_and_joint_limits.adoc",
+    "words": 1409,
+    "title": "Constraints & Joint Limits"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/04_ragdoll_handoff.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/04_ragdoll_handoff.adoc",
+    "words": 1683,
+    "title": "The Ragdoll Handoff"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/05_self_collision_filtering.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/05_self_collision_filtering.adoc",
+    "words": 1453,
+    "title": "Self-Collision Filtering"
+  },
+  {
+    "source": "en/Advanced_glTF/Physics_Integration/06_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Physics_Integration/06_conclusion.adoc",
+    "words": 867,
+    "title": "Physics Integration: Conclusion"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/01_introduction.adoc",
+    "words": 730,
+    "title": "Procedural Animation & Inverse Kinematics"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc",
+    "words": 1558,
+    "title": "Cyclic Coordinate Descent IK"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/03_fabrik.adoc",
+    "words": 1479,
+    "title": "FABRIK: Forward And Backward Reaching IK"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc",
+    "words": 1401,
+    "title": "Foot Placement on Uneven Terrain"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/05_look_at.adoc",
+    "words": 1450,
+    "title": "Look-At Controllers"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/06_physics_driven_lean.adoc",
+    "words": 1446,
+    "title": "Physics-Driven Procedural Lean"
+  },
+  {
+    "source": "en/Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Procedural_Animation_IK/07_conclusion.adoc",
+    "words": 924,
+    "title": "Procedural Animation: Summary & What's Next"
+  },
+  {
+    "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc",
+    "words": 651,
+    "title": "The Scene Graph & Transform Hierarchy"
+  },
+  {
+    "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc",
+    "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc",
+    "words": 1481,
+    "title": "The Engine Expansion: Optimizing the Scene Graph"
+  },
+  {
+    "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc",
+    "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc",
+    "words": 1666,
+    "title": "Physics Syncing: The Animation-Physics Link"
+  },
+  {
+    "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc",
+    "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc",
+    "words": 887,
+    "title": "Metadata & Physics Extras: Automating the Pipeline"
+  },
+  {
+    "source": "en/Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc",
+    "words": 349,
+    "title": "Conclusion: A Foundation for Characters"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/01_introduction.adoc",
+    "words": 846,
+    "title": "Advanced Skeletal & Compute Skinning"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/02_skinning_math.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/02_skinning_math.adoc",
+    "words": 1652,
+    "title": "The Mathematics of Skinning"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc",
+    "words": 2041,
+    "title": "The Compute Skinning Pipeline"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/04_shared_vertex_buffer.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/04_shared_vertex_buffer.adoc",
+    "words": 1616,
+    "title": "Skin Once, Use Everywhere"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc",
+    "words": 2002,
+    "title": "Interpolation & Blending"
+  },
+  {
+    "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/06_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/06_conclusion.adoc",
+    "words": 993,
+    "title": "Skeletal & Compute Skinning: Conclusion"
+  },
+  {
+    "source": "en/Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc",
+    "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc",
+    "words": 335,
+    "title": "Tooling & The Production Pipeline"
+  },
+  {
+    "source": "en/Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc",
+    "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/02_blender_workflow.adoc",
+    "words": 1271,
+    "title": "Blender-to-Vulkan Workflow"
+  },
+  {
+    "source": "en/Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc",
+    "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc",
+    "words": 868,
+    "title": "Validation: The Khronos glTF-Validator"
+  },
+  {
+    "source": "en/Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc",
+    "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/04_gltf_viewer_audit.adoc",
+    "words": 1050,
+    "title": "glTF Viewer Audit: Establishing Ground Truth"
+  },
+  {
+    "source": "en/Advanced_glTF/Tooling_Production_Pipeline/05_conclusion.adoc",
+    "target": "zh/Advanced_glTF/Tooling_Production_Pipeline/05_conclusion.adoc",
+    "words": 557,
+    "title": "Tooling: Summary & What's Next"
+  },
+  {
+    "source": "en/Advanced_glTF/appendix_types.adoc",
+    "target": "zh/Advanced_glTF/appendix_types.adoc",
+    "words": 951,
+    "title": "Appendix: Common Types Reference"
+  },
+  {
+    "source": "en/Advanced_glTF/introduction.adoc",
+    "target": "zh/Advanced_glTF/introduction.adoc",
+    "words": 1096,
+    "title": "Advanced glTF: High-Performance Character Pipelines"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc",
+    "words": 124,
+    "title": "Advanced Topics (Simple Engine)"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Culling.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Culling.adoc",
+    "words": 322,
+    "title": "Frustum Culling and Distance‑based LOD"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc",
+    "words": 554,
+    "title": "Descriptor Indexing and Stable Descriptor Updates"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc",
+    "words": 2317,
+    "title": "Direct-to-Display Rendering with VK_KHR_display"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc",
+    "words": 257,
+    "title": "VK_KHR_dynamic_rendering_local_read — keeping color data in tile memory"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc",
+    "words": 251,
+    "title": "Forward+ Rendering in this Sample"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc",
+    "words": 680,
+    "title": "Forward, Forward+, and Deferred — choosing the right path"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc",
+    "words": 1395,
+    "title": "glTF Animation and Transform Composition"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc",
+    "words": 236,
+    "title": "Mipmaps and Level of Detail (LOD)"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc",
+    "words": 1234,
+    "title": "Planar Reflections in Our Engine"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc",
+    "words": 264,
+    "title": "Push Constants — per‑object material properties"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc",
+    "words": 528,
+    "title": "Ray Query Reflections and Transparency"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc",
+    "words": 630,
+    "title": "Ray Query Rendering"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc",
+    "words": 383,
+    "title": "Rendering Pipeline Overview (this sample)"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc",
+    "words": 386,
+    "title": "VK_EXT_robustness2 — safer defaults for real‑world engines"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc",
+    "words": 268,
+    "title": "Separate Image and Sampler Descriptors — when and why"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc",
+    "words": 276,
+    "title": "VK_EXT_shader_tile_image — fast access to tile data"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc",
+    "words": 395,
+    "title": "Synchronization 2 and frame pacing in this engine"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc",
+    "target": "zh/Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc",
+    "words": 656,
+    "title": "Synchronization and Streaming"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Appendix/appendix.adoc",
+    "target": "zh/Building_a_Simple_Engine/Appendix/appendix.adoc",
+    "words": 1385,
+    "title": "Appendix:"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc",
+    "words": 215,
+    "title": "Camera & Transformations: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc",
+    "words": 5987,
+    "title": "Camera & Transformations: Mathematical Foundations"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc",
+    "words": 634,
+    "title": "Camera & Transformations: Transformation Matrices"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc",
+    "words": 4945,
+    "title": "Camera & Transformations: Camera Implementation"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc",
+    "words": 1015,
+    "title": "Camera & Transformations: Vulkan Integration"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc",
+    "words": 422,
+    "title": "Camera & Transformations: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Camera_Transformations/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Camera_Transformations/index.adoc",
+    "words": 43,
+    "title": "Camera & Transformations"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc",
+    "words": 817,
+    "title": "Opacity Micromaps: Smarter Shadows for the Real World"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/01_the_shadow_problem.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/01_the_shadow_problem.adoc",
+    "words": 1358,
+    "title": "Shadows, Light, and the Trouble with Leaves"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/02_why_alpha_testing_is_expensive.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/02_why_alpha_testing_is_expensive.adoc",
+    "words": 1280,
+    "title": "What Your GPU Is Actually Doing"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/03_what_are_micromaps.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/03_what_are_micromaps.adoc",
+    "words": 2236,
+    "title": "Micromaps: Teaching the Hardware What It Already Should Know"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/04_hardware_traversal_with_omm.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/04_hardware_traversal_with_omm.adoc",
+    "words": 1698,
+    "title": "Inside the Traversal: How the GPU Uses Your Micromap"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/05_implementation_overview.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/05_implementation_overview.adoc",
+    "words": 1955,
+    "title": "Building Opacity Micromaps in the Simple Engine"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/06_results_guidance_and_tradeoffs.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/06_results_guidance_and_tradeoffs.adoc",
+    "words": 1280,
+    "title": "Seeing the Difference and Knowing When to Use It"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/07_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/07_conclusion.adoc",
+    "words": 838,
+    "title": "Conclusion: Bridging Art and Hardware"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/01_introduction.adoc",
+    "words": 724,
+    "title": "Engine Architecture: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.adoc",
+    "words": 901,
+    "title": "Engine Architecture: Architectural Patterns"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/03_component_systems.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/03_component_systems.adoc",
+    "words": 1792,
+    "title": "Engine Architecture: Component Systems"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.adoc",
+    "words": 5610,
+    "title": "Engine Architecture: Resource Management"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/05_rendering_pipeline.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/05_rendering_pipeline.adoc",
+    "words": 8000,
+    "title": "Engine Architecture: Rendering Pipeline"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/06_event_systems.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/06_event_systems.adoc",
+    "words": 1908,
+    "title": "Engine Architecture: Event Systems"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Engine_Architecture/conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Engine_Architecture/conclusion.adoc",
+    "words": 906,
+    "title": "Engine Architecture: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/01_introduction.adoc",
+    "words": 637,
+    "title": "GUI: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/02_imgui_setup.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/02_imgui_setup.adoc",
+    "words": 3881,
+    "title": "GUI: Setting Up Dear ImGui"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/03_input_handling.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/03_input_handling.adoc",
+    "words": 1701,
+    "title": "GUI: Input Handling"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/04_ui_elements.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/04_ui_elements.adoc",
+    "words": 2489,
+    "title": "GUI: UI Elements and Integration Concepts"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc",
+    "words": 4298,
+    "title": "GUI: Vulkan Integration"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/06_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/06_conclusion.adoc",
+    "words": 1131,
+    "title": "GUI: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/GUI/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/GUI/index.adoc",
+    "words": 18,
+    "title": "GUI: Introduce working with a GUI and handling input"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc",
+    "words": 1349,
+    "title": "Introduction to Lighting & Materials"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc",
+    "words": 1460,
+    "title": "Lighting Models"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc",
+    "words": 608,
+    "title": "Push Constants"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc",
+    "words": 6799,
+    "title": "PBR Lighting Implementation"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc",
+    "words": 1038,
+    "title": "Vulkan Integration"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc",
+    "words": 687,
+    "title": "Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc",
+    "words": 1435,
+    "title": "Shadows: Ray Query Integration"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Lighting_Materials/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Lighting_Materials/index.adoc",
+    "words": 72,
+    "title": "Lighting & Materials: Basic lighting models and push constants"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/01_introduction.adoc",
+    "words": 567,
+    "title": "Loading Models: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc",
+    "words": 2105,
+    "title": "Loading Models: Asset Pipeline Concepts"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/03_model_system.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/03_model_system.adoc",
+    "words": 2066,
+    "title": "Loading Models: Implementing the Model Loading System"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc",
+    "words": 4736,
+    "title": "Loading Models: Understanding glTF"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc",
+    "words": 2342,
+    "title": "Loading Models: Implementing PBR for glTF Models"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc",
+    "words": 3324,
+    "title": "Loading Models: Managing Multiple Objects"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc",
+    "words": 3472,
+    "title": "Loading Models: Rendering the Scene"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/08_animations.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/08_animations.adoc",
+    "words": 5246,
+    "title": "Loading Models: Updating Animations"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc",
+    "words": 181,
+    "title": "Loading Models: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Loading_Models/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Loading_Models/index.adoc",
+    "words": 235,
+    "title": "Loading Models: Integrating a glTF loader with animation and PBR"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc",
+    "words": 512,
+    "title": "Mobile Development: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/02_platform_considerations.adoc",
+    "words": 958,
+    "title": "Mobile Development: Platform Considerations"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/03_performance_optimizations.adoc",
+    "words": 1264,
+    "title": "Mobile Development: Performance Optimizations"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc",
+    "words": 1833,
+    "title": "Mobile Development: Rendering Approaches"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc",
+    "words": 2035,
+    "title": "Mobile Development: Vulkan Extensions"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc",
+    "words": 766,
+    "title": "Mobile Development: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Mobile_Development/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Mobile_Development/index.adoc",
+    "words": 70,
+    "title": "Mobile Development"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/01_introduction.adoc",
+    "words": 1057,
+    "title": "Subsystems: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc",
+    "words": 862,
+    "title": "Subsystems: Audio Basics"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/03_vulkan_audio.adoc",
+    "words": 1799,
+    "title": "Subsystems: Vulkan for Audio Processing"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/04_physics_basics.adoc",
+    "words": 1985,
+    "title": "Subsystems: Physics Basics"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/05_vulkan_physics.adoc",
+    "words": 3130,
+    "title": "Subsystems: Vulkan for Physics Simulation"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/06_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/06_conclusion.adoc",
+    "words": 885,
+    "title": "Subsystems: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Subsystems/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Subsystems/index.adoc",
+    "words": 60,
+    "title": "Subsystems"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/01_introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/01_introduction.adoc",
+    "words": 493,
+    "title": "Tooling: Introduction"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/02_cicd.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/02_cicd.adoc",
+    "words": 938,
+    "title": "Tooling: CI/CD for Vulkan Projects"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/03_debugging_and_renderdoc.adoc",
+    "words": 1328,
+    "title": "Tooling: Debugging with VK_KHR_debug_utils and RenderDoc"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/04_crash_minidump.adoc",
+    "words": 2451,
+    "title": "Tooling: Crash Handling and GPU Crash Dumps"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/05_extensions.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/05_extensions.adoc",
+    "words": 1506,
+    "title": "Tooling: Vulkan Extensions for Robustness"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/06_packaging_and_distribution.adoc",
+    "words": 1801,
+    "title": "Tooling: Packaging and Distribution"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/07_conclusion.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/07_conclusion.adoc",
+    "words": 1080,
+    "title": "Tooling: Conclusion"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/Tooling/index.adoc",
+    "target": "zh/Building_a_Simple_Engine/Tooling/index.adoc",
+    "words": 69,
+    "title": "Tooling"
+  },
+  {
+    "source": "en/Building_a_Simple_Engine/introduction.adoc",
+    "target": "zh/Building_a_Simple_Engine/introduction.adoc",
+    "words": 687,
+    "title": "Building a Simple Engine: Introduction"
+  },
+  {
+    "source": "en/ML_Inference/Advanced_Topics/01_introduction.adoc",
+    "target": "zh/ML_Inference/Advanced_Topics/01_introduction.adoc",
+    "words": 1240,
+    "title": "Advanced Topics: The Path to Production"
+  },
+  {
+    "source": "en/ML_Inference/Advanced_Topics/02_quantization_strategies.adoc",
+    "target": "zh/ML_Inference/Advanced_Topics/02_quantization_strategies.adoc",
+    "words": 3376,
+    "title": "Quantization Strategies: Mastering the Bit-Budget"
+  },
+  {
+    "source": "en/ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc",
+    "target": "zh/ML_Inference/Advanced_Topics/03_vendor_optimizations.adoc",
+    "words": 2444,
+    "title": "Vendor-Specific Optimizations: Squeezing the Last Drop"
+  },
+  {
+    "source": "en/ML_Inference/Advanced_Topics/04_memory_management.adoc",
+    "target": "zh/ML_Inference/Advanced_Topics/04_memory_management.adoc",
+    "words": 1413,
+    "title": "Advanced Memory Management: Breaking the Memory Wall"
+  },
+  {
+    "source": "en/ML_Inference/Advanced_Topics/05_model_optimization.adoc",
+    "target": "zh/ML_Inference/Advanced_Topics/05_model_optimization.adoc",
+    "words": 1544,
+    "title": "Model Optimization Techniques: Beyond the Code"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/01_introduction.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/01_introduction.adoc",
+    "words": 736,
+    "title": "Introduction to Building an Inference Engine"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc",
+    "words": 1224,
+    "title": "Hardcoded Forward Propagation"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc",
+    "words": 1017,
+    "title": "From Hardcoded to Flexible"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/04_model_representation.adoc",
+    "words": 1097,
+    "title": "Model Representation"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc",
+    "words": 1626,
+    "title": "Model Formats as Input"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/06_nnef_introduction.adoc",
+    "words": 1310,
+    "title": "NNEF Introduction"
+  },
+  {
+    "source": "en/ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc",
+    "target": "zh/ML_Inference/Building_the_Inference_Engine/07_putting_it_together.adoc",
+    "words": 1261,
+    "title": "Putting It Together"
+  },
+  {
+    "source": "en/ML_Inference/Debugging_and_Performance/01_introduction.adoc",
+    "target": "zh/ML_Inference/Debugging_and_Performance/01_introduction.adoc",
+    "words": 976,
+    "title": "Debugging and Performance: The Art of Verification and Speed"
+  },
+  {
+    "source": "en/ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc",
+    "target": "zh/ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc",
+    "words": 1768,
+    "title": "Debugging Vulkan Compute for ML: Taming the Explicit"
+  },
+  {
+    "source": "en/ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc",
+    "target": "zh/ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc",
+    "words": 1831,
+    "title": "Verifying ML Correctness: The Hunt for Numerical Truth"
+  },
+  {
+    "source": "en/ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc",
+    "target": "zh/ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc",
+    "words": 1237,
+    "title": "Performance Profiling: Mastering the Roofline"
+  },
+  {
+    "source": "en/ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc",
+    "target": "zh/ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc",
+    "words": 1139,
+    "title": "Optimization Techniques: Squeezing the Silicon"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/01_introduction.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/01_introduction.adoc",
+    "words": 1256,
+    "title": "Desktop Applications"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/02_image_classification.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/02_image_classification.adoc",
+    "words": 4348,
+    "title": "Image Classification: From MNIST to CNNs"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/03_practical_implementation.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/03_practical_implementation.adoc",
+    "words": 1537,
+    "title": "CPU Baseline Implementation"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/04_ci_render_validation.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/04_ci_render_validation.adoc",
+    "words": 3413,
+    "title": "CI/CD Render Validation"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/05_real_time_camera.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/05_real_time_camera.adoc",
+    "words": 1797,
+    "title": "Real-Time Camera Integration"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/06_rl_automated_exploration.adoc",
+    "words": 2079,
+    "title": "Reinforcement Learning for Automated Exploration"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/07_ray_tracing_optimization.adoc",
+    "words": 8527,
+    "title": "Ray Tracing Optimization: Denoising and Adaptive Sampling"
+  },
+  {
+    "source": "en/ML_Inference/Desktop_Applications/08_future_directions.adoc",
+    "target": "zh/ML_Inference/Desktop_Applications/08_future_directions.adoc",
+    "words": 1014,
+    "title": "Future Directions: GANs, DLSS, and Beyond"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/01_introduction.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/01_introduction.adoc",
+    "words": 1569,
+    "title": "Embedded Applications: AI at the Edge"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/02_cross_compilation.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/02_cross_compilation.adoc",
+    "words": 2195,
+    "title": "Cross-Compilation: Building for the ARM Empire"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/03_camera_integration.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/03_camera_integration.adoc",
+    "words": 2336,
+    "title": "Camera Integration: The Zero-Copy Pipeline"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/04_power_optimization.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/04_power_optimization.adoc",
+    "words": 1928,
+    "title": "Power and Thermal Optimization: Managing the Physical Limits"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/05_complete_example.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/05_complete_example.adoc",
+    "words": 1679,
+    "title": "Complete Embedded Application: The Smart Wildlife Camera"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc",
+    "words": 2239,
+    "title": "Scene Understanding: Leveraging Vulkan in the XR Pipeline"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/07_ml_compiler.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/07_ml_compiler.adoc",
+    "words": 1157,
+    "title": "ML Compilers on Embedded Devices"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/08_nnef_example.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/08_nnef_example.adoc",
+    "words": 793,
+    "title": "NNEF on Embedded: A Small Example"
+  },
+  {
+    "source": "en/ML_Inference/Embedded_Applications/09_conclusion.adoc",
+    "target": "zh/ML_Inference/Embedded_Applications/09_conclusion.adoc",
+    "words": 1196,
+    "title": "Conclusion: The Future of High-Performance ML"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/01_introduction.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/01_introduction.adoc",
+    "words": 1506,
+    "title": "ML Inference Pipeline: Introduction"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/02_what_is_machine_learning.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/02_what_is_machine_learning.adoc",
+    "words": 1500,
+    "title": "What Is Machine Learning?"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/03_neural_networks_fundamentals.adoc",
+    "words": 7036,
+    "title": "Neural Networks Fundamentals"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/04_inference_explained.adoc",
+    "words": 6812,
+    "title": "Inference Explained"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/05_transfer_learning.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/05_transfer_learning.adoc",
+    "words": 6014,
+    "title": "Transfer Learning"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/06_model_formats.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/06_model_formats.adoc",
+    "words": 3956,
+    "title": "Model Formats"
+  },
+  {
+    "source": "en/ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc",
+    "target": "zh/ML_Inference/ML_Inference_Pipeline/07_mental_model_gpu_execution.adoc",
+    "words": 2240,
+    "title": "Mental Model: GPU Execution"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/01_introduction.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/01_introduction.adoc",
+    "words": 1737,
+    "title": "Integrating Third-Party ML Libraries: Introduction"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/02_onnx_runtime.adoc",
+    "words": 2390,
+    "title": "ONNX Runtime"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/03_tensorflow_lite.adoc",
+    "words": 3215,
+    "title": "TensorFlow Lite"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc",
+    "words": 2943,
+    "title": "PyTorch Mobile"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/05_directml.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/05_directml.adoc",
+    "words": 2783,
+    "title": "DirectML"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc",
+    "words": 3055,
+    "title": "Integration Patterns"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/07_gpu_resource_sharing.adoc",
+    "words": 3289,
+    "title": "GPU Resource Sharing"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc",
+    "words": 3624,
+    "title": "Data Transfer Optimization"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/09_practical_examples.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/09_practical_examples.adoc",
+    "words": 3239,
+    "title": "Practical Examples"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/10_choosing_library.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/10_choosing_library.adoc",
+    "words": 2995,
+    "title": "Choosing the Right Library"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/11_ML_Compilers.adoc",
+    "words": 899,
+    "title": "ML Compilers: Overview and When to Use Them"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/12_iree.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/12_iree.adoc",
+    "words": 2625,
+    "title": "IREE (OpenXLA): Ahead‑of‑Time and JIT Compilation for ML"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/13_apache_tvm.adoc",
+    "words": 1141,
+    "title": "Apache TVM: End‑to‑End Compiler Stack"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/14_mojo_max.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/14_mojo_max.adoc",
+    "words": 793,
+    "title": "Mojo / MAX: Compiler‑Driven Inference from Modular"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/15_openxla.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/15_openxla.adoc",
+    "words": 611,
+    "title": "OpenXLA: XLA, StableHLO, and Where Vulkan Fits"
+  },
+  {
+    "source": "en/ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc",
+    "target": "zh/ML_Inference/Third_Party_Libraries/16_choosing_compiler.adoc",
+    "words": 698,
+    "title": "Choosing the Right ML Compiler"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc",
+    "words": 1218,
+    "title": "Vulkan Compute for ML: Introduction"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/02_compute_pipeline_review.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/02_compute_pipeline_review.adoc",
+    "words": 2161,
+    "title": "Vulkan Compute Pipeline Review"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/03_element_wise_operations.adoc",
+    "words": 2906,
+    "title": "Element-Wise Operations"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/04_matrix_operations.adoc",
+    "words": 2718,
+    "title": "Matrix Operations"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/05_data_management.adoc",
+    "words": 2149,
+    "title": "Data Management"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/06_synchronization.adoc",
+    "words": 2015,
+    "title": "Synchronization"
+  },
+  {
+    "source": "en/ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc",
+    "target": "zh/ML_Inference/Vulkan_Compute_for_ML/07_vector_addition_example.adoc",
+    "words": 2021,
+    "title": "Vector Addition Example"
+  },
+  {
+    "source": "en/ML_Inference/glossary.adoc",
+    "target": "zh/ML_Inference/glossary.adoc",
+    "words": 1687,
+    "title": "Glossary: Machine Learning Inference"
+  },
+  {
+    "source": "en/ML_Inference/introduction.adoc",
+    "target": "zh/ML_Inference/introduction.adoc",
+    "words": 1797,
+    "title": "Machine Learning Inference with Vulkan: Introduction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/01_introduction.adoc",
+    "words": 356,
+    "title": "The OpenXR-Vulkan 1.3 Handshake: Introduction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/02_system_integration.adoc",
+    "words": 833,
+    "title": "System Integration"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/03_hardware_alignment_luid.adoc",
+    "words": 753,
+    "title": "Hardware Alignment"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/04_vulkan_1_3_feature_requirements.adoc",
+    "words": 757,
+    "title": "Vulkan 1.3 Feature Requirements"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/02_OpenXR_Vulkan_Handshake/05_incorporating_into_the_engine.adoc",
+    "words": 822,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/01_introduction.adoc",
+    "words": 321,
+    "title": "Runtime-Owned Swapchains & Image Wrapping: Introduction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/02_external_image_negotiation.adoc",
+    "words": 657,
+    "title": "External Image Negotiation"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/03_raii_resource_integration.adoc",
+    "words": 629,
+    "title": "RAII Resource Integration"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/04_memory_ownership_lifecycle.adoc",
+    "words": 656,
+    "title": "Memory Ownership Lifecycle"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/03_Runtime_Owned_Swapchains/05_incorporating_into_the_engine.adoc",
+    "words": 317,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/01_introduction.adoc",
+    "words": 268,
+    "title": "Dynamic Rendering for Spatial Views"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/02_rendering_to_spatial_swapchains.adoc",
+    "words": 590,
+    "title": "Rendering into Spatial Swapchains"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/03_stereo_viewport_scissor.adoc",
+    "words": 739,
+    "title": "Stereo Viewport & Scissor Management"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/04_Dynamic_Rendering/04_incorporating_into_the_engine.adoc",
+    "words": 524,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/01_introduction.adoc",
+    "words": 363,
+    "title": "The Predictive Frame Loop and Timing Math"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/02_xr_lifecycle.adoc",
+    "words": 681,
+    "title": "The XR Lifecycle"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/03_display_time_prediction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/03_display_time_prediction.adoc",
+    "words": 635,
+    "title": "Display Time Prediction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/05_Predictive_Frame_Loop/04_incorporating_into_the_engine.adoc",
+    "words": 496,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/01_introduction.adoc",
+    "words": 304,
+    "title": "Late Latching and Timeline Semaphores"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/02_last_second_update.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/02_last_second_update.adoc",
+    "words": 676,
+    "title": "The Last-Second Update"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/03_implementation.adoc",
+    "words": 575,
+    "title": "Late Latching Implementation"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/06_Late_Latching/04_incorporating_into_the_engine.adoc",
+    "words": 334,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/01_introduction.adoc",
+    "words": 268,
+    "title": "Action Spaces and Input-to-Pipeline Flow"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/02_openxr_action_system.adoc",
+    "words": 518,
+    "title": "The OpenXR Action System"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/03_space_manifolds.adoc",
+    "words": 562,
+    "title": "Space Manifolds"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/07_Action_Spaces_Input/04_incorporating_into_the_engine.adoc",
+    "words": 238,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/01_introduction.adoc",
+    "words": 340,
+    "title": "Slang for Spatial Shaders: Single-Pass Stereo and Beyond"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/02_native_multiview.adoc",
+    "words": 555,
+    "title": "Native Multiview"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/03_slang_architecture.adoc",
+    "words": 548,
+    "title": "Slang Architecture for N-View Shaders"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/08_Slang_Spatial_Shaders/04_incorporating_into_the_engine.adoc",
+    "words": 331,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/01_introduction.adoc",
+    "words": 277,
+    "title": "Quad-Views and Foveated Rendering: High-Fidelity Spatial Computing"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/02_primary_stereo_with_insets.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/02_primary_stereo_with_insets.adoc",
+    "words": 508,
+    "title": "Primary Stereo with Insets"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/03_multi_layer_composition.adoc",
+    "words": 539,
+    "title": "Multi-Layer Composition"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/09_Quad_Views_Foveated/04_incorporating_into_the_engine.adoc",
+    "words": 309,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/01_introduction.adoc",
+    "words": 275,
+    "title": "Variable Rate Shading (VRS) for Peripheral Optimization"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/02_fragment_density_control.adoc",
+    "words": 473,
+    "title": "Fragment Density Control & VRS"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/03_gaze_driven_logic.adoc",
+    "words": 654,
+    "title": "Gaze-Driven Logic and Eye-Tracking Telemetry"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/10_Variable_Rate_Shading/04_incorporating_into_the_engine.adoc",
+    "words": 397,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/01_introduction.adoc",
+    "words": 234,
+    "title": "Canted Displays and Asymmetric Frustums"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/02_non_parallel_projections.adoc",
+    "words": 530,
+    "title": "Asymmetric Frustums for Canted Displays"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc",
+    "words": 315,
+    "title": "Optimizing Projections with Viewport Swizzling"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc",
+    "words": 311,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc",
+    "words": 435,
+    "title": "CAVE Architecture and Multi-GPU Synchronization: Introduction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc",
+    "words": 529,
+    "title": "Projector-Based Spatial Architecture"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc",
+    "words": 389,
+    "title": "Hardware Synchronization: Swap Groups and Barriers"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc",
+    "words": 248,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc",
+    "words": 394,
+    "title": "Warp and Blend using Vulkan Compute: Introduction"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc",
+    "words": 549,
+    "title": "Geometric Correction & Edge Blending"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc",
+    "words": 570,
+    "title": "Post-Process Warping and Lens Distortion"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc",
+    "words": 365,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/01_introduction.adoc",
+    "words": 315,
+    "title": "Storing the Plenoptic Function"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/02_4d_lightfield_representation.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/02_4d_lightfield_representation.adoc",
+    "words": 461,
+    "title": "4D LightField Representation"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/03_high_density_view_arrays.adoc",
+    "words": 484,
+    "title": "High-Density View Arrays"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/14_LightField_Theory/04_incorporating_into_the_engine.adoc",
+    "words": 285,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/01_introduction.adoc",
+    "words": 231,
+    "title": "Generating Views from Sparse Data"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/02_synthesis_shaders.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/02_synthesis_shaders.adoc",
+    "words": 592,
+    "title": "Plenoptic Synthesis Shaders"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/03_ray_traced_synthesis.adoc",
+    "words": 551,
+    "title": "Ray Traced Synthesis & Microlens Arrays"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/15_Plenoptic_Synthesis/04_incorporating_into_the_engine.adoc",
+    "words": 316,
+    "title": "Incorporating into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/01_introduction.adoc",
+    "words": 166,
+    "title": "Scene Understanding: Data Ingestion and Semantic Labels"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/02_environmental_ingestion.adoc",
+    "words": 569,
+    "title": "Environmental Ingestion: Scanning the Digital Twin"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/03_zero_copy_hand_off.adoc",
+    "words": 449,
+    "title": "Zero-Copy Hand-off for Sensor Data"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/16_Scene_Understanding/04_incorporating_into_the_engine.adoc",
+    "words": 411,
+    "title": "Incorporating Scene Understanding into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/01_introduction.adoc",
+    "words": 165,
+    "title": "ML Inference with Cooperative Matrices"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/02_on_gpu_inference.adoc",
+    "words": 405,
+    "title": "On-GPU Inference with Cooperative Matrices"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/03_refining_spatial_data.adoc",
+    "words": 465,
+    "title": "Refining Spatial Data"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/17_ML_Inference_Spatial/04_incorporating_into_the_engine.adoc",
+    "words": 395,
+    "title": "Incorporating ML Inference into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/01_introduction.adoc",
+    "words": 159,
+    "title": "Semantic Occlusion: Depth-Aware Real/Virtual Compositing"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/02_ml_driven_segmentation.adoc",
+    "words": 477,
+    "title": "ML-Driven Segmentation"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/03_per_pixel_masking.adoc",
+    "words": 447,
+    "title": "Per-Pixel Masking & Stable Compositing"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/18_Semantic_Occlusion/04_incorporating_into_the_engine.adoc",
+    "words": 407,
+    "title": "Incorporating Semantic Occlusion into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/01_introduction.adoc",
+    "words": 185,
+    "title": "Platform Divergence: Desktop DirectMode vs. Mobile Tiled/ASW"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/02_desktop_high_end.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/02_desktop_high_end.adoc",
+    "words": 461,
+    "title": "Desktop High-End: Unleashing the GPU"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/03_mobile_mastery.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/03_mobile_mastery.adoc",
+    "words": 464,
+    "title": "Mobile Mastery: Conquering the Thermal Wall"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/19_Platform_Divergence/04_incorporating_into_the_engine.adoc",
+    "words": 378,
+    "title": "Incorporating Platform Divergence into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/01_introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/01_introduction.adoc",
+    "words": 184,
+    "title": "Advanced Spatial Diagnostics & CI/CD"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/02_spatial_debugging.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/02_spatial_debugging.adoc",
+    "words": 468,
+    "title": "Spatial Debugging: Peering into the Black Box"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/03_automated_qa.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/03_automated_qa.adoc",
+    "words": 410,
+    "title": "Automated QA & Headless CI/CD"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/04_incorporating_into_the_engine.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/20_Spatial_Diagnostics_CI_CD/04_incorporating_into_the_engine.adoc",
+    "words": 357,
+    "title": "Incorporating Spatial Diagnostics into the Engine"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/conclusion.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/conclusion.adoc",
+    "words": 98,
+    "title": "Conclusion"
+  },
+  {
+    "source": "en/OpenXR_Vulkan_Spatial_Computing/introduction.adoc",
+    "target": "zh/OpenXR_Vulkan_Spatial_Computing/introduction.adoc",
+    "words": 701,
+    "title": "OpenXR and Vulkan 1.3 Spatial Computing: Introduction"
+  },
+  {
+    "source": "en/Synchronization/Anatomy_of_a_Dependency/01_introduction.adoc",
+    "target": "zh/Synchronization/Anatomy_of_a_Dependency/01_introduction.adoc",
+    "words": 315,
+    "title": "Anatomy of a Dependency: Introduction"
+  },
+  {
+    "source": "en/Synchronization/Anatomy_of_a_Dependency/02_execution_vs_memory.adoc",
+    "target": "zh/Synchronization/Anatomy_of_a_Dependency/02_execution_vs_memory.adoc",
+    "words": 1188,
+    "title": "Execution vs. Memory Dependencies"
+  },
+  {
+    "source": "en/Synchronization/Anatomy_of_a_Dependency/03_sync2_advantage.adoc",
+    "target": "zh/Synchronization/Anatomy_of_a_Dependency/03_sync2_advantage.adoc",
+    "words": 1435,
+    "title": "The Synchronization 2 Advantage"
+  },
+  {
+    "source": "en/Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc",
+    "target": "zh/Synchronization/Anatomy_of_a_Dependency/04_refined_pipeline_stages.adoc",
+    "words": 696,
+    "title": "Refined Pipeline Stages: Precision is Performance"
+  },
+  {
+    "source": "en/Synchronization/Anatomy_of_a_Dependency/05_conclusion.adoc",
+    "target": "zh/Synchronization/Anatomy_of_a_Dependency/05_conclusion.adoc",
+    "words": 227,
+    "title": "Anatomy of a Synchronization Dependency: Conclusion"
+  },
+  {
+    "source": "en/Synchronization/Async_Compute_Overlap/01_introduction.adoc",
+    "target": "zh/Synchronization/Async_Compute_Overlap/01_introduction.adoc",
+    "words": 378,
+    "title": "Asynchronous Compute & Execution Overlap: Parallelizing the GPU"
+  },
+  {
+    "source": "en/Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc",
+    "target": "zh/Synchronization/Async_Compute_Overlap/02_maximizing_throughput.adoc",
+    "words": 829,
+    "title": "Maximizing Throughput: Identifying Overlap Candidates"
+  },
+  {
+    "source": "en/Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc",
+    "target": "zh/Synchronization/Async_Compute_Overlap/03_async_post_processing.adoc",
+    "words": 650,
+    "title": "Async Post-Processing: Parallelizing Frame End and Start"
+  },
+  {
+    "source": "en/Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc",
+    "target": "zh/Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc",
+    "words": 432,
+    "title": "The Bubble Problem: Finding and Fixing Stalls"
+  },
+  {
+    "source": "en/Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc",
+    "target": "zh/Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc",
+    "words": 388,
+    "title": "Synchronization in Dynamic Rendering: A Pass-less World"
+  },
+  {
+    "source": "en/Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc",
+    "target": "zh/Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc",
+    "words": 511,
+    "title": "Subpass Replacement: Syncing Without the Pass"
+  },
+  {
+    "source": "en/Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc",
+    "target": "zh/Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc",
+    "words": 390,
+    "title": "Local Read Sync: On-Tile Efficiency with Dynamic Rendering"
+  },
+  {
+    "source": "en/Synchronization/Frame_in_Flight/01_introduction.adoc",
+    "target": "zh/Synchronization/Frame_in_Flight/01_introduction.adoc",
+    "words": 409,
+    "title": "Frame-in-Flight Architecture: The Heartbeat of Your Engine"
+  },
+  {
+    "source": "en/Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc",
+    "target": "zh/Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc",
+    "words": 602,
+    "title": "Managing Concurrent Frames: Rebuilding the Main Loop"
+  },
+  {
+    "source": "en/Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc",
+    "target": "zh/Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc",
+    "words": 470,
+    "title": "Resource Lifetimes: Safe Reuse Without deviceWaitIdle()"
+  },
+  {
+    "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc",
+    "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc",
+    "words": 419,
+    "title": "Host Image Copies & Memory Mapped Sync: Direct Access"
+  },
+  {
+    "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc",
+    "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc",
+    "words": 532,
+    "title": "Direct CPU-to-Image Access: Utilizing Host Image Copies"
+  },
+  {
+    "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc",
+    "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc",
+    "words": 432,
+    "title": "Visibility & Flushes: Mastering Coherency"
+  },
+  {
+    "source": "en/Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc",
+    "target": "zh/Synchronization/Pipeline_Barriers_Transitions/01_introduction.adoc",
+    "words": 318,
+    "title": "Pipeline Barriers and Layout Transitions: The Core Loop"
+  },
+  {
+    "source": "en/Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc",
+    "target": "zh/Synchronization/Pipeline_Barriers_Transitions/02_image_barrier.adoc",
+    "words": 1082,
+    "title": "The Image Barrier: Implementing vk::ImageMemoryBarrier2"
+  },
+  {
+    "source": "en/Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc",
+    "target": "zh/Synchronization/Pipeline_Barriers_Transitions/03_queue_family_ownership.adoc",
+    "words": 642,
+    "title": "Queue Family Ownership: The Handshake"
+  },
+  {
+    "source": "en/Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc",
+    "target": "zh/Synchronization/Pipeline_Barriers_Transitions/04_global_vs_local_barriers.adoc",
+    "words": 606,
+    "title": "Global vs. Local Barriers: Precision and Performance"
+  },
+  {
+    "source": "en/Synchronization/Profiling_Optimization/01_introduction.adoc",
+    "target": "zh/Synchronization/Profiling_Optimization/01_introduction.adoc",
+    "words": 375,
+    "title": "Profiling, Batching, and Optimization: Squeezing the GPU"
+  },
+  {
+    "source": "en/Synchronization/Profiling_Optimization/02_barrier_batching.adoc",
+    "target": "zh/Synchronization/Profiling_Optimization/02_barrier_batching.adoc",
+    "words": 512,
+    "title": "Barrier Batching: Consolidating Your Synchronization"
+  },
+  {
+    "source": "en/Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc",
+    "target": "zh/Synchronization/Profiling_Optimization/03_visualizing_stalls.adoc",
+    "words": 377,
+    "title": "Visualizing Stalls: Finding Your Pipeline Bubbles"
+  },
+  {
+    "source": "en/Synchronization/Synchronization_Validation/01_introduction.adoc",
+    "target": "zh/Synchronization/Synchronization_Validation/01_introduction.adoc",
+    "words": 371,
+    "title": "Debugging with Synchronization Validation: Finding Your Hazards"
+  },
+  {
+    "source": "en/Synchronization/Synchronization_Validation/02_validation_layer.adoc",
+    "target": "zh/Synchronization/Synchronization_Validation/02_validation_layer.adoc",
+    "words": 467,
+    "title": "The Validation Layer: Configuring Your Environment"
+  },
+  {
+    "source": "en/Synchronization/Synchronization_Validation/03_interpreting_vuids.adoc",
+    "target": "zh/Synchronization/Synchronization_Validation/03_interpreting_vuids.adoc",
+    "words": 369,
+    "title": "Interpreting VUIDs: Deciphering Your Hazard Errors"
+  },
+  {
+    "source": "en/Synchronization/Timeline_Semaphores/01_introduction.adoc",
+    "target": "zh/Synchronization/Timeline_Semaphores/01_introduction.adoc",
+    "words": 423,
+    "title": "Timeline Semaphores: The Master Clock"
+  },
+  {
+    "source": "en/Synchronization/Timeline_Semaphores/02_unifying_sync.adoc",
+    "target": "zh/Synchronization/Timeline_Semaphores/02_unifying_sync.adoc",
+    "words": 444,
+    "title": "Unifying Synchronization: Replacing Fences and Binary Semaphores"
+  },
+  {
+    "source": "en/Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc",
+    "target": "zh/Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc",
+    "words": 544,
+    "title": "The Monotonic Counter: Tracking Global Progress"
+  },
+  {
+    "source": "en/Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc",
+    "target": "zh/Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc",
+    "words": 590,
+    "title": "Wait-Before-Signal Submission: Decoupling Execution"
+  },
+  {
+    "source": "en/Synchronization/Transfer_Queues_Streaming/01_introduction.adoc",
+    "target": "zh/Synchronization/Transfer_Queues_Streaming/01_introduction.adoc",
+    "words": 389,
+    "title": "Transfer Queues & Asset Streaming Sync: Non-Blocking Uploads"
+  },
+  {
+    "source": "en/Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc",
+    "target": "zh/Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc",
+    "words": 695,
+    "title": "Non-Blocking Data Uploads: Utilizing the Dedicated Transfer Queue"
+  },
+  {
+    "source": "en/Synchronization/Transfer_Queues_Streaming/03_staging_sync.adoc",
+    "target": "zh/Synchronization/Transfer_Queues_Streaming/03_staging_sync.adoc",
+    "words": 596,
+    "title": "Staging Synchronization: Coordinating Graphics and Transfer"
+  },
+  {
+    "source": "en/Synchronization/introduction.adoc",
+    "target": "zh/Synchronization/introduction.adoc",
+    "words": 802,
+    "title": "Synchronization 2: Mastering the GPU/CPU Handshake"
+  },
+  {
+    "source": "en/conclusion.adoc",
+    "target": "zh/conclusion.adoc",
+    "words": 723,
+    "title": "Conclusion"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/00_Overview.adoc",
+    "target": "zh/courses/18_Ray_tracing/00_Overview.adoc",
+    "words": 631,
+    "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/01_Dynamic_rendering.adoc",
+    "target": "zh/courses/18_Ray_tracing/01_Dynamic_rendering.adoc",
+    "words": 528,
+    "title": "Dynamic Rendering"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/02_Acceleration_structures.adoc",
+    "target": "zh/courses/18_Ray_tracing/02_Acceleration_structures.adoc",
+    "words": 1444,
+    "title": "Acceleration Structures (BLAS/TLAS)"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/03_Ray_query_shadows.adoc",
+    "target": "zh/courses/18_Ray_tracing/03_Ray_query_shadows.adoc",
+    "words": 609,
+    "title": "Ray Query Shadows (Opaque Geometry)"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/04_TLAS_animation.adoc",
+    "target": "zh/courses/18_Ray_tracing/04_TLAS_animation.adoc",
+    "words": 1103,
+    "title": "TLAS Animation"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/05_Shadow_transparency.adoc",
+    "target": "zh/courses/18_Ray_tracing/05_Shadow_transparency.adoc",
+    "words": 1723,
+    "title": "Implementing Transparency in Shadows"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/06_Reflections.adoc",
+    "target": "zh/courses/18_Ray_tracing/06_Reflections.adoc",
+    "words": 695,
+    "title": "Ray Query Reflections"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/07_Conclusion.adoc",
+    "target": "zh/courses/18_Ray_tracing/07_Conclusion.adoc",
+    "words": 272,
+    "title": "Conclusion"
+  },
+  {
+    "source": "en/courses/18_Ray_tracing/README.adoc",
+    "target": "zh/courses/18_Ray_tracing/README.adoc",
+    "words": 189,
+    "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+  },
+  {
+    "source": "en/courses/siggraph2026_vk_tutorial/00_Overview.adoc",
+    "target": "zh/courses/siggraph2026_vk_tutorial/00_Overview.adoc",
+    "words": 292,
+    "title": "SIGGRAPH 2026: How to write a Vulkan application in 2026"
+  },
+  {
+    "source": "en/courses/siggraph2026_vk_tutorial/README.adoc",
+    "target": "zh/courses/siggraph2026_vk_tutorial/README.adoc",
+    "words": 209,
+    "title": "SIGGRAPH 2026: How to write a Vulkan application in 2026"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "id": "b002",
+  "words": 4408,
+  "files": [
+    {
+      "source": "attachments/simple_engine/android/README.adoc",
+      "target": "zh/attachments/simple_engine/android/README.adoc",
+      "words": 278,
+      "title": "Android Project for Vulkan Game Engine Tutorial"
+    },
+    {
+      "source": "en/00_Introduction.adoc",
+      "target": "zh/00_Introduction.adoc",
+      "words": 1490,
+      "title": "Khronos Vulkan^®^ Tutorial"
+    },
+    {
+      "source": "en/01_Overview.adoc",
+      "target": "zh/01_Overview.adoc",
+      "words": 2640,
+      "title": "Overview"
+    }
+  ]
+}

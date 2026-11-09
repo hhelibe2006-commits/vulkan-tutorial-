@@ -1,0 +1,36 @@
+{
+  "id": "b110",
+  "words": 1657,
+  "files": [
+    {
+      "source": "en/courses/18_Ray_tracing/06_Reflections.adoc",
+      "target": "zh/courses/18_Ray_tracing/06_Reflections.adoc",
+      "words": 695,
+      "title": "Ray Query Reflections"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/07_Conclusion.adoc",
+      "target": "zh/courses/18_Ray_tracing/07_Conclusion.adoc",
+      "words": 272,
+      "title": "Conclusion"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/README.adoc",
+      "target": "zh/courses/18_Ray_tracing/README.adoc",
+      "words": 189,
+      "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+    },
+    {
+      "source": "en/courses/siggraph2026_vk_tutorial/00_Overview.adoc",
+      "target": "zh/courses/siggraph2026_vk_tutorial/00_Overview.adoc",
+      "words": 292,
+      "title": "SIGGRAPH 2026: How to write a Vulkan application in 2026"
+    },
+    {
+      "source": "en/courses/siggraph2026_vk_tutorial/README.adoc",
+      "target": "zh/courses/siggraph2026_vk_tutorial/README.adoc",
+      "words": 209,
+      "title": "SIGGRAPH 2026: How to write a Vulkan application in 2026"
+    }
+  ]
+}

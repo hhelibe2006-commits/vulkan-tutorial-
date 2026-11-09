@@ -1,0 +1,78 @@
+:pp: {plus}{plus}
+
+= 视觉缺陷诊断：识别图形伪影
+
+== 简介
+
+让画面脱离黑屏只是第一道坎。等图像能渲染出来了，下一批问题会以闪烁、锯齿状的阴影或纹理异常的形式出现——它们通常是管线某处状态错误或同步危险的可见征兆。
+
+本节介绍如何用多模态模型从截图中识别这些伪影，并把它们追溯到造成它们的 Vulkan 状态。
+
+== 值得认识的常见模式
+
+大多数 Vulkan 视觉缺陷都遵循可辨认的模式，无论这个模式匹配是你自己做的，还是交给模型去做。
+
+=== Z-fighting（深度冲突）
+
+**症状：**两个重叠的表面在相机移动时闪烁或交替出现。
+
+**典型场景：**地砖和地面在近处对齐良好，但相机拉远后开始闪烁。
+
+**可能原因：**近平面相对于远平面设得太小（比如近 `0.0001f`、远 `10000.0f`），会在 24 位深度缓冲区中损失深度精度。把近平面移到 `0.1f` 左右通常能恢复稳定。把截图给模型看，它可以提出这一点，但改动之前你应该先在代码里确认实际的近/远值。
+
+=== 阴影痤疮（自阴影）
+
+**症状：**受光表面上出现暗色、条带状或类似摩尔纹的图案。
+
+**典型场景：**第一盏平行光加进来，地板看起来像盖满了条形码。
+
+**可能原因：**考虑到光源相对于表面的角度，`VkPipelineRasterizationStateCreateInfo` 中的 `depthBiasConstantFactor` 或 `slopeFactor` 对阴影贴图的分辨率来说太小了。
+
+== 从模型获得有用的诊断
+
+只有一张截图通常不足以提供上下文。有三样东西会有帮助：
+
+1.  伪影本身的高分辨率截图。
+2.  相关的系统上下文——渲染器类型（聚簇前向、延迟等）、目标 GPU、深度缓冲区格式。
+3.  一个具体的问题，而不是「这是什么毛病」。
+
+例如：
+
+____
+分析这张 4K 截图中地面上锯齿状、像条形码一样的阴影。我使用的是基于 Vulkan 1.3 的级联阴影贴图系统。指出最可能的伪影，并建议调整 `VkPipelineRasterizationStateCreateInfo` 里的哪些设置，以便在减少该伪影的同时不损失深度细节。
+____
+
+把图像、上下文和一个具体目标交给模型，得到的回答会比含糊的描述加低分辨率缩略图更有依据。
+
+== 分步工作流
+
+*  **收集证据。**给伪影截一张 4K 图。如果是闪烁或与运动相关的缺陷，就录一小段视频或截取一串帧，让模型看到它随时间如何变化。
+
+*  **说明你的硬件基线。**
+
+[source,text]
+----
+I am running on an NVIDIA RTX 4070 with Vulkan 1.3.
+I am using a 24-bit D24_UNORM_S8_UINT depth buffer format.
+----
+
+*  **描述症状，并要求规范级别的诊断。**
+
+[source,text]
+----
+Reference the screenshot file: xxx.png
+Analyze the jagged, alternating pixels between the two overlapping planes
+in this image. I am currently using a 0.01 to 10000.0 depth range.
+Diagnose the artifact and suggest the specific Vulkan depth bias or
+projection matrix adjustments needed to resolve it.
+----
+
+*  **验证并实现。**如果模型建议改用对数深度缓冲区之类，就让它生成顶点着色器的 GLSL，以及必要时启用 `VK_EXT_depth_clip_enable` 的 C{pp} 代码——然后在假定修复之前，针对实际的缺陷做测试。
+
+== 小结
+
+能读截图的模型，比只靠文字描述更快地缩小候选原因的范围，但它仍然是在根据像素猜测。真正的原因要由你确认，修复也要由你验证。
+
+下一章讲这种方法在哪里会遇挫——分辨率限制、硬件差异，以及模型光有截图还不够用的情形。
+
+下一篇：xref:AI_Assisted_Vulkan/04_multimodal_ai/04_expectations_limits.adoc[设定合理预期：视觉能力的边界]

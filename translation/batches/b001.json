@@ -1,0 +1,66 @@
+{
+  "id": "b001",
+  "words": 4919,
+  "files": [
+    {
+      "source": "CODE_OF_CONDUCT.adoc",
+      "target": "zh/CODE_OF_CONDUCT.adoc",
+      "words": 44,
+      "title": ""
+    },
+    {
+      "source": "CONTRIBUTING.adoc",
+      "target": "zh/CONTRIBUTING.adoc",
+      "words": 563,
+      "title": "Khronos Vulkan^®^ Tutorial Contributing"
+    },
+    {
+      "source": "CONTRIBUTORS.adoc",
+      "target": "zh/CONTRIBUTORS.adoc",
+      "words": 118,
+      "title": "Contributors to the tutorials (sorted alphabetically)"
+    },
+    {
+      "source": "README.adoc",
+      "target": "zh/README.adoc",
+      "words": 595,
+      "title": "Khronos Vulkan^®^ Tutorial"
+    },
+    {
+      "source": "attachments/android/README.adoc",
+      "target": "zh/attachments/android/README.adoc",
+      "words": 242,
+      "title": "Android Project for Vulkan Tutorial"
+    },
+    {
+      "source": "attachments/ml_inference/README.adoc",
+      "target": "zh/attachments/ml_inference/README.adoc",
+      "words": 1672,
+      "title": "ML Inference Examples"
+    },
+    {
+      "source": "attachments/ml_inference/rPi/README.adoc",
+      "target": "zh/attachments/ml_inference/rPi/README.adoc",
+      "words": 521,
+      "title": "Embedded Wildlife Cam (Raspberry Pi)"
+    },
+    {
+      "source": "attachments/openxr_engine/README.adoc",
+      "target": "zh/attachments/openxr_engine/README.adoc",
+      "words": 85,
+      "title": "OpenXR Engine"
+    },
+    {
+      "source": "attachments/siggraph2026_vk_tutorial/README.adoc",
+      "target": "zh/attachments/siggraph2026_vk_tutorial/README.adoc",
+      "words": 605,
+      "title": "SIGGRAPH 2026: How to write a Vulkan application"
+    },
+    {
+      "source": "attachments/simple_engine/Courses/README.adoc",
+      "target": "zh/attachments/simple_engine/Courses/README.adoc",
+      "words": 474,
+      "title": "Simple Engine — Course Modules"
+    }
+  ]
+}

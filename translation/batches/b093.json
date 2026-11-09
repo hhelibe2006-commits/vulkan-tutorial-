@@ -1,0 +1,18 @@
+{
+  "id": "b093",
+  "words": 3379,
+  "files": [
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/01_introduction.adoc",
+      "words": 1218,
+      "title": "Vulkan Compute for ML: Introduction"
+    },
+    {
+      "source": "en/ML_Inference/Vulkan_Compute_for_ML/02_compute_pipeline_review.adoc",
+      "target": "zh/ML_Inference/Vulkan_Compute_for_ML/02_compute_pipeline_review.adoc",
+      "words": 2161,
+      "title": "Vulkan Compute Pipeline Review"
+    }
+  ]
+}

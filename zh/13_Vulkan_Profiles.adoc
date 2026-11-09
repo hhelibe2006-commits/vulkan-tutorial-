@@ -1,0 +1,318 @@
+:pp: {plus}{plus}
+
+= Vulkan Profiles：简化特性检测
+
+== 简介
+
+本章将介绍 Vulkan profiles，这一强大特性建立在上一章讨论的生态工具之上。Vulkan profiles 提供了标准化方式，用于：
+
+1. 定义应用所需的一组特性、扩展与限制
+2. 自动检查与用户硬件的兼容性
+3. 免除手动特性检测与回退路径的需要
+4. 显著减少样板代码
+
+对于希望应用能在广泛硬件上稳定运行、又不想陷入手动检查特性支持复杂性的开发者来说，Vulkan profiles 尤其有价值。
+
+== 理解 Vulkan Profiles
+
+=== 什么是 Vulkan Profiles？
+
+Vulkan profiles 是特性、扩展、限制与格式的预定义集合，代表某个特定的目标环境或一组最佳实践。它们在底层 Vulkan API 之上提供了更高层的抽象，使以下工作更容易：
+
+* 面向特定的硬件能力
+* 确保跨不同 GPU 的兼容性
+* 一致地落实最佳实践
+* 减少特性检测的样板代码
+
+你不必手动检查每个特性与扩展并实现回退路径，只需指定应用所需的 profile。Vulkan profiles 库会处理兼容性检查，并在用户硬件不满足要求时给出合适的错误信息。
+
+=== Vulkan Profiles 的类型
+
+可用的 profile 有几种类型：
+
+1. *API Profile*：代表特定的 Vulkan API 版本（例如 Vulkan 1.1、1.2、1.3）
+2. *厂商 Profile*：面向特定硬件厂商（例如 NVIDIA、AMD、Intel）
+3. *平台 Profile*：面向特定平台（例如 Windows、Linux、Android）
+4. *最佳实践 Profile*：实现 Vulkan 开发中的推荐做法
+
+本章将以最佳实践 profile 为例，此外还会演示 profile 如何通过免除手动特性检测来简化代码。
+
+== Profiles 如何简化代码
+
+=== 免除手动特性检测
+
+到目前为止，我们必须手动检查特性支持并实现回退路径：
+
+1. 检查设备是否支持 Vulkan 1.3
+2. 如果不支持，检查它是否支持动态渲染扩展
+3. 如果两者都不支持，回退到传统渲染通道
+4. 对每个特性（时间线信号量、synchronization2 等）重复这一过程
+5. 为每个特性维护独立的代码路径
+
+这种做法会导致代码复杂、难以维护，且充满条件分支。
+
+使用 profile 后，整个过程简化为：
+
+1. 检查 profile 是否受支持
+2. 如果支持，使用该 profile 保证的所有特性
+3. 如果不支持，可选地回退到更基础的做法
+
+=== 使用 Profiles 的好处
+
+使用 profile 有几项优势：
+
+1. *大幅降低代码复杂度*：无需多重特性检查与条件分支
+2. *更易维护*：需要测试与调试的代码路径更少
+3. *面向未来*：随着新 Vulkan 版本发布，profile 可以更新而无需改动你的代码
+4. *需求更清晰*：profile 明确规定了应用需要什么
+5. *错误处理更简单*：一次检查代替多次检查
+
+== 在应用中实现 Profiles
+
+下面看看如何在 Vulkan 应用中实现 profiles。我们将以最佳实践 profile 为例，演示 profile 如何取代上一章不得不做的手动特性检测。
+
+=== 添加 Vulkan Profiles 库
+
+首先，需要包含 Vulkan profiles 头文件：
+
+[,c++]
+----
+#include <vulkan/vulkan_profiles.hpp>
+----
+
+该头文件提供了使用 Vulkan profiles 所需的函数与结构体。
+
+Vulkan Profiles 头文件并不属于标准 Vulkan 头文件。
+只有使用 Vulkan SDK 时它才可用。请确保已安装 Vulkan SDK，并在开发环境中正确配置。
+
+=== 定义 Profile 需求
+
+不必手动检查特性与扩展，你可以定义自己的 profile 需求：
+
+[,c++]
+----
+// Define the profile we want to use
+const VpProfileProperties profile = {
+    VP_KHR_ROADMAP_2022_NAME,
+    VP_KHR_ROADMAP_2022_SPEC_VERSION
+};
+
+// Check if the profile is supported
+VkBool32 supported = false;
+vpGetPhysicalDeviceProfileSupport(instance, physicalDevice, &profile, &supported);
+
+if (!supported) {
+    throw std::runtime_error("Roadmap 2022 profile is not supported on this device");
+}
+----
+
+=== 使用 Profile 创建设备
+
+创建逻辑设备时，可以用 profile 自动启用所需的特性与扩展：
+
+[,c++]
+----
+// Create device with Best Practices profile
+VkDeviceCreateInfo deviceCreateInfo = {};
+deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+// Set up queue create infos
+// ...
+
+// Apply the Best Practices profile to the device creation
+vpCreateDevice(physicalDevice, &deviceCreateInfo, &bestPracticesProfile, nullptr, &device);
+----
+
+这样会自动启用最佳实践 profile 要求的所有特性与扩展，无需手动逐一指定。
+
+=== 使用 Profile 专属特性
+
+最佳实践 profile 可能启用一些你可以在应用中使用的特定特性：
+
+[,c++]
+----
+// The profile guarantees these features are available
+// No need to check for support or provide fallback paths
+
+// Example: Using dynamic rendering (guaranteed by the profile)
+vk::RenderingAttachmentInfo colorAttachment{
+    .imageView = swapChainImageViews[imageIndex],
+    .imageLayout = vk::ImageLayout::eAttachmentOptimal,
+    .loadOp = vk::AttachmentLoadOp::eClear,
+    .storeOp = vk::AttachmentStoreOp::eStore,
+    .clearValue = clearColor
+};
+
+vk::RenderingInfo renderingInfo{
+    .renderArea = {{0, 0}, swapChainExtent},
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colorAttachment
+};
+
+commandBuffer.beginRendering(renderingInfo);
+// ... draw commands ...
+commandBuffer.endRendering();
+----
+
+=== Profiles 的错误处理
+
+使用 profile 时，错误处理变得更加直接：
+
+[,c++]
+----
+try {
+    // Try to create a device with the Best Practices profile
+    vpCreateDevice(physicalDevice, &deviceCreateInfo, &bestPracticesProfile, nullptr, &device);
+} catch (const std::exception& e) {
+    // Profile is not supported, provide user-friendly error message
+    std::cerr << "Your GPU does not support the required Vulkan features for optimal performance." << std::endl;
+    std::cerr << "Error: " << e.what() << std::endl;
+
+    // Optionally, try with a more basic profile or exit gracefully
+    // ...
+}
+----
+
+== 手动特性检测与 Profiles 的对比
+
+我们来对比这两种做法，看看 profile 究竟能消除多少代码与复杂度：
+
+=== 手动特性检测（上一章）
+
+在上一章，对于想要使用的*每个特性*，我们都得写这样的代码：
+
+[,c++]
+----
+// Check if dynamic rendering is supported
+bool dynamicRenderingSupported = false;
+
+// Check for Vulkan 1.3 support
+if (deviceProperties.apiVersion >= VK_API_VERSION_1_3) {
+    dynamicRenderingSupported = true;
+} else {
+    // Check for the extension on older Vulkan versions
+    for (const auto& extension : availableExtensions) {
+        if (strcmp(extension.extensionName, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) == 0) {
+            dynamicRenderingSupported = true;
+            break;
+        }
+    }
+}
+
+// Store this information for later use
+appInfo.dynamicRenderingSupported = dynamicRenderingSupported;
+----
+
+然后还得在应用中到处创建条件代码路径：
+
+[,c++]
+----
+// When creating the pipeline
+if (appInfo.dynamicRenderingSupported) {
+    // Use dynamic rendering
+    vk::PipelineRenderingCreateInfo renderingInfo{
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &swapChainImageFormat
+    };
+    pipelineInfo.pNext = &renderingInfo;
+    pipelineInfo.renderPass = nullptr;
+} else {
+    // Use traditional render pass
+    pipelineInfo.pNext = nullptr;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+}
+
+// When recording command buffers
+if (appInfo.dynamicRenderingSupported) {
+    // Begin dynamic rendering
+    vk::RenderingAttachmentInfo colorAttachment{/*...*/};
+    vk::RenderingInfo renderingInfo{/*...*/};
+    commandBuffer.beginRendering(renderingInfo);
+} else {
+    // Begin traditional render pass
+    vk::RenderPassBeginInfo renderPassInfo{/*...*/};
+    commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+}
+
+// And again at the end of the command buffer
+if (appInfo.dynamicRenderingSupported) {
+    commandBuffer.endRendering();
+} else {
+    commandBuffer.endRenderPass();
+}
+----
+
+对于每个想有条件使用的特性（时间线信号量、synchronization2 等），我们都得重复这种模式，最终得到分支复杂、难以维护的代码。
+
+=== 使用 Profiles（本章）
+
+使用 profile 后，所有这些复杂度都归结为：
+
+[,c++]
+----
+// Define the profile
+const VpProfileProperties profile = {
+    VP_KHR_ROADMAP_2022_NAME,
+    VP_KHR_ROADMAP_2022_SPEC_VERSION
+};
+
+// Check if the profile is supported
+VkBool32 supported = false;
+vpGetPhysicalDeviceProfileSupport(instance, physicalDevice, &profile, &supported);
+
+if (supported) {
+    // Create device with the profile - all features enabled automatically
+    vpCreateDevice(physicalDevice, &deviceCreateInfo, &profile, nullptr, &device);
+
+    // Now we can use any feature guaranteed by the profile without checks
+    // For example, dynamic rendering is always available:
+    vk::RenderingAttachmentInfo colorAttachment{/*...*/};
+    vk::RenderingInfo renderingInfo{/*...*/};
+    commandBuffer.beginRendering(renderingInfo);
+    // ... draw commands ...
+    commandBuffer.endRendering();
+}
+----
+
+profile 方案消除了：
+
+1. 多重特性检测检查
+2. 应用中遍布的条件代码路径
+3. 在应用状态中跟踪特性支持的需要
+4. 维护与测试多条代码路径的复杂度
+
+由此得到的代码：
+
+1. 显著更短
+2. 更易阅读与理解
+3. 更少出错
+4. 更易维护与更新
+
+== 使用 Profiles 的最佳实践
+
+使用 Vulkan profiles 时，请考虑以下最佳实践：
+
+1. *选择合适的 profile*：选择符合应用需求的 profile，不要过于严格。
+
+2. *提供回退选项*：如果最佳实践 profile 不受支持，考虑回退到更基础的 profile。
+
+3. *清晰传达需求*：根据你支持的 profile 告知用户硬件需求。
+
+4. *在多种硬件上测试*：即便使用 profile，也应在不同 GPU 上测试应用。
+
+5. *保持更新*：profile 会随新 Vulkan 版本演进，因此要让实现保持最新。
+
+== 结语
+
+Vulkan profiles 提供了一种强大的方式来简化 Vulkan 代码，免除手动特性检测与条件代码路径。正如本章所示，profile 能大幅减少你需要编写与维护的代码量，使应用：
+
+1. 更简洁易读
+2. 更易维护与更新
+3. 更少出错
+4. 在不同硬件上更一致
+
+本章探讨的示例展示了 profile 如何取代上一章不得不实现的复杂特性检测与回退路径。使用 profile 后，你可以更多地关注应用的核心功能，而更少纠结硬件兼容性的细节。
+
+link:/attachments/33_vulkan_profiles.cpp[C{pp} 代码]

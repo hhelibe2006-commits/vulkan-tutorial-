@@ -1,0 +1,46 @@
+:pp: {plus}{plus}
+
+= 内核可移植性：面向 Vulkan 的 OpenCL C
+
+== 为 Vulkan 调整 OpenCL C
+
+虽然 `clspv` 能转换大多数 OpenCL C 内核，但并非每个特性都能开箱即用。为确保内核在 Vulkan 上正确运行，你可能需要采用一种“Vulkan 风味”的 OpenCL C 写法。
+
+这不是要重写你的逻辑，而是要留意 OpenCL 与 Vulkan 在内存模型和执行模型上的差异。
+
+== 避免物理指针
+
+OpenCL C 允许你把内存当作单一的平坦地址空间。而 Vulkan 把内存分成不同类型（存储缓冲区、统一缓冲区、LDS 等）。
+
+为 `clspv` 管线编写内核时：
+
+*   **优先用缓冲区**：对大型数据数组使用 `__global` 指针，并把它们映射到 Vulkan 存储缓冲区。
+*   **写清限定符**：明确标注指针类型（例如 `__global`、`__local`、`__constant`），让 `clspv` 能把它们映射到正确的 Vulkan 内存区域。
+*   **避免指针算术**：虽然 `VK_KHR_variable_pointers` 让指针算术成为可能，但在较老的硬件上可能很慢。尽可能用数组式索引（`p[i]`）代替指针自增（`*(p + i)`）。
+
+== 理解同步
+
+OpenCL 的 `barrier()` 与 Vulkan 的 `control_barrier` 非常相似。不过，Vulkan 对**内存一致性**的要求明确得多（正如第 3 章所讨论的）。
+
+移植内核时：
+
+1.  **检查作用域**：OpenCL 的 `CLK_LOCAL_MEM_FENCE` 与 `CLK_GLOBAL_MEM_FENCE` 分别对应 Vulkan 的 `Workgroup` 与 `Device` 内存作用域。
+2.  **域操作**：确保工作组之间共享的任何数据都通过原子操作、或带有正确内存可见性标志的显式内存屏障来处理。
+
+== 内建变量
+
+在 OpenCL C 中，你会用到 `get_global_id()` 和 `get_local_id()` 这类函数。`clspv` 会自动把它们映射到等价的 Vulkan 内建变量：
+
+*   `get_global_id(0)` 映射到 `gl_GlobalInvocationID.x`（在 Slang 中为 `SV_DispatchThreadID.x`）
+*   `get_local_id(0)` 映射到 `gl_LocalInvocationID.x`（在 Slang 中为 `SV_GroupThreadID.x`）
+*   `get_group_id(0)` 映射到 `gl_WorkGroupID.x`（在 Slang 中为 `SV_GroupID.x`）
+
+由于是直接映射，内核的索引逻辑应当保持不变。
+
+== 移植数百万行代码
+
+这条管线真正的威力在于处理遗留代码的能力。许多生产级库（例如 OpenCV 或自研物理引擎）包含成千上万个 OpenCL 内核。遵循这些简单的可移植性准则，你就能以最小的代价把这些库带到 Vulkan 上。
+
+下一节我们将探索 **clvk**，它更进一步，在 Vulkan 之上提供了完整的 OpenCL 3.0 API 实现。
+
+xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/03_clspv_pipeline.adoc[上一节：clspv 管线：从 OpenCL C 到 SPIR-V] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/05_clvk_and_layering.adoc[下一节：clvk 与分层：Vulkan 上的 OpenCL 3.0]

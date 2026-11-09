@@ -1,0 +1,67 @@
+= Vulkan 教程的 Android 项目
+
+本 Android 项目让你可以在 Android 设备上运行 Vulkan 教程的不同章节。
+
+== 选择章节
+
+默认情况下，项目会构建并运行 `34_android` 章节。你可以在 Gradle 构建中设置 `chapter` 属性来选择其它章节。
+
+=== 可用章节
+
+* `34_android`：Android 章节，使用 tinyobjloader 加载 OBJ 模型
+* `35_gltf_ktx`：glTF 与 KTX 章节，使用 tinygltf 加载 glTF 模型，并使用 KTX 加载 KTX2 纹理
+
+=== 如何选择章节
+
+==== 从命令行
+
+[source,bash]
+----
+./gradlew assembleDebug -Pchapter=35_gltf_ktx
+----
+
+==== 从 Android Studio
+
+1. 编辑项目根目录下的 `gradle.properties` 文件
+2. 添加以下行：
++
+[source]
+----
+chapter=35_gltf_ktx
+----
+3. 同步项目并构建
+
+== 添加新章节
+
+要添加对新章节的支持：
+
+1. 把章节名添加到 `app/src/main/cpp/CMakeLists.txt` 中的 `SUPPORTED_CHAPTERS` 列表
+2. 在同一个文件中添加该章节专用的库和编译定义
+3. 确保该章节的源文件存在于 `attachments` 目录中
+
+例如，要添加对一个假设的 `36_new_feature` 章节的支持：
+
+[source,cmake]
+----
+# Define the list of supported chapters
+set(SUPPORTED_CHAPTERS
+    "34_android"
+    "35_gltf_ktx"
+    "36_new_feature"
+)
+
+# Add chapter-specific libraries and definitions
+if(CHAPTER STREQUAL "34_android")
+    # ...
+elseif(CHAPTER STREQUAL "35_gltf_ktx")
+    # ...
+elseif(CHAPTER STREQUAL "36_new_feature")
+    target_link_libraries(vulkan_tutorial_android
+        # Add any required libraries here
+    )
+
+    target_compile_definitions(vulkan_tutorial_android PRIVATE
+        # Add any required compile definitions here
+    )
+endif()
+----

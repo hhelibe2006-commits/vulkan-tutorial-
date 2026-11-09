@@ -1,0 +1,85 @@
+:pp: {plus}{plus}
+
+= Vulkan Registry 与 GPUInfo MCP
+
+== 简介：从源数据出发
+
+Vulkan 是数据驱动的 API。它的结构体、枚举和扩展都定义在一个中心 XML 文件里，即 **Vulkan Registry（`vk.xml`）**。同样，成千上万款 GPU 的能力被记录在 **Vulkan 硬件数据库（`gpuinfo.org`）** 中。
+
+让 AI 直接访问这些来源，意味着它可以去查答案，而不是凭训练数据猜测——对近期新增或变更的内容来说，这一点尤其重要。本章讲如何使用现成的注册表 MCP 服务器，以及为 `gpuinfo.org` 自己写一个小连接器。
+
+== 用 mcp-Vulkan 查询注册表
+
+**mcp-Vulkan** 项目是一个围绕 `vk.xml` 构建的 MCP 服务器。它向你的 AI 代理暴露 `search-vulkan-docs` 和 `get-vulkan-topic` 之类的工具。
+
+这对模型训练截止之后发布的扩展最为关键。如果你在实现 `VK_KHR_maintenance7` 之类的东西，而模型没被训练过，它可能会乱猜结构体名或标志名。通过 mcp-Vulkan 接上 `search-vulkan-docs` 后，AI 可以直接查询当前规范，返回真实的结构体名——例如 `VkPhysicalDeviceMaintenance7FeaturesKHR`——而不是编一个看着像那么回事的名字。
+
+== 构建 GPUInfo MCP 服务器
+
+`mcp-Vulkan` 覆盖了官方规范，但连接 **Vulkan 硬件数据库（`gpuinfo.org`）** 需要自己写一个小服务器，因为它是一个社区运营的站点，而不是结构化 API。下面是一个最小的 Python MCP 服务器，为你的助手提供 `query_gpu_limit` 工具，用于在设计阶段检查硬件约束。
+
+=== 第 1 步：准备环境
+
+为你的 MCP 服务器新建一个目录并安装依赖：`mcp` 用于协议，`requests` 用于抓取数据。
+
+[source,bash]
+----
+mkdir gpuinfo-mcp && cd gpuinfo-mcp
+python -m venv venv
+source venv/bin/activate
+pip install mcp requests
+----
+
+=== 第 2 步：定义服务器逻辑
+
+新建名为 `server.py` 的文件。它初始化一个 `McpServer`，并定义一个工具：接收 GPU 名称和限制名称（例如 `maxDescriptorSetSampledImages`），返回对应的值。
+
+[source,python]
+----
+import requests
+from mcp.server import McpServer
+from mcp.types import Tool
+
+# Initialize the server
+server = McpServer("GPUInfo-Connector")
+
+@server.tool()
+def query_gpu_limit(gpu_name: str, limit_name: str) -> str:
+    """
+    Queries gpuinfo.org for a specific hardware limit of a given GPU.
+    """
+    # In a real-world scenario, you would use a search API
+    # For this tutorial, we simulate a database lookup logic
+    search_url = f"https://vulkan.gpuinfo.org/listreports.php?devicename={gpu_name.replace(' ', '+')}"
+
+    # The AI will receive this URL and can use a browser-mcp to navigate it,
+    # or this tool can parse the latest report for that device.
+    return f"Searching gpuinfo.org for '{limit_name}' on '{gpu_name}'. Accessing reports at: {search_url}"
+
+if __name__ == "__main__":
+    server.run()
+----
+
+=== 第 3 步：注册到你的 AI 代理
+
+要使用这个工具，把该服务器加到代理的配置里。如果你用的是 **Goose**，把下面内容加到 `~/.config/goose/config.yaml`：
+
+[source,yaml]
+----
+extensions:
+  gpuinfo:
+    cmd: python
+    args: ["/path/to/gpuinfo-mcp/server.py"]
+----
+
+== 示例：对照硬件限制检查无绑定设计
+
+假设你在设计一套无绑定渲染方案，问你的助手：“Adreno 600 系列的 `maxDescriptorSetSampledImages` 限制是多少？1024 张纹理的无绑定数组放得下吗？”
+
+接上 GPUInfo MCP 服务器后，助手可以调用 `query_gpu_limit` 并报出真实数字（许多 Adreno 600 设备上是 128），而不是靠猜——在这个例子里，这意味着你 1024 张纹理的方案在那款硬件上放不下。它还可以接着建议替代方案，比如分块描述符策略或针对移动端的回退路径，不过在定下方案之前，最好把这类建议与你实际的约束条件核对一遍。
+
+== 小结
+
+把 AI 接到 Vulkan Registry 和 GPUInfo 查询工具上，意味着它使用的是专业图形工程师手工查询的那套实时数据，而不是它在训练中碰巧见过的内容。它仍然不能覆盖一切，关键结论也仍然值得验证，但省掉了大量手工复制粘贴式的查资料工作。
+
+下一节：xref:AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc[代理式自动化与性能审计]

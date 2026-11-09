@@ -1,0 +1,38 @@
+:pp: {plus}{plus}
+
+= 借助 AI 与 RenderDoc 的专业级调试
+
+== 简介
+
+Vulkan 调试通常是一个搜索问题：你拿到一条晦涩的**验证层错误（VUID）**，或者更糟，一块黑屏，然后不得不沿着管线状态、同步屏障和着色器逻辑一路查找，找出出错的那一个位。
+
+AI 助手在这里能帮上忙——它扮演的是诊断辅助，而不只是代码生成器：只要上下文给得对，它把错误字符串、GPU 状态和你的源码关联起来，比你手工做要快。本节讲怎么把它搭起来。
+
+== 三类证据来源
+
+一次调试会话通常依赖三类事实来源：
+
+1.  **VUID。** 来自 Vulkan 验证层的具体错误字符串。它们告诉你违反了*哪条*规则。
+2.  **RenderDoc 状态。** 绘制调用发生时 GPU 的原始状态——管线、描述符、缓冲区。它告诉你 GPU 实际看到的是什么。
+3.  **AI 对两者的推理。** 当你把 VUID、RenderDoc 状态和 C{pp} 源码一起交给助手时，它常常能比你手工交叉比对这三者更快地把它们串起来。
+
+== 为什么用 AI 做 Vulkan 调试
+
+Vulkan 的验证错误准确，但信息密集。像 `VUID-VkGraphicsPipelineCreateInfo-pStages-01565` 这样的 VUID 精确说明了问题是什么，却未必指出该往哪里看。把这些字符串和 GPU 捕获喂给助手，能帮你做这些事：
+
+*   **翻译 VUID。** 把一句密集的“图像布局不匹配”变成平实的解释，并给出代码中可能漏掉布局转换的位置。
+*   **读取 GPU 状态。** 扫描 RenderDoc 捕获，找出描述符集与管线不兼容的原因，而不是手工逐字段比对。
+*   **推理着色器取值。** 取某个出错像素的输入值，对照你的 HLSL 或 Slang 逻辑检查，抓出编译器不会报的错。
+
+它不会取代你理解验证层和 RenderDoc 在说什么——把它当作减少手工交叉比对的手段，而不是一个无需核对就能吐出答案的黑盒。
+
+== 本节内容
+
+1.  **xref:AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc[VUID 自动修复：借助验证层排查问题]：** 把原始的验证错误字符串变成有针对性的代码修复。
+2.  **xref:AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc[AI 与 RenderDoc 集成：自动化 GPU 分析]：** 用代理读取 GPU 捕获，标出冗余的状态切换或同步隐患。
+3.  **xref:AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc[着色器调试与日志解析]：** 把庞大的 API 日志喂给助手，找出状态不匹配的源头。
+4.  **xref:AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc[AI 辅助的跟踪分析：GFXReconstruct]：** 捕获并审计多帧的 Vulkan 调用流，排查驱动回归和资源生命周期问题。
+
+读完之后，你会得到一套可复用的流程：在助手的参与下处理 Vulkan 验证错误和渲染 bug。
+
+下一节：xref:AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc[VUID 自动修复：借助验证层排查问题]

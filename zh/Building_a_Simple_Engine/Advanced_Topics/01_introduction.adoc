@@ -1,0 +1,28 @@
+:pp: {plus}{plus}
+
+= 高级主题（简易引擎）
+
+欢迎——本节收集了一批简短的、聊天式的指南，讲解每项特性是什么、我们为什么用它，以及它在简易引擎中是怎么实现的。
+
+从任何你感兴趣的地方开始读：
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Planar_Reflections.adoc[我们引擎中的平面反射]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Rendering.adoc[光线查询渲染]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Ray_Query_Reflections_and_Transparency.adoc[光线查询反射与透明度]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Forward_ForwardPlus_Deferred.adoc[前向、Forward+ 与延迟——选择合适的路径]
+* xref:Building_a_Simple_Engine/Advanced_Topics/ForwardPlus_Rendering.adoc[本示例中的 Forward+ 渲染]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Culling.adoc[视锥剔除与基于距离的 LOD]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Mipmaps_and_LOD.adoc[mipmap 与细节层级（LOD）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/GLTF_Animation.adoc[glTF 动画与变换合成]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Push_Constants_Per_Object.adoc[推送常量——逐对象的材质属性]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Separate_Image_Sampler_Descriptors.adoc[分离的图像与采样器描述符——何时使用以及为什么]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc[本引擎中的 Synchronization 2 与帧节奏控制]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Robustness2.adoc[VK_EXT_robustness2——为真实引擎提供更安全的默认值]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Dynamic_Rendering_Local_Read.adoc[VK_KHR_dynamic_rendering_local_read——将颜色数据保留在瓦片内存中]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Shader_Tile_Image.adoc[VK_EXT_shader_tile_image——快速访问瓦片数据]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Direct_To_Display.adoc[使用 VK_KHR_display 的直接显示渲染]
+
+xref:Building_a_Simple_Engine/introduction.adoc[返回：构建简易引擎：简介]

@@ -1,0 +1,88 @@
+= 元数据与物理扩展：自动化管线
+
+== 超越几何
+
+现代角色管线不只是关于网格与纹理，它还关乎**意图**。当美术在 Blender 里给角色做绑定时，他们不只是在摆骨骼，而是在定义这个角色该如何与世界交互。在「简单引擎」里，我们手动摆放实体、手动定义它们的属性。而在高级角色引擎里，这种手动做法是瓶颈，会带来错误，拖慢迭代。
+
+glTF 格式提供了一个强大却常被忽视的特性来解决这个问题：**`extras`** 字段。这个字段是一个万用容器，可以存放自定义 JSON 元数据，挂到 glTF 层级中的任何对象上——节点、网格、材质，甚至动画。借助这些 extras，我们可以搭建一条数据驱动的管线：美术在 3D 工具里的工作自动配置引擎的行为。
+
+== 「extras」的力量
+
+在专业制作中，美术不应该为了定义角色的碰撞形状放在哪而写代码。他们改为在 Blender 里把这些定义成自定义属性。导出 glTF 时，这些属性会被嵌入对应节点的 `extras` 字段。
+
+=== 在 Blender 中添加自定义属性
+
+要给节点附加物理元数据，在 Blender 里选中物体或骨骼，进入**属性面板 → 物体属性 → 自定义属性**（对骨架骨骼则是**骨骼属性 → 自定义属性**）。点击**新建**添加一条属性，命名为 `physics`。用 Blender 的属性编辑器，或在脚本工作区里写一小段 Python 脚本，把它的值设为一个 JSON 兼容的字典：
+
+[source,python]
+----
+import bpy
+
+obj = bpy.context.active_object
+obj["physics"] = {"type": "capsule", "radius": 0.1, "height": 0.4}
+----
+
+通过**文件 → 导出 → glTF 2.0**导出时，在导出对话框里勾选**包含 → 自定义属性**。Blender 会把这些属性序列化到输出 `.glb` / `.gltf` 文件中对应节点的 `extras` 字段里。
+
+image::images/blender_custom_properties.png[Blender 自定义属性面板，显示前臂骨骼上的 physics 胶囊属性,600]
+
+NOTE: 上面的截图展示的是 Blender 4.x 中的「自定义属性」面板。该面板在 Blender 3.x 中的位置相同。
+
+以角色的前臂骨骼为例。在 Blender 里，我们可以添加一个名为 `physics` 的自定义属性，其值定义一个胶囊碰撞体。当引擎解析 glTF 时，它看到的不只是一个骨骼节点，而是一个「挂接物理代理」的请求。
+
+[source,cpp]
+----
+// Example of extracting "extras" during node loading
+void processNodeExtras(const tinygltf::Node& gltfNode, Node& engineNode) {
+    if (!gltfNode.extras.IsNull() && gltfNode.extras.IsObject()) {
+        if (gltfNode.extras.Has("physics")) {
+            const auto& physicsData = gltfNode.extras.Get("physics");
+
+            std::string type = physicsData.Get("type").Get<std::string>();
+
+            if (type == "capsule") {
+                float radius = static_cast<float>(physicsData.Get("radius").Get<double>());
+                float height = static_cast<float>(physicsData.Get("height").Get<double>());
+
+                // Populate the ColliderDef embedded in the Node.
+                // ColliderDef::half_height stores the capsule's *half*-height,
+                // so we halve the artist-facing "height" value from the extras.
+                engineNode.collider_def.shape       = ColliderDef::Shape::CAPSULE;
+                engineNode.collider_def.radius      = radius;
+                engineNode.collider_def.half_height = height * 0.5f;
+            }
+        }
+    }
+}
+----
+
+这种做法弥合了视觉与物理之间的鸿沟。如果美术缩放角色或调整某条肢体的长度，物理代理——以及由此决定的碰撞行为——会自动更新。
+
+== 自动化骨架与物理的连接
+
+这些元数据最关键的应用是**运动学到动态的链路**。要让角色响应物理（比如布娃娃），物理引擎需要知道哪些刚体对应场景图中的哪些骨骼。
+
+通过在 glTF 中把节点标记为「启用物理」，我们可以自动化整个布娃娃层级的创建。在场景加载过程中，引擎可以：
+
+1.  识别带有物理元数据的节点。
+2.  在物理世界中创建对应的刚体（PhysX、Jolt 或 Bullet）。
+3.  建立我们在上一节讨论过的双向同步链路。
+4.  根据额外的「joint_limit」元数据生成物理约束（比如铰链或球窝关节）。
+
+这种自动化确保视觉骨架与物理骨架始终完美同步，引擎核心里不需要一行硬编码的骨骼名或魔法数字。
+
+== 生产收益：迭代速度
+
+从手动设置转向元数据驱动的自动化，是引擎成熟度上的一大飞跃。它把引擎从静态渲染器变成了给美术用的灵活平台。
+
+*   **零代码碰撞体**：美术可以增删或细化碰撞形状，无需程序员介入。
+*   **资产专属逻辑**：元数据可以定义表面类型（例如用于脚步声的「金属」与「血肉」）、交互点（给剑用的「grab_here」）或 AI 提示（「cover_node」）。
+*   **校验**：由于元数据是资产的一部分，它可以被 **Khronos glTF-Validator** 检查，确保游戏中每个角色在进入引擎之前就拥有一套有效的物理设置。
+
+== 小结
+
+借助 glTF 的「extras」，我们把场景配置的责任从程序员转移到了源资产。场景图不再只是一堆矩阵，而是一个丰富、带标注的层级，为引擎中的每个系统提供信息——从渲染器到物理求解器。
+
+场景图已统一、资产管线已自动化，我们准备好攻克角色运动的核心了：**高级骨骼与计算蒙皮**。下一章，我们会把顶点形变的重活搬进 Vulkan 计算着色器，让角色既有表现力又保持高性能。
+
+xref:Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc[上一章：物理同步：动画与物理的连接] | xref:Advanced_glTF/Scene_Graph_Hierarchy/05_conclusion.adoc[下一章：结语：角色系统的基础]

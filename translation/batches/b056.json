@@ -1,0 +1,12 @@
+{
+  "id": "b056",
+  "words": 2066,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Loading_Models/03_model_system.adoc",
+      "target": "zh/Building_a_Simple_Engine/Loading_Models/03_model_system.adoc",
+      "words": 2066,
+      "title": "Loading Models: Implementing the Model Loading System"
+    }
+  ]
+}

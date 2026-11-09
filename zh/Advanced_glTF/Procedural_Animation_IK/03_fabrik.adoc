@@ -1,0 +1,169 @@
+:pp: {plus}{plus}
+= FABRIK：前向与后向到达 IK
+
+== 另一种思路
+
+CCD 思考的是关节与旋转，而 FABRIK——**前向与后向到达逆向运动学**——思考的是位置。这是方法论上的根本差异，也带来了根本不同的视觉效果。
+
+FABRIK 由 Andreas Aristidou 和 Joan Lasenby 在 2011 年发表，很快就产生了影响，因为它在许多场景下的视觉效果好于 CCD，同时实现起来又出奇简单。核心思想是把每个关节看作空间中的一个点，把每根骨骼看作连接两个相邻点的刚性杆。给定末端执行器的目标位置，FABRIK 用两个阶段在链上重新分布关节：后向阶段把末端执行器锚定到目标上，并向根部传播；前向阶段把根部重新锚定回它的原始位置，再向末端执行器传播。反复执行这两个阶段就能快速收敛到解。
+
+FABRIK 之所以能避免 CCD 可能出现的末端执行器偏置，是因为两个阶段都对称地对待链上的每个关节。默认情况下没有哪个关节的影响力更大——每个关节只是调整自己以满足相邻关节施加的约束。对需要整条手臂或整条腿参与的伸手动作，由此得到的姿势往往更自然。
+
+== FABRIK 算法
+
+具体地说。我们有一条关节链，位置为 `p[0], p[1], ..., p[n]`，其中 `p[0]` 是根，`p[n]` 是末端执行器。骨骼长度为 `d[i] = |p[i+1] - p[i]|`，它们是固定的——骨骼不会拉伸。目标是 `t`。
+
+**后向阶段：**
+
+1. 令 `p[n] = t`。末端执行器现在位于目标处。
+2. 对从 `n-1` 到 `0` 的每个关节：计算从 `p[i]` 到 `p[i+1]` 的方向，并把 `p[i]` 放在该方向上、距离 `p[i+1]` 为 `d[i]` 的位置。换句话说，`p[i] = p[i+1] + normalize(p[i] - p[i+1]) * d[i]`。
+
+后向阶段结束后，末端执行器位于目标处，但根 `p[0]` 已经离开了它的原始位置。
+
+**前向阶段：**
+
+1. 把 `p[0]` 设回它的原始位置 `b`（根是固定的，它不能移动）。
+2. 对从 `1` 到 `n` 的每个关节：计算从 `p[i-1]` 到 `p[i]` 的方向，并把 `p[i]` 放在该方向上、距离 `p[i-1]` 为 `d[i-1]` 的位置。换句话说，`p[i] = p[i-1] + normalize(p[i] - p[i-1]) * d[i-1]`。
+
+前向阶段结束后，根回到了正确位置，但末端执行器可能又稍微偏离了目标。
+
+**迭代：** 重复后向与前向阶段，直到 `|p[n] - t| < threshold` 或达到最大迭代次数。
+
+收敛速度非常快——对人形链来说通常两到四次完整的迭代（每次包含一个后向加一个前向）就够了。原因是 FABRIK 本质上是在位置空间中做梯度下降，而目标函数光滑且条件良好。
+
+== 实现 FABRIK
+
+FABRIK 基于位置而非旋转运算，所以我们先从场景图提取位置，运行求解器，再把结果转换回关节旋转。这一步「位置到旋转」的转换，正是 FABRIK 比表面上看起来要复杂一些的原因：
+
+[source,cpp]
+----
+void solve_fabrik(std::vector<Node>& nodes, const IKChain& chain, const glm::vec3& target_world)
+{
+    const int n = static_cast<int>(chain.joints.size());
+    if (n == 0) return;
+
+    // Step 1: Extract current world positions and compute bone lengths.
+    std::vector<glm::vec3> positions(n + 1);
+    std::vector<float>     lengths(n);
+
+    for (int i = 0; i < n; ++i) {
+        positions[i] = glm::vec3(nodes[chain.joints[i]].world_matrix[3]);
+    }
+    positions[n] = glm::vec3(nodes[chain.effector_node].world_matrix[3]);
+
+    for (int i = 0; i < n; ++i) {
+        lengths[i] = glm::distance(positions[i], positions[i + 1]);
+        if (lengths[i] < 1e-6f) lengths[i] = 1e-6f; // Prevent division by zero
+    }
+
+    // Step 2: Check if the target is reachable.
+    float total_length = 0.0f;
+    for (float l : lengths) total_length += l;
+
+    glm::vec3 root_pos = positions[0]; // Remember the root position
+
+    // Step 3: Iterate backward-forward passes.
+    for (int iter = 0; iter < chain.max_iterations; ++iter) {
+        // Check convergence
+        if (glm::distance(positions[n], target_world) < chain.threshold) break;
+
+        // --- Backward pass: anchor the end effector at target ---
+        positions[n] = target_world;
+        for (int i = n - 1; i >= 0; --i) {
+            glm::vec3 dir = glm::normalize(positions[i] - positions[i + 1]);
+            positions[i] = positions[i + 1] + dir * lengths[i];
+        }
+
+        // --- Forward pass: re-anchor the root at its original position ---
+        positions[0] = root_pos;
+        for (int i = 1; i <= n; ++i) {
+            glm::vec3 dir = glm::normalize(positions[i] - positions[i - 1]);
+            positions[i] = positions[i - 1] + dir * lengths[i - 1];
+        }
+    }
+
+    // Step 4: Convert solved positions back to joint rotations.
+    // For each joint, we know where it is (positions[i]) and where its
+    // child is (positions[i+1]). We want to rotate the joint so that
+    // its local "bone direction" vector points toward the child's new position.
+
+    for (int i = 0; i < n; ++i) {
+        Node& joint = nodes[chain.joints[i]];
+
+        // The direction the bone should point after solving
+        glm::vec3 solved_dir = glm::normalize(positions[i + 1] - positions[i]);
+
+        // The direction the bone currently points in world space
+        // (the unit vector from this joint's world position to the next joint's
+        // current world position, before we apply our correction)
+        glm::vec3 current_dir = glm::normalize(
+            glm::vec3(nodes[i + 1 < n ? chain.joints[i + 1] : chain.effector_node].world_matrix[3])
+            - glm::vec3(joint.world_matrix[3])
+        );
+
+        float dot = glm::clamp(glm::dot(current_dir, solved_dir), -1.0f, 1.0f);
+        if (dot > 0.9999f) continue; // Already pointing the right way
+
+        float     angle = std::acos(dot);
+        glm::vec3 axis  = glm::cross(current_dir, solved_dir);
+        if (glm::length(axis) < 1e-6f) continue;
+        axis = glm::normalize(axis);
+
+        glm::quat world_correction = glm::angleAxis(angle, axis);
+        glm::quat new_world_rot    = world_correction * joint.get_world_rotation();
+
+        glm::quat parent_world_rot = (joint.parent_index != INVALID_NODE_INDEX)
+            ? nodes[joint.parent_index].get_world_rotation()
+            : glm::quat(1, 0, 0, 0);
+
+        joint.local_rotation = glm::inverse(parent_world_rot) * new_world_rot;
+        joint.mark_dirty();
+        update_world_matrices_subtree(nodes, chain.joints[i]);
+    }
+}
+----
+
+位置到旋转的转换（步骤 4）也许看起来眼熟——它就是 CCD 中那个「把一个向量转到另一个向量上」的操作，只不过这里的目标是求解出的骨骼方向，而不是 IK 目标位置。关键区别在于：进入这个循环时，我们已经确切知道每个关节*应该*在哪，所以做的是精确修正，而不是迭代逼近。
+
+== 带约束的 FABRIK
+
+给 FABRIK 添加关节限制比 CCD 稍复杂，因为 FABRIK 把关节当作点来重新定位，而不是直接旋转它们。标准做法是在后向和前向阶段*过程中*施加约束：在计算新的关节位置之前先钳制方向向量。
+
+对铰链约束，在计算从关节 `i` 到关节 `i+1` 的方向时，把该方向投影到垂直于铰链轴的平面上，然后钳制角度。对球窝约束，把方向钳制到由摆动限制定义的锥体内。实现比无约束情形更繁琐，要正确处理参考坐标系：
+
+[source,cpp]
+----
+// Clamp direction 'd' to be within a cone of half-angle 'limit_deg'
+// around the reference direction 'ref', all in world space.
+glm::vec3 clamp_to_cone(const glm::vec3& d, const glm::vec3& ref, float limit_deg)
+{
+    float limit_rad = glm::radians(limit_deg);
+    float current_angle = std::acos(glm::clamp(glm::dot(d, ref), -1.0f, 1.0f));
+
+    if (current_angle <= limit_rad) return d; // Already within cone
+
+    // Rotate d toward ref by the excess angle
+    glm::vec3 axis = glm::cross(d, ref);
+    if (glm::length(axis) < 1e-6f) return ref; // Anti-parallel; snap to ref
+    axis = glm::normalize(axis);
+
+    float excess = current_angle - limit_rad;
+    return glm::mat3(glm::angleAxis(excess, axis)) * d;
+}
+----
+
+在 FABRIK 阶段中应用它，会把球窝关节的位置计算从无约束公式改成「在计算步进前先钳制方向」的版本。这样既保持了骨骼长度，又施加了锥体约束。
+
+== 在 CCD 与 FABRIK 之间选择
+
+两种算法都实用、都很快，对常见情形也都能给出好结果。选择取决于具体的运动：
+
+对**不平地形上的脚部放置**，CCD 通常就够用，而且更容易正确实现。修正量小、链短（两到三根骨骼），小幅调整时 CCD 的末端执行器偏置察觉不到。
+
+对**整臂伸手**，FABRIK 通常看起来更好。当角色伸向一臂距离外的物体时，你希望整条手臂——肩、肘、腕——都自然地参与这次伸手。FABRIK 把修正更均匀地分摊到整条链上，CCD 则不然。
+
+对**脊柱和更长的链**，强烈推荐 FABRIK。把 CCD 用在五节脊柱上，会让骨盆附近的骨骼过度旋转，而上段脊柱几乎不动，看起来僵硬而不自然。FABRIK 会产生平滑、流畅的弯曲，视觉上是正确的。
+
+许多生产引擎两者都用：CCD 用于四肢 IK，FABRIK 用于脊柱和特殊情形。你也没有理由不这样做——从场景图的角度看，两种算法的接口是一样的。
+
+xref:Advanced_glTF/Procedural_Animation_IK/02_ccd_ik.adoc[上一章：循环坐标下降 IK] | xref:Advanced_glTF/Procedural_Animation_IK/04_foot_placement.adoc[下一章：不平地形上的脚部放置]

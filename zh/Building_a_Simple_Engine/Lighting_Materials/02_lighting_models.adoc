@@ -1,0 +1,191 @@
+= 光照模型
+
+本节将探讨计算机图形学中使用的各种光照模型，重点放在理解概念而不是实现细节上。我们会讨论不同光照模型如何模拟光与表面的相互作用、各自的优势与局限，以及何时该采用哪种方案。
+
+本章会介绍基于物理的渲染（PBR）以及其他光照模型。这里讲的概念会应用于后续章节，例如 Loading_Models 一章，那里我们会使用 glTF，而 glTF 的材质系统采用金属度-粗糙度工作流的 PBR。理解了包括 PBR 在内的各种光照模型背后的理论，我们就能更好地利用 glTF 模型提供的材质属性，并扩展渲染能力。
+
+== 理解光与表面的相互作用
+
+在深入具体的光照模型之前，先了解光在现实世界中如何与表面相互作用很重要：
+
+* *反射*：光从表面弹回
+* *吸收*：光被表面吸收并转化为热量
+* *透射*：光穿过表面（针对透明材质）
+* *散射*：光在材质内部朝各个方向散开
+
+这些相互作用的发生方式取决于材质属性以及光的特性。
+
+=== 反射的类型
+
+反射主要有两种：
+
+* *漫反射*：光朝多个方向散开，呈现出哑光外观
+* *镜面反射*：光沿特定方向反射，形成高光
+
+现实世界中的大多数材质同时表现出漫反射与镜面反射。
+
+== 光照模型的演进
+
+计算机图形学中的光照模型历经显著演进，每种模型都有自己模拟光与表面相互作用的方式：
+
+=== 早期光照模型
+
+==== 平面着色
+
+最简单的一种光照模型：每个多边形根据其法线与光照方向被赋予单一颜色。这会形成有明显多边形棱边的刻面外观。
+
+* *优点*：计算非常快
+* *缺点*：外观不真实，多边形棱边明显
+* *适用场景*：性能极低的设备，或风格化渲染
+
+==== Gouraud 着色
+
+它是对平面着色的改进：光照*每个顶点计算一次*，然后沿多边形插值。这种逐顶点做法比逐像素计算快得多，但也意味着本应出现在多边形正中的镜面高光可能完全丢失，因为它在任何顶点上都不存在。
+
+* *优点*：外观比平面着色平滑，速度仍相对较快
+* *缺点*：由于在顶点层面计算，无法准确表现镜面高光
+* *适用场景*：性能较低、用 Phong 着色代价太高的设备
+
+==== Phong 光照模型
+
+最广泛使用的传统光照模型之一，由 Bui Tuong Phong 于 1975 年提出。配合*逐像素着色*（Phong 着色）使用时，法线沿多边形插值，光照对每个像素计算，因此镜面高光比 Gouraud 的逐顶点做法准确得多。该模型用三个分量计算光照：
+
+* *环境光*：一个常量光照水平，用来模拟间接光照
+* *漫反射*：朝各个方向散射的光（使用朗伯余弦定律）
+* *镜面反射*：闪亮的高光（使用反射向量与观察向量的幂函数）
+
+特点：
+
+* *优点*：对许多材质来说相当真实，参数直观，配合逐像素着色能给出准确的镜面高光
+* *缺点*：物理上不准确，在某些光照条件下会显得生硬
+* *适用场景*：PBR 代价太高的小型实时应用
+
+关于 Phong 光照模型的更多信息，见 link:https://en.wikipedia.org/wiki/Phong_reflection_model[维基百科条目]。
+
+==== Blinn-Phong 模型
+
+这是 Jim Blinn 对 Phong 模型的改进：使用光照方向与观察方向之间的半程向量，而不是反射向量，因此计算更高效。
+
+* *优点*：比 Phong 快，视觉效果相近
+* *缺点*：仍然不是物理准确的
+* *适用场景*：作为 Phong 更高效的替代方案
+
+要了解更多 Blinn-Phong 的内容，见 link:https://en.wikipedia.org/wiki/Blinn%E2%80%93Phong_reflection_model[维基百科条目] 或 link:https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-5-implementing-improved-perlin-noise[GPU Gems 章节]。
+
+=== 高级光照模型
+
+==== Cook-Torrance 模型
+
+这是 Robert Cook 与 Kenneth Torrance 于 1982 年提出的更贴近物理的模型。它使用微表面理论建模表面粗糙度，并包含更准确的镜面反射项。
+
+* *优点*：比 Phong 或 Blinn-Phong 更符合物理
+* *缺点*：实现与计算都更复杂
+* *适用场景*：需要更真实的材质，但完整 PBR 代价太高时
+
+更多细节见原始论文 link:https://graphics.pixar.com/library/ReflectanceModel/paper.pdf[Cook-Torrance 论文]。
+
+==== Oren-Nayar 模型
+
+这是对朗伯漫反射模型的扩展，在漫反射中考虑微表面粗糙度，因此更适合布料、混凝土或沙子这类粗糙表面。
+
+* *优点*：对粗糙表面的漫反射更真实
+* *缺点*：比朗伯漫反射代价更高
+* *适用场景*：漫反射粗糙度很重要的材质
+
+更多内容见原始论文 link:https://www1.cs.columbia.edu/CAVE/publications/pdfs/Oren_SIGGRAPH94.pdf[Oren-Nayar 论文]。
+
+==== 基于物理的渲染（PBR）
+
+PBR 是过去十年中实时图形领域最重要的进步之一。与更早的临时着色模型不同，PBR 依据物理原理模拟光与表面如何相互作用。
+
+PBR 的关键原理包括：
+
+* *能量守恒*：表面反射的光不可能多于它接收的光
+* *微表面理论*：表面被建模为大量朝向各异的微小镜面
+* *菲涅尔效应*：反射率随观察角度变化
+* *金属度-粗糙度工作流*：材质由基础颜色、金属度与粗糙度定义
+
+使用 PBR 时的考量：
+
+* *优点*：结果真实，且在不同光照条件下保持一致；参数对美术师来说直观
+* *缺点*：更复杂，计算代价更高
+* *适用场景*：真实感很重要的现代游戏与应用
+
+关于 PBR 的全面资料，见 link:https://www.pbr-book.org/[《Physically Based Rendering》一书]。
+
+image::images/PBR_ray_shadows.png[带光线追踪阴影的 PBR 材质——展示金属表面、粗糙度变化与真实的阴影渲染]
+
+== glTF 中的光照模型
+
+glTF 格式使用金属度-粗糙度工作流的 PBR，它用以下主要参数定义材质：
+
+* *基础颜色*：表面的反照率或漫反射颜色
+* *金属度*：表面有多「像金属」（0.0 = 非金属，1.0 = 金属）
+* *粗糙度*：表面有多光滑或多粗糙（0.0 = 镜面般光滑，1.0 = 粗糙）
+
+这一工作流对美术师来说很直观，对实时渲染来说也很高效。glTF 规范提供了一种标准化方式来定义 PBR 材质，使其可以跨不同渲染引擎使用。
+
+关于 glTF 的 PBR 实现的更多信息，见 link:https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#materials[glTF 2.0 规范]。
+
+== 光源类型
+
+不同的光照模型可以与多种类型的光源配合使用：
+
+1. *点光源*：光从单个点向所有方向发出。
+2. *方向光*：光线彼此平行，仿佛来自极远的光源（例如太阳）。
+3. *聚光灯*：光从一个点以锥形发出。
+4. *面光源*：光从一块表面区域发出。
+5. *基于图像的光照（IBL）*：光来自环境贴图，模拟全局光照。
+
+每种光源都需要针对光照方向、衰减以及其他属性做特定计算。
+
+== 高级光照技术
+
+在基本光照模型之外，还有若干高级技术可以提升渲染的真实感：
+
+=== 全局光照
+
+全局光照（Global Illumination，GI）模拟光在表面之间弹射的方式，从而产生间接光照效果。相关技术包括：
+
+* *辐射度*：计算表面之间的漫反射光传递
+* *路径追踪*：追踪穿过场景的光线路径
+* *光子映射*：把光照信息存储到空间数据结构中
+
+更多信息见 link:https://developer.download.nvidia.com/books/HTML/gpugems2/chapters/gpugems2_chapter12.html[GPU Gems 中关于辐射度的章节]。
+
+=== 次表面散射
+
+次表面散射（Subsurface Scattering，SSS）模拟光如何穿透皮肤、蜡或大理石这类半透明材质并在其中散射。
+
+更多信息见 link:https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-16-real-time-approximations-subsurface-scattering[GPU Gems 中关于次表面散射的章节]。
+
+=== 环境光遮蔽
+
+环境光遮蔽（Ambient Occlusion，AO）近似估计表面某点能接收多少环境光，使角落和缝隙变暗。
+
+更多信息见 link:https://developer.download.nvidia.com/books/HTML/gpugems/gpugems_ch17.html[GPU Gems 中关于环境光遮蔽的章节]。
+
+== 选择合适的光照模型
+
+在决定应用该用哪种光照模型时，可以从以下几点考虑：
+
+1. *硬件限制*：越复杂的模型需要越多算力
+2. *视觉需求*：你的材质需要看起来多真实？
+3. *美术工作流*：有些模型对美术师来说更直观易用
+4. *一致性*：PBR 在不同光照条件下给出的结果更一致
+
+我们的引擎将采用 glTF 格式中的 PBR 实现，因为它在真实感、性能和对美术友好的参数之间取得了良好平衡。
+
+== 延伸阅读
+
+要进一步加深对光照模型的理解，这里有一些有价值的资料：
+
+* link:https://www.pbr-book.org/[Physically Based Rendering: From Theory to Implementation]——关于 PBR 的权威著作
+* link:https://learnopengl.com/PBR/Theory[LearnOpenGL PBR 教程]——一份通俗易懂的 PBR 概念入门
+* link:https://google.github.io/filament/Filament.html[Filament 材质系统]——Google 的实时 PBR 渲染引擎文档
+* link:https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#materials[glTF 2.0 材质规范]——详述 PBR 在 glTF 中如何实现
+* link:https://developer.nvidia.com/gpugems/gpugems/part-iii-materials[GPU Gems：材质]——关于高级材质渲染的文章合集
+
+下一节，我们会探讨如何用推送常量高效地把材质属性传给着色器。
+
+xref:Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc[上一页：光照与材质入门] | xref:Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc[下一页：推送常量]

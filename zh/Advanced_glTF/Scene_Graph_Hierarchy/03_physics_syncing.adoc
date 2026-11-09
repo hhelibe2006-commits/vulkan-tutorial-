@@ -1,0 +1,150 @@
+= 物理同步：动画与物理的连接
+
+== 桥接两个世界：动画与物理的冲突
+
+在现代游戏引擎里，角色的运动几乎总是两套根本不同的系统之间的拉锯：**动画系统**与**物理引擎**。要理解我们为什么需要「同步」这两套系统，先得看清它们看待世界的方式截然不同。
+
+**动画系统**本质上是一台播放器。它取来预先录制或计算好的「姿势」（骨骼的位置与旋转），套到视觉网格上。它不在乎角色的手臂是不是穿过了石墙，也不在乎双脚是不是悬在地面上方六英寸。它唯一的目标是让角色*看起来*在做一个特定动作，比如行走、挥剑或受击反应。
+
+**物理引擎**则是我们这个世界的物理定律的数学模拟。它根据重力、摩擦力、碰撞等力来计算物体如何运动。它不知道「动画」或「骨架」是什么。它只认识**刚体**——带质量和动量的数学形状，比如盒子、球体和胶囊。它的目标是保证物体彼此不穿透，并在碰撞时做出真实的反应。
+
+我们面临的难题是，这两套系统经常对角色应该在哪产生分歧。如果动画说角色的手应该插进墙里，物理引擎会说「不行，必须停在表面」。如果物理引擎说角色应该下落，动画系统可能还在播放「站立待机」的片段。
+
+为了解决这个问题，我们需要一条**双向链路**：一座桥，让变换数据能在视觉场景图与物理模拟之间双向传递。
+
+== 认识两种模式：运动学与动态
+
+要实现这座桥，我们必须理解物理刚体可以工作的两种主要模式。这两种模式决定了当前哪个系统是「主」、哪个是「从」。
+
+=== 1. 运动学：动画说了算
+**运动学**刚体是一种特殊的刚体，对物理模拟的定律「免疫」。它有无限大的质量，不受重力影响，也无法被其他物体推动。它的位置与旋转由 CPU 直接设定（在我们的例子里，由动画系统设定）。
+
+可以把运动学刚体想成一个开了「上帝模式」的对象。它精确地移动到动画让它去的地方，并以不可阻挡的力量把任何动态物体（比如箱子或其他角色）推开。正常游戏过程中，我们就是这样表示角色的四肢。手臂动是因为动画让它动，而物理引擎用运动学碰撞体来检查这条手臂是否撞到了世界里的其他东西。
+
+=== 2. 动态：物理说了算
+**动态**刚体（在角色语境下常称为「布娃娃」刚体）是由物理引擎完全模拟的标准刚体。它响应重力，能被其他物体推动，遵循动量与摩擦定律。
+
+在这种模式下，动画系统对那根特定骨骼实际上已经关闭。物理引擎成为「真相来源」，我们把产生的变换数据拉回场景图，让视觉网格跟随物理模拟。这就是角色被打昏或击杀时你看到的经典「布娃娃」效果。
+
+== 同步管线
+
+场景图与物理引擎之间的同步，是一个每帧都执行的、精心编排的循环。如果同步时机不对，就有**一帧延迟**的风险：视觉角色总是比它的物理表示慢一步，导致「残影」或穿插瑕疵——角色看起来会穿过本应碰撞的物体。
+
+标准引擎更新循环遵循这个固定顺序：
+
+1.  **动画更新**：引擎根据时间、混合和动画片段，为所有骨骼计算新的局部姿势。
+2.  **场景图更新**：我们把这些局部姿势沿层级向下传播，算出每个节点的 `world_matrix`（用我们的**脏标记**系统）。
+3.  **运动学同步（动画 -> 物理）**：对每个处于「运动学」模式的节点，把新算出的 `world_matrix` 推给物理引擎。这一步为即将到来的模拟步「摆好」碰撞体的位置。
+4.  **物理步进**：物理引擎模拟一个时间刻度（例如 1/60 秒）。它为所有动态刚体计算碰撞并求解力。
+5.  **动态同步（物理 -> 动画）**：对每个处于「动态」模式的节点，从物理引擎拉取它新的世界位置，再转换回场景图的局部空间坐标。
+6.  **最终清理**：把任何被修改过的节点标为「脏」，这样渲染器和其他系统（比如光线追踪加速结构更新）就能用上正确的、由物理驱动的坐标。
+
+== 实现：运动学同步（动画驱动物理）
+
+当角色在播放标准动画时，场景图是主要的真相来源。我们必须把物理引擎中的骨骼代理（碰撞体）「瞬移」到与视觉节点一致的位置。
+
+由于物理引擎通常需要分开的位置与旋转数据，而不是原始的 4x4 矩阵，我们必须分解节点的 `world_matrix`。
+
+[source,cpp]
+----
+void sync_kinematic_to_physics(const Node& node, JPH::BodyID body_id,
+                                PhysicsWorld& physics_world) {
+    // Optimization: Only update physics if the visual node has actually moved
+    if (node.status & TransformStatus::WorldDirty) {
+
+        // 1. Extract the Translation
+        // The 4th column of a standard 4x4 matrix contains the world-space position.
+        PhysicsPose pose;
+        pose.position = glm::vec3(node.world_matrix[3]);
+
+        // 2. Extract the Rotation
+        // This gives us the world-space orientation without any scaling factors.
+        pose.orientation = node.get_world_rotation();
+
+        // 3. Update the Physics Representation
+        // move_kinematic teleports the kinematic body to the new pose.
+        physics_world.move_kinematic(body_id, pose);
+    }
+}
+----
+
+**关于缩放的说明**：大多数物理引擎假定刚体的缩放为 1.0。如果你的美术在 Blender 里缩放了某根骨骼，`world_matrix` 就会带上那个缩放。通过把矩阵分解为位置和四元数，我们有意去掉了缩放，只把稳定模拟真正需要的东西交给物理引擎。
+
+== 实现：动态同步（布娃娃交接）
+
+双向链路中最复杂的部分是**动态同步**，此时由物理接管。要可视化布娃娃，我们必须把物理刚体的世界空间变换映射回层级化的场景图节点。
+
+这里的数学是一个常见的坑。由于场景图是层级化的，我们不能直接覆盖 `world_matrix`。如果那样做，下次调用 `update_transforms()` 时，父子计算（`ParentWorld * LocalMatrix`）就会用（此时已不正确的）动画位置覆盖物理位置。
+
+我们要做的是反推：为了得到物理引擎给出的那个世界空间位置，相对于父级的**局部变换**应该是什么。
+
+[source,cpp]
+----
+void sync_physics_to_dynamic(Node& node, JPH::BodyID body_id,
+                              const PhysicsWorld& physics_world,
+                              std::vector<Node>& nodes) {
+    // 1. Get the new world transform from the physics simulation
+    PhysicsPose pose = physics_world.get_body_pose(body_id);
+    glm::mat4 new_world_matrix = pose.to_matrix();
+
+    // 2. Convert world matrix to local transform relative to parent
+    // The fundamental formula for our hierarchy is: World = ParentWorld * Local
+    // To solve for Local, we multiply both sides by the inverse of ParentWorld:
+    // Local = Inverse(ParentWorld) * World
+    glm::mat4 local;
+    if (node.parent_index != INVALID_NODE_INDEX) {
+        const Node& parent = nodes[node.parent_index];
+        local = glm::inverse(parent.world_matrix) * new_world_matrix;
+    } else {
+        // Root nodes have no parent, so world space is identical to local space
+        local = new_world_matrix;
+    }
+
+    // Decompose the local matrix into the SRT components stored on the node
+    node.translation    = glm::vec3(local[3]);
+    node.scale          = glm::vec3(glm::length(glm::vec3(local[0])),
+                                    glm::length(glm::vec3(local[1])),
+                                    glm::length(glm::vec3(local[2])));
+    glm::mat3 rot_only;
+    rot_only[0] = glm::normalize(glm::vec3(local[0]));
+    rot_only[1] = glm::normalize(glm::vec3(local[1]));
+    rot_only[2] = glm::normalize(glm::vec3(local[2]));
+    node.local_rotation = glm::quat_cast(rot_only);
+
+    // 3. Mark the node dirty so its children and the renderer update correctly
+    node.mark_dirty();
+}
+----
+
+通过把物理的世界空间坐标转换成局部空间坐标，我们维护了层级化场景图的完整性。这保证了：如果角色站在移动平台（比如电梯）上变成布娃娃，布娃娃会正确跟随父级平台运动，同时仍然受物理模拟。
+
+== 管理模拟：碰撞过滤
+
+角色物理最后一个关键方面是**自碰撞**。在布娃娃中，每条肢体都是独立的刚体。如果允许手臂的胶囊碰撞体与躯干的碰撞体相撞，布娃娃会「炸开」，或在各肢体争夺关节空间时剧烈抖动。
+
+为了防止这种情况，Jolt Physics 使用**对象层**。一张全局定义的层配对表规定哪些层之间可以交互。我们用 `set_object_layer()` 把每个刚体分配到某个层。
+
+[source,cpp]
+----
+// Object layer constants — defined once at physics initialization.
+constexpr uint16_t LAYER_ENVIRONMENT = 0; // Ground, walls, buildings
+constexpr uint16_t LAYER_CHARACTER   = 1; // The character's own limbs
+constexpr uint16_t LAYER_PLAYER      = 2; // Other players or NPCs
+
+// Example: Assign a bone collider to the character layer.
+// The layer-pair table (set up during PhysicsWorld::global_init()) prevents
+// LAYER_CHARACTER bodies from colliding with each other, avoiding self-collision.
+void setup_bone_physics(JPH::BodyID body_id, PhysicsWorld& physics_world) {
+    physics_world.set_object_layer(body_id, LAYER_CHARACTER);
+}
+----
+
+这种给碰撞体保持的「社交距离」，确保角色的手臂可以穿过自己的胸腔而不产生幽灵力，同时依然能撞到地面，或被玩家的武器击中。
+
+== 小结
+
+通过实现双向同步，我们弥合了动画的美学世界与物理的数学世界之间的鸿沟。场景图节点现在充当统一接口，可以由任一系统驱动，从而支持脚本化动画与涌现式物理模拟之间的复杂过渡——这正是现代角色动作的核心。
+
+下一节，我们来看如何自动化这些碰撞体的设置。不再用代码为每根骨骼手动配置胶囊，而是借助 glTF 的「extras」和自定义元数据，直接从美术的源文件构建物理代理。
+
+xref:Advanced_glTF/Scene_Graph_Hierarchy/02_engine_expansion.adoc[上一章：引擎扩展：优化场景图] | xref:Advanced_glTF/Scene_Graph_Hierarchy/04_metadata_and_physics_extras.adoc[下一章：元数据与物理扩展：自动化管线]

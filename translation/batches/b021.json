@@ -1,0 +1,54 @@
+{
+  "id": "b021",
+  "words": 5885,
+  "files": [
+    {
+      "source": "en/AI_Assisted_Vulkan/06_debugging/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/06_debugging/01_introduction.adoc",
+      "words": 457,
+      "title": "Pro-Level Debugging with AI & RenderDoc"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc",
+      "target": "zh/AI_Assisted_Vulkan/06_debugging/02_vuid_autofix.adoc",
+      "words": 774,
+      "title": "VUID Auto-Fix: Working Through Validation Layers"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc",
+      "target": "zh/AI_Assisted_Vulkan/06_debugging/03_renderdoc_ai_integration.adoc",
+      "words": 762,
+      "title": "AI + RenderDoc Integration: Automated GPU Analysis"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc",
+      "target": "zh/AI_Assisted_Vulkan/06_debugging/04_shader_debugging_logs.adoc",
+      "words": 585,
+      "title": "Shader Debugging & Log Parsing"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc",
+      "target": "zh/AI_Assisted_Vulkan/06_debugging/05_gfxreconstruct_ai.adoc",
+      "words": 786,
+      "title": "AI-Assisted Trace Analysis: GFXReconstruct"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/01_introduction.adoc",
+      "words": 433,
+      "title": "Advanced MCP Tooling & Automation"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc",
+      "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/02_vulkan_registry_mcp.adoc",
+      "words": 646,
+      "title": "The Vulkan Registry & GPUInfo MCP"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc",
+      "target": "zh/AI_Assisted_Vulkan/07_advanced_mcp/03_agentic_automation_qa.adoc",
+      "words": 1442,
+      "title": "Agentic Automation & Performance Audits"
+    }
+  ]
+}

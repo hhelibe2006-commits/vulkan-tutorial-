@@ -1,0 +1,18 @@
+{
+  "id": "b086",
+  "words": 5726,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/04_pytorch_mobile.adoc",
+      "words": 2943,
+      "title": "PyTorch Mobile"
+    },
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/05_directml.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/05_directml.adoc",
+      "words": 2783,
+      "title": "DirectML"
+    }
+  ]
+}

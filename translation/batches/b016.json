@@ -1,0 +1,12 @@
+{
+  "id": "b016",
+  "words": 3770,
+  "files": [
+    {
+      "source": "en/14_Android.adoc",
+      "target": "zh/14_Android.adoc",
+      "words": 3770,
+      "title": "Android: Taking Your Vulkan App Mobile"
+    }
+  ]
+}

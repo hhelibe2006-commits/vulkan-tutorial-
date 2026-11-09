@@ -1,0 +1,146 @@
+:pp: {plus}{plus}
+
+= 异构生态：Vulkan 上的 OpenCL
+
+== 简介
+
+Vulkan 常被视为 OpenGL 的“现代继任者”，主要聚焦于实时图形。不过，在 **HPC**（高性能计算）与 **GPGPU**（通用 GPU 编程）的世界里，**OpenCL** 作为行业标准已有十余年。物理模拟、金融建模和科学仿真领域有数百万行遗留代码是用 OpenCL C 写成的。
+
+直到不久之前，在只有 Vulkan 驱动的环境下运行 OpenCL 代码仍是相当大的挑战。但得益于 **Vulkan 1.4** 生态以及 `clspv`、`clvk` 这类工具，这道鸿沟终于被填平了。
+
+== 更广阔的生态：pocl 与 ANGLE
+
+本章聚焦于 `clvk`，但另外两个仍在积极开发的实现也值得了解——它们同样通过 `clspv` 编译器把 OpenCL 架在 Vulkan 之上。两者都受本章通篇描述的 `clspv` 内核兼容性约束（循环边界必须是编译期常量，等等），所以这里的材料可以直接套用。
+
+=== pocl——可移植计算语言
+
+https://portablecl.org/[pocl]（MIT 许可）是一个完整的 OpenCL 3.0 运行时，其主要编译器基础设施是 **LLVM/Clang**，而非 `clspv`。它的 Vulkan 驱动是次要后端，确实会调用 `clspv` 来编译内核，但 pocl 最突出的优势在于**CPU 与 Intel Level Zero GPU 路径**——随着 pocl 7.0 发布（2025 年 1 月），这两条路径都取得了 Khronos 认证的 OpenCL 3.0 一致性资质。
+
+.pocl 的优势
+[%autowidth]
+|===
+|优势 |详情
+
+|把 CPU 当作一等设备
+|pocl 的 CPU 路径（x86-64、ARM64、RISC-V）已达到生产级一致性，CTS 通过率约 100 %，这是 `clvk` 这类纯 Vulkan 运行时无法提供的。这样一来，单个 pocl 安装就能在同一个 ICD 下服务系统中的每台设备——从服务器 CPU 到独立 GPU。
+
+|单一运行时支持多目标
+|同一个 pocl 二进制可以同时向 CPU、Intel GPU（Level Zero）、NVIDIA（libCUDA）和 Vulkan 派发。这对需要可移植回退路径的 HPC 工作负载很有价值。
+
+|SYCL 后端
+|pocl 可以作为 DPC++/SYCL 应用的 OpenCL 后端，把覆盖面扩展到现代异构 C++ 代码。
+
+|接受 SPIR-V 与 LLVM 位码
+|除 OpenCL C 源码外，pocl 还接受预编译的 SPIR-V 1.4/1.5 与 LLVM 位码作为程序输入，从而支持更灵活的工具链集成。
+
+|实验性的内置内核（DBK）
+|pocl 7.x 新增了面向 GEMM、JPEG 与 ONNX 推理的厂商中立内置内核——这些工作负载受益于在原始计算着色器之上再加一层派发抽象。
+|===
+
+.pocl 的短板（特指 Vulkan 路径）
+[%autowidth]
+|===
+|短板 |详情
+
+|Vulkan 驱动无人维护
+|pocl 自己的文档把 Vulkan 后端标为“INCOMPLETE，没有活跃维护者。欢迎提交 Pull Request。”`clvk` 一直在积极维护并通过 Khronos 认证；pocl 的 Vulkan 驱动则属于“成熟度低、测试有限”，也没有公布 CTS 通过率。
+
+|Vulkan 路径只支持 OpenCL 1.2 子集
+|虽然 pocl 的 CPU 与 Level Zero 路径支持 OpenCL 3.0，但 Vulkan 驱动只暴露了 OpenCL 1.2 API 的大部分。
+
+|Vulkan 路径不支持图像/采样器
+|只支持以缓冲区为对象的工作负载；Vulkan 路径没有实现图像对象与采样器。
+
+|构建复杂
+|pocl 的 Vulkan 驱动需要单独构建 `clspv`（自带一份 LLVM 检出，通过 `CLSPV_DIR` 指定），而 `clvk` 把 `clspv` 作为 CMake 子项目一起打包。
+
+|独立 GPU 上不支持 `CL_MEM_USE_HOST_PTR`
+|主机指针别名（常用于避免拷贝）在独立 GPU 的 Vulkan 设备上不受支持。
+|===
+
+简而言之：如果你需要**可移植的 CPU+GPU 运行时**，并在 CPU 或 Intel 上具备认证一致性，就选 pocl。它的 Vulkan 路径尚未达到生产可用，GPU 计算不应拿它替代 `clvk`。
+
+=== ANGLE——几乎原生的图形层引擎
+
+https://chromium.googlesource.com/angle/angle[ANGLE] 是 Google 的跨平台 OpenGL ES / EGL 转换层，在 Chrome 与 Chromium 内部使用。OpenCL 是它**次要的、明确标注为实验性的**功能，目的是在同一个 Vulkan 上下文中实现图形与计算互操作。它的 OpenCL 实现位于 `src/libOpenCL/` 与 `src/libANGLE/renderer/vulkan/CL*Vk.cpp`。
+
+运行时，ANGLE 的 Vulkan 后端调用 `ClspvCompileSource()`，使用与 `clvk` 相同的 `clspv` 管线把 OpenCL C 编译为 SPIR-V。它支持三阶段模型（源码 → LLVM 位码 → 可执行 SPIR-V），从而支持二进制缓存，并在创建 `VkShaderModule` 之前校验 SPIR-V。
+
+.ANGLE 的优势
+[%autowidth]
+|===
+|优势 |详情
+
+|`cl_khr_external_memory`——图形与计算的零拷贝互操作
+|ANGLE 的 Vulkan 后端实现了 `cl_khr_external_memory`，它允许一个 OpenCL 缓冲区直接别名到 `VkBuffer` 或 `VkImage`。主线 `clvk` 明确**不**实现该扩展。对于渲染与计算混合的管线（例如完全在 GPU 上对已渲染帧做后处理而不回读），ANGLE 是目前唯一能消除这次拷贝的基于 `clspv` 的运行时。
+
+|完整的图像支持
+|ANGLE 实现了完整的 `enqueueRead/Write/Copy/FillImage`、`enqueueMapImage` 与 `enqueueCopyImageToBuffer` 接口面，而 pocl 的 Vulkan 驱动完全没有这些。
+
+|直通后端
+|在装有厂商原生 OpenCL 驱动的系统上，ANGLE 可以直接转发调用，免去 `clspv` 的开销，同时仍暴露统一的 ICD 接口——这对混合硬件的 CI 环境很有用。
+
+|活跃开发
+|由 Chromium 团队支持，拥有持续集成基础设施。
+|===
+
+.ANGLE 的短板
+[%autowidth]
+|===
+|短板 |详情
+
+|OpenCL 被明确标注为实验性
+|README 把它描述为进行中的工作。ANGLE 的主要使命是 OpenGL ES 转换；OpenCL 层只是为满足 Chromium 的内部需求，并非通用运行时。
+
+|未提交 Khronos 一致性测试
+|ANGLE 的 Vulkan 路径以及任何其他路径都没有提交 OpenCL 一致性测试，这一点与 `clvk`（已通过认证）和 pocl 的 CPU 路径（已通过认证）不同。
+
+|Chromium 构建系统
+|ANGLE 使用 `gn`/`ninja` 配合 Chromium 的 depot_tools。脱离 Chromium 检出独立构建虽有文档，但对不在该生态中的开发者并不轻松。
+
+|不作为独立 ICD 分发
+|`clvk` 与 pocl 是作为可直接替换的 `libOpenCL.so` 分发的。ANGLE 的 OpenCL 层主要在 Chrome 内部使用；把它当作计算运行时独立采用并不常见。
+
+|同样受 `clspv` 的内核限制
+|默认不支持 `double`，循环边界必须是编译期常量——与本章通篇记载的约束完全相同。
+|===
+
+简而言之：如果你要构建**渲染与计算混合的管线**，且确实需要 OpenCL 与 Vulkan 内存对象之间的零拷贝共享，可以考虑 ANGLE。它目前还不是 `clvk` 的通用替代品。
+
+=== 一览
+
+[%autowidth]
+|===
+| |`clvk` |pocl（Vulkan 路径） |ANGLE（Vulkan 路径）
+
+|主要用途 |Vulkan GPU 上的 OpenCL |可移植 OpenCL（CPU 优先） |GL ES 转换（CL 次要）
+|编译器后端 |clspv（内置） |clspv（需单独构建） |clspv（运行时调用）
+|OpenCL 版本（Vulkan 路径） |3.0 |约 1.2 子集 |1.x–3.0（进行中）
+|Khronos 认证 |是 |否（Vulkan 驱动不完整） |否（实验性）
+|图像支持 |是 |否 |是
+|`cl_khr_external_memory` |否 |否 |是
+|独立 ICD |是 |是 |主要在 Chromium 内部
+|维护状态 |活跃 |Vulkan 驱动无人维护 |活跃（Chromium）
+|===
+
+== 为什么要在 Vulkan 上运行 OpenCL？
+
+你可能会问，为什么要把“遗留”的 OpenCL 代码跑在 Vulkan 这样的现代 API 上。主要有三个原因：
+
+1.  **代码复用**：把一个庞大而久经考验的 OpenCL 内核移植到 GLSL 或 Slang 既易出错又耗时。使用 OpenCL-on-Vulkan 管线，你只需做极少的改动就能运行现有内核。
+2.  **跨厂商兼容性**：并非所有硬件厂商都提供高质量的本地 OpenCL 驱动（尤其是在移动端或集成 GPU 上）。把 OpenCL 架在 Vulkan 之上，只要 Vulkan 可用，你就能提供 OpenCL 实现。
+3.  **统一的工具链**：如果你的应用已经用 Vulkan 做渲染，能通过同一个 API 处理计算工作负载，就能简化同步、内存管理与部署。
+
+== Vulkan 上的 OpenCL：是标准，不是特例
+
+从 `clvk` 这类通过认证的分层实现中可以得出一个关键认识：在应用看来，OpenCL-on-Vulkan 的表现与行为同**任何其他 OpenCL 实现**别无二致。你用的还是 `clCreateContext`、`clEnqueueNDRangeKernel` 以及其他标准 OpenCL 3.0 调用。底下的 Vulkan 层只是实现细节。
+
+从 Vulkan 开发者的角度看，真正有趣的是让一个通过认证的 OpenCL 实现成为可能的那些**高级 Vulkan 特性**：
+
+*   **以 SPIR-V 为桥梁**：OpenCL C 内核会被编译成 **SPIR-V**（Standard Portable Intermediate Representation - V），也就是 Vulkan 为其着色器使用的同一种二进制格式。这是关键的整合点——Vulkan 的着色器格式足够灵活，可以表达 OpenCL 语义。
+*   **可变指针与缓冲区设备地址**：OpenCL 基于指针的内存模型需要 Vulkan 的 link:https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_variable_pointers.html[`VK_KHR_variable_pointers`]（Vulkan 1.1 起成为核心）以及 link:https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_buffer_device_address.html[缓冲区设备地址] 来高效模拟平坦地址空间。
+*   **子组扩展**：`cl_khr_sub_groups` 扩展把 OpenCL 的子组操作直接映射到 Vulkan 的子组操作，在支持的地方启用硬件加速的归约与扫描。注意，工作组集体操作（OpenCL C 2.0 的特性）在 OpenCL 3.0 中是可选功能，并非每个分层实现都提供。
+
+本章我们将探讨两个主要工具：使用 `clspv` 的**提前编译**（AOT，Ahead-of-Time），以及使用 `clvk` 的**运行时分层**。
+
+xref:Advanced_Vulkan_Compute/04_Subgroup_Operations/04_non_uniform_indexing.adoc[上一节：非一致索引：子组中的资源数组] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc[下一节：安装与配置：准备你的环境]

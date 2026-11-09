@@ -1,0 +1,30 @@
+{
+  "id": "b070",
+  "words": 5812,
+  "files": [
+    {
+      "source": "en/ML_Inference/Debugging_and_Performance/01_introduction.adoc",
+      "target": "zh/ML_Inference/Debugging_and_Performance/01_introduction.adoc",
+      "words": 976,
+      "title": "Debugging and Performance: The Art of Verification and Speed"
+    },
+    {
+      "source": "en/ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc",
+      "target": "zh/ML_Inference/Debugging_and_Performance/02_debugging_vulkan_compute.adoc",
+      "words": 1768,
+      "title": "Debugging Vulkan Compute for ML: Taming the Explicit"
+    },
+    {
+      "source": "en/ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc",
+      "target": "zh/ML_Inference/Debugging_and_Performance/03_verifying_correctness.adoc",
+      "words": 1831,
+      "title": "Verifying ML Correctness: The Hunt for Numerical Truth"
+    },
+    {
+      "source": "en/ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc",
+      "target": "zh/ML_Inference/Debugging_and_Performance/04_performance_profiling.adoc",
+      "words": 1237,
+      "title": "Performance Profiling: Mastering the Roofline"
+    }
+  ]
+}

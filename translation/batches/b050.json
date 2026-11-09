@@ -1,0 +1,18 @@
+{
+  "id": "b050",
+  "words": 5582,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/GUI/02_imgui_setup.adoc",
+      "target": "zh/Building_a_Simple_Engine/GUI/02_imgui_setup.adoc",
+      "words": 3881,
+      "title": "GUI: Setting Up Dear ImGui"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/GUI/03_input_handling.adoc",
+      "target": "zh/Building_a_Simple_Engine/GUI/03_input_handling.adoc",
+      "words": 1701,
+      "title": "GUI: Input Handling"
+    }
+  ]
+}

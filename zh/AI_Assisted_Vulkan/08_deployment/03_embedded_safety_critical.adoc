@@ -1,0 +1,101 @@
+:pp: {plus}{plus}
+
+= 嵌入式与安全关键系统
+
+== 引言：管理各项下限
+
+嵌入式系统——树莓派、NVIDIA Jetson 开发板或定制的 SoC 硬件——是 Vulkan 生态中约束最多的环境。你经常只有 1 GB 共享内存，CPU 速度只是桌面处理器的一小部分。在这里，容不下含糊的答案。
+
+AI 助手可以持续拿你的资源分配对照硬性的硬件上限来检查，并给出把现代图形技术塞进小块硅片所需的激进量化方案。把它的输出当作需要拿实际设备档案去验证的起点，而不是正确性的保证。
+
+== 教程：管理嵌入式内存映射
+
+嵌入式开发讲的是硬性上限，而不是合理的默认值。用助手对照你 SoC 的具体约束来审计资源分配。
+
+=== 第 1 步：载入硬件档案
+
+把设备的内存映射和目标分辨率的需求交给助手。
+
+[source,text]
+----
+I am developing for an NVIDIA Jetson Nano with 4GB of
+unified memory. 512MB is reserved for the display
+controller and OS. Our target is 1080p triple-buffered.
+
+Analyze our 'PoolAllocator.cpp'. We are pre-allocating
+five 64MB heaps. Will this leave enough headroom
+for the swapchain and our G-Buffer?
+----
+
+=== 第 2 步：优化分配
+
+拿到审计结果后，让它给出一套重构过的分配策略，减少浪费的填充。
+
+[source,cpp]
+----
+// Example memory allocation for embedded targets
+VkMemoryAllocateInfo allocInfo = {};
+allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+allocInfo.allocationSize = reclaimedSize; // Optimized size
+// The assistant can suggest specific memory types for the Jetson's unified memory
+allocInfo.memoryTypeIndex = unifiedMemoryIndex;
+----
+
+== 教程：面向 Mali/Adreno 的着色器量化
+
+在嵌入式系统上，着色器精度直接影响功耗。把变量降级为 `mediump`（FP16）能明显提升性能，但如果用得随意，也确实有出现可见瑕疵的风险。
+
+=== 第 1 步：精度审计
+
+把你的片元着色器交给助手，让它找出可以量化的候选变量，然后拿你自己的视觉测试去核对它的建议，而不是直接相信。
+
+[source,text]
+----
+Audit 'PBR.frag' for a Mali-G710 GPU.
+Which variables can we safely downgrade to 'mediump'
+(FP16) without causing visible artifacts in our
+specular reflections or normal mapping?
+----
+
+=== 第 2 步：应用量化
+
+审阅它提出的重构后着色器。在归一化和中间光照步骤改用 `mediump` 能降低寄存器压力，从而让更多线程并行运行——但在定稿之前先验证视觉效果。
+
+[source,glsl]
+----
+// Fragment shader using FP16 intermediates for embedded targets
+layout(location = 0) out vec4 outColor;
+void main() {
+    mediump vec3 normal = normalize(inNormal);
+    mediump vec3 lightDir = normalize(uBo.lightPos - inPos);
+    // ... lighting calculations at FP16 ...
+}
+----
+
+== 教程：Vulkan SC 合规检查
+
+在汽车和工业环境中，Vulkan SC 要求所有资源都提前预分配。在这种情况下，你应该把 AI 的输出当作初稿，而不是认证——真正的 SC 合规要对照规范和你的认证流程来验证，光凭助手的意见不算数。
+
+=== 第 1 步：合规审计
+
+把你的初始化序列交给助手，让它检查是否有违反 SC 1.0 的地方。
+
+[source,text]
+----
+Audit 'VulkanContext::initializeSC'.
+Check if our 'PipelineCache' warming logic is compliant
+with the Vulkan SC 1.0 specification for offline compilation.
+Are we using any illegal dynamic state like 'VK_DYNAMIC_STATE_LINE_WIDTH'?
+----
+
+=== 第 2 步：SC 重构
+
+如果它发现了违规，比如动态线宽，就让它生成保持合规所需的预烘焙管线数组，然后你自己对照规范确认结果。
+
+== 小结
+
+嵌入式部署归根结底就是在硬性的内存和 CPU 预算内做事。AI 能帮忙审计分配、建议量化策略，但这也是本系列中最需要审视助手输出的领域之一——出错的代价是一台不能工作的设备，而不只是慢一帧。
+
+桌面、移动和嵌入式部署就讲到这里。下一节是常见问题解答，以及一个把本系列各种工具串起来的综合项目。
+
+下一篇：xref:AI_Assisted_Vulkan/09_faq.adoc[常见问题与故障排查（FAQ）]

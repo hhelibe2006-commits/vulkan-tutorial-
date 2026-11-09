@@ -1,0 +1,42 @@
+:pp: {plus}{plus}
+
+= clvk 与分层：Vulkan 上的 OpenCL 3.0
+
+== 什么是 clvk？
+
+前面几节讨论的 `clspv` 侧重于提前编译内核，而 **clvk** 则是在 Vulkan 之上实现 OpenCL 3.0 API 的一份实现。
+
+这意味着你甚至不必改动**主机代码**（C{pp} 应用代码）。你可以继续使用标准的 `clCreateContext`、`clEnqueueNDRangeKernel` 以及其他 OpenCL 函数，`clvk` 会在运行时把这些命令转换成 Vulkan 派发。
+
+== 工作原理
+
+`clvk` 是一个与 ICD 兼容的 OpenCL 共享库。当你的应用通过 ICD Loader 调用某个 OpenCL 函数时：
+
+1.  **API 转换**：`clvk` 把这次调用（例如 `clEnqueueNDRangeKernel`）转换成 Vulkan 命令（例如 `vkCmdDispatch`）。
+2.  **内核编译**：它在内部使用 `clspv`，把你的 OpenCL C 源码编译成 Vulkan 兼容的 SPIR-V。
+3.  **内存管理**：它把 OpenCL 缓冲区与图像映射到 Vulkan 的 `VkBuffer` 与 `VkImage` 对象。
+4.  **队列管理**：OpenCL 的命令队列被映射到 Vulkan 队列，并配有恰当的同步（使用栅栏和信号量）。
+
+== 为什么要用 clvk？
+
+`clvk` 最大的优势是**无需重写的可移植性**。
+
+如果你有一个用 C{pp} 编写、使用 OpenCL 的大型桌面应用，那么只要把它链接到 `clvk` 库，就能在 Android 设备或只有 Vulkan 的 Linux 系统上运行。你无需改动主机代码或内核的哪怕一行。
+
+更重要的是，`clvk` **符合规范地**实现了 OpenCL 3.0——你的应用不需要知道自己跑在 Vulkan 之上。从主机代码的角度看，它的行为与原生 OpenCL 驱动完全一致。这才是正确的设计：分层实现应当对应用不可见。
+
+对于希望用一份代码库覆盖尽可能多设备的跨平台开发者来说，这非常有利。
+
+== 性能考量
+
+由于 `clvk` 是一层转换，相比原生 OpenCL 驱动或直接写 Vulkan 会有一些开销。不过，对许多工作负载而言，这点开销低得出人意料。
+
+因为实际计算发生在原生 Vulkan 驱动里，主要成本在 CPU 端的命令转换上。对于沉重、长时间运行的内核，这部分开销通常可以忽略。
+
+== 兼容性与扩展
+
+`clvk` 支持 OpenCL 3.0 规范的大部分内容。不过，它的兼容性取决于你的 Vulkan 驱动支持哪些特性。如果你的驱动支持 Vulkan 1.4 以及**描述符索引**、**可变指针**和**缓冲区设备地址**，`clvk` 就能支持几乎所有的 OpenCL 特性。
+
+下一节，我们会让这两个工具在一个自包含的示例里协同工作：把**同一个 OpenCL 内核以两种方式跑在 Vulkan 上**——一次通过 `clspv` 提前编译，一次在运行时通过 `clvk`——并证明两者产生完全相同的结果。
+
+xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc[上一节：内核可移植性：面向 Vulkan 的 OpenCL C] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc[下一节：实战示例：由 OpenCL 驱动的 Vulkan 渲染]

@@ -1,0 +1,24 @@
+{
+  "id": "b053",
+  "words": 3417,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc",
+      "words": 1349,
+      "title": "Introduction to Lighting & Materials"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc",
+      "words": 1460,
+      "title": "Lighting Models"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc",
+      "target": "zh/Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc",
+      "words": 608,
+      "title": "Push Constants"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+= VK_KHR_dynamic_rendering_local_read——将颜色数据保留在瓦片内存中
+
+动态渲染让你无需完整的渲染通道/子通道就能渲染。`VK_KHR_dynamic_rendering_local_read` 特性是一个小而实用的补充：在支持它的硬件上，它允许通过瓦片/本地内存路径对附件进行同一通道内的读取。
+
+== 为什么重要
+
+某些光照后的效果以及类 resolve 的步骤会读取你刚刚写入的颜色。有了这个特性，驱动可以从快速的片上内存满足这些读取，而不必往返 VRAM。
+
+== 我们如何处理
+
+* 如果设备支持该特性就启用它，不支持时保持代码路径兼容。
+* 我们仍然会在进行布局转换之前结束渲染实例。该特性并不允许随意滥用屏障——常规的 Synchronization 2 规则依然适用。
+
+== 实践建议
+
+* 把它当作一种优化，而不是新的 API 接口。
+* 保持 stage/access 掩码精确。在本示例中，为了清晰起见，我们把转换放在活动渲染之外。
+
+== 在代码中看哪里
+
+* 特性检测与启用：
+** `renderer_core.cpp`（设备特性启用路径）
+* 动态渲染设置与屏障：
+** `renderer_rendering.cpp`
+** `renderer_pipelines.cpp`
+
+== 后续工作想法
+
+如果你想更直接地演示本地读取：
+
+* 添加一个小型的「同一通道」效果，读取当前颜色附件（例如简单的局部对比度或边缘高亮）。
+* 添加一个调试 HUD，打印当前设备上是否启用了该特性。
+* 使用固定的相机路径，对比基于瓦片的 GPU（移动端）上启用与不启用本地读取时的性能。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_2_Frame_Pacing.adoc[本引擎中的 Synchronization 2 与帧节奏控制]

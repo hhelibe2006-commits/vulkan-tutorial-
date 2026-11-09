@@ -1,0 +1,202 @@
+= 引擎扩展：优化场景图
+
+== 从简单实例到全局层级
+
+在「构建一个简单引擎」系列中，我们用直白的 `ObjectInstance` 向量管理世界里的对象。每个对象都有自己的位置、旋转和缩放，我们逐个渲染它们：
+
+[source,cpp]
+----
+struct ObjectInstance {
+    glm::vec3 position;
+    glm::vec3 rotation;
+    glm::vec3 scale;
+    // ...
+};
+std::vector<ObjectInstance> objectInstances;
+----
+
+这种做法非常适合学习 Vulkan 基础，但它造出了我们所说的**「浅层世界」**。在这种模型里，每个对象都是独立的。虽然某个实例内部的模型可以有它自己的 glTF 层级，但世界中的对象之间无法轻松地相互影响。
+
+随着我们进入高级角色动画，这种「浅层」架构就成了主要的障碍。想象一个角色手持一把剑。在浅层世界里，剑和角色是两个独立实体。角色的手一动，我们就得每帧手动计算剑应该在哪。当你再加上枪套、盾牌，甚至多个角色骑在一辆移动的载具上时，难度会呈指数级上升。
+
+为此，我们必须把扁平列表换成**统一场景图**。在这个系统里，引擎中的每个实体——无论是角色的骨盆骨骼、一把剑，还是一台巨大的电梯——都是单一全局层级中的一个**节点**。给每个节点一个可选的 `parent_index`，我们就能让任意对象挂到任意其他对象上。父级移动时，子级自动跟随。
+
+== 性能瓶颈：冗余计算
+
+递归层级在架构上很优雅，但它带来了严重的性能挑战。在传统的场景图中，计算一个节点的「世界矩阵」（它在 3D 世界中的最终位置）需要把它的局部变换乘上父级的世界矩阵：
+
+`WorldMatrix = ParentWorldMatrix * LocalMatrix`
+
+在一个有 200 根骨骼的复杂角色上，计算一个指尖的世界空间位置需要从骨盆出发，穿过脊柱、肩、臂、腕，遍历整个层级。如果每根骨骼、每一帧都做这种计算，我们会浪费大量 CPU 周期——尤其是角色根本没在动的时候！
+
+要达到专业级的性能，我们要实现**脏标记模式**。
+
+=== 理解脏标记
+
+「脏标记」是一种简单却强大的优化。与其每帧盲目重算矩阵，我们给每个节点加一个小小的「状态」变量。当我们改变某个节点的位置时，就把它标成**「脏」**。
+
+之后，只有当节点（或它的父级）变脏时，我们才执行昂贵的矩阵乘法。如果节点是**「干净」**的，我们直接复用上一帧算出的世界矩阵。
+
+[source,cpp]
+----
+static constexpr uint32_t INVALID_NODE_INDEX = 0xFFFFFFFF;
+
+enum TransformStatus : uint8_t {
+    Clean = 0,
+    LocalDirty = 1 << 0,  // This node's position/rotation/scale changed
+    WorldDirty = 1 << 1   // This node's world matrix needs recalculation
+};
+
+struct ColliderDef {
+    enum class Shape { CAPSULE, BOX, NONE };
+    Shape shape     = Shape::NONE;
+    float radius    = 0.0f;
+    float half_height = 0.0f;
+    glm::vec3 box_half_extents = {0,0,0};
+    float mass      = 1.0f;
+    std::string collision_group;
+    std::string collision_mask;
+};
+
+struct ConstraintDef {
+    enum class Type { NONE, BALL_SOCKET, HINGE };
+    Type        type              = Type::NONE;
+    float       swing_limit_deg   = 180.0f;
+    float       twist_limit_deg   = 180.0f;
+    float       hinge_min_deg     = -180.0f;
+    float       hinge_max_deg     =  180.0f;
+    glm::vec3   hinge_axis        = {0,0,1};
+    std::string parent_bone;
+};
+
+struct Node {
+    uint32_t node_index;
+    uint32_t parent_index = INVALID_NODE_INDEX;
+    std::vector<uint32_t> child_indices;
+    std::string name;
+
+    // Local transform data (SRT: Scale, Rotation, Translation)
+    glm::vec3 translation    = {0,0,0};
+    glm::quat local_rotation = glm::identity<glm::quat>();
+    glm::vec3 scale          = {1,1,1};
+
+    // Cached world matrix - we only update this when dirty!
+    glm::mat4 world_matrix = glm::mat4(1.0f);
+
+    uint8_t status = TransformStatus::Clean;
+    bool is_joint = false;
+
+    // Physics metadata (extracted from glTF extras)
+    ColliderDef collider_def;
+    ConstraintDef constraint_def;
+
+    // Call this whenever you change translation, rotation, or scale
+    void mark_dirty() {
+        status |= TransformStatus::LocalDirty | TransformStatus::WorldDirty;
+    }
+
+    // Computes the local transform matrix from SRT components.
+    // The order is TRS (Translation * Rotation * Scale).
+    glm::mat4 get_local_matrix() const {
+        return glm::translate(glm::mat4(1.0f), translation) *
+               glm::mat4_cast(local_rotation) *
+               glm::scale(glm::mat4(1.0f), scale);
+    }
+
+    // Safely extracts rotation from the world matrix, stripping any scale.
+    glm::quat get_world_rotation() const {
+        glm::mat3 rot_scale = glm::mat3(world_matrix);
+        glm::mat3 rotation;
+        // We must normalize the axes to remove scale before converting to a quaternion,
+        // otherwise non-uniform scaling will corrupt the rotation data.
+        rotation[0] = glm::normalize(rot_scale[0]);
+        rotation[1] = glm::normalize(rot_scale[1]);
+        rotation[2] = glm::normalize(rot_scale[2]);
+        return glm::quat_cast(rotation);
+    }
+};
+----
+
+这项优化决定了一个引擎是在几个动画角色面前就卡死，还是能扛住一整群人。通过追踪变换的「脏」状态，我们确保静态环境对象——它们在大多数场景中占绝大多数——在变换更新上几乎不消耗 CPU 时间。
+
+== 缓存友好的内存布局：面向数据设计（DOD）
+
+这些节点在内存中如何存放，与更新它们所用的数学同样重要。传统场景图常用指针（例如 `std::vector<Node*> children`），这会引发**「指针追逐」**。CPU 更新层级时，必须跳到内存中各不相同、无法预测的位置去找每个子节点。这种「随机访问」慢得离谱，因为它无法命中 CPU 的高速缓存。
+
+为了最大化性能，我们把所有节点存放在一个**扁平的面向数据数组**中。不用指针，而是用稳定的索引（`uint32_t`）来连接父级与子级。
+
+[source,cpp]
+----
+class SceneGraph {
+public:
+    std::vector<Node> nodes;
+
+    // Linear update: Only works if nodes are topologically sorted (parent before children)
+    void update_transforms() {
+        for (auto& node : nodes) {
+            if (node.status & TransformStatus::WorldDirty) {
+                if (node.parent_index != INVALID_NODE_INDEX) {
+                    node.world_matrix = nodes[node.parent_index].world_matrix * node.get_local_matrix();
+                } else {
+                    node.world_matrix = node.get_local_matrix();
+                }
+
+                for (uint32_t child_index : node.child_indices) {
+                    nodes[child_index].status |= TransformStatus::WorldDirty;
+                }
+                node.status = TransformStatus::Clean;
+            }
+        }
+    }
+
+    // Recursive update: Correctly handles any node order and sub-tree updates
+    void update_world_matrices_subtree(uint32_t index) {
+        Node& node = nodes[index];
+
+        if (node.parent_index != INVALID_NODE_INDEX) {
+            node.world_matrix = nodes[node.parent_index].world_matrix * node.get_local_matrix();
+        } else {
+            node.world_matrix = node.get_local_matrix();
+        }
+
+        for (uint32_t child_idx : node.child_indices) {
+            // We force WorldDirty on children because their parent's matrix just changed
+            nodes[child_idx].status |= TransformStatus::WorldDirty;
+            update_world_matrices_subtree(child_idx);
+        }
+
+        node.status = TransformStatus::Clean;
+    }
+};
+----
+
+=== 顺序的重要性：拓扑排序
+
+上面的循环里有一个微妙却关键的细节。要让「父到子」的更新在单趟遍历中正确工作，父节点必须**始终**排在它的子节点之前。
+
+如果骨盆骨骼在索引 0、大腿骨骼在索引 50，那么骨盆会先更新，它的 `world_matrix` 就绪，它的「脏」状态会传给大腿。如果顺序反过来，大腿就会用上一帧的*旧*骨盆矩阵更新，导致角色四肢看起来落后于躯干的「抖动」现象。
+
+保证这种顺序的做法叫**拓扑排序**。通过在扁平数组中维持这个特定顺序，我们让 CPU 能线性预取节点数据，从而获得极快、缓存友好的更新——在零点几毫秒内处理数千个节点。
+
+== 为角色管线做准备
+
+这次引擎扩展不只是关于渲染性能，更是关于架构上的就绪。通过实现统一的、由脏标记驱动的场景图，我们为后面要实现的若干高级特性打好了地基：
+
+*   **骨骼动画**：我们的骨骼将只是这个层级中的节点。
+*   **物理同步**：我们会把物理刚体挂到特定节点上。当某个节点的 `world_matrix` 变脏时，我们就能准确知道该在什么时候更新物理代理。
+*   **光线追踪（RTAS）**：为光线追踪构建加速结构代价很高。脏标记会准确告诉我们哪些 BLAS（底层加速结构）因为对象移动而需要重建。
+
+现在让我们进入下一节，看看如何把这个视觉层级与物理模拟连接起来。
+
+== 从简单引擎迁移
+
+如果你是从「构建一个简单引擎」系列过来的，你手上大概有一堆 `ObjectInstance` 结构体。迁移到统一场景图是一次重大的架构转变。下面是一份迁移清单：
+
+1.  **从指针改为索引**：把所有 `Node*` 或 `Entity*` 引用替换为指向全局 `std::vector<Node>` 的 `uint32_t` 索引。
+2.  **统一存储**：不再让每个 `Model` 拥有自己内部的节点层级，而是把所有 glTF 节点直接加载进全局 `SceneGraph`。
+3.  **采用脏标记**：从渲染循环里删掉所有逐帧的 `Parent * Local` 矩阵运算，改为在帧开始时调用一次 `update_transforms()`。
+4.  **拓扑排序**：加载 glTF 时，确保把节点加入 `std::vector` 的顺序始终是父级在子级之前。这样高速的线性更新循环才能正常工作。
+
+做完这些改动，你就从一个彼此独立的对象集合，走进了一个每个元素都能响应父级的内聚世界，为复杂的角色交互搭好了舞台。
+
+xref:Advanced_glTF/Scene_Graph_Hierarchy/01_introduction.adoc[上一章：场景图与变换层级] | xref:Advanced_glTF/Scene_Graph_Hierarchy/03_physics_syncing.adoc[下一章：物理同步：动画与物理的连接]

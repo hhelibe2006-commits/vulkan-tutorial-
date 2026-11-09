@@ -1,0 +1,24 @@
+{
+  "id": "b076",
+  "words": 4778,
+  "files": [
+    {
+      "source": "en/ML_Inference/Desktop_Applications/08_future_directions.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/08_future_directions.adoc",
+      "words": 1014,
+      "title": "Future Directions: GANs, DLSS, and Beyond"
+    },
+    {
+      "source": "en/ML_Inference/Embedded_Applications/01_introduction.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/01_introduction.adoc",
+      "words": 1569,
+      "title": "Embedded Applications: AI at the Edge"
+    },
+    {
+      "source": "en/ML_Inference/Embedded_Applications/02_cross_compilation.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/02_cross_compilation.adoc",
+      "words": 2195,
+      "title": "Cross-Compilation: Building for the ARM Empire"
+    }
+  ]
+}

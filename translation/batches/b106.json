@@ -1,0 +1,66 @@
+{
+  "id": "b106",
+  "words": 4585,
+  "files": [
+    {
+      "source": "en/Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc",
+      "target": "zh/Synchronization/Async_Compute_Overlap/04_bubble_problem.adoc",
+      "words": 432,
+      "title": "The Bubble Problem: Finding and Fixing Stalls"
+    },
+    {
+      "source": "en/Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc",
+      "target": "zh/Synchronization/Dynamic_Rendering_Sync/01_introduction.adoc",
+      "words": 388,
+      "title": "Synchronization in Dynamic Rendering: A Pass-less World"
+    },
+    {
+      "source": "en/Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc",
+      "target": "zh/Synchronization/Dynamic_Rendering_Sync/02_subpass_replacement.adoc",
+      "words": 511,
+      "title": "Subpass Replacement: Syncing Without the Pass"
+    },
+    {
+      "source": "en/Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc",
+      "target": "zh/Synchronization/Dynamic_Rendering_Sync/03_local_read_sync.adoc",
+      "words": 390,
+      "title": "Local Read Sync: On-Tile Efficiency with Dynamic Rendering"
+    },
+    {
+      "source": "en/Synchronization/Frame_in_Flight/01_introduction.adoc",
+      "target": "zh/Synchronization/Frame_in_Flight/01_introduction.adoc",
+      "words": 409,
+      "title": "Frame-in-Flight Architecture: The Heartbeat of Your Engine"
+    },
+    {
+      "source": "en/Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc",
+      "target": "zh/Synchronization/Frame_in_Flight/02_managing_concurrent_frames.adoc",
+      "words": 602,
+      "title": "Managing Concurrent Frames: Rebuilding the Main Loop"
+    },
+    {
+      "source": "en/Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc",
+      "target": "zh/Synchronization/Frame_in_Flight/03_resource_lifetimes.adoc",
+      "words": 470,
+      "title": "Resource Lifetimes: Safe Reuse Without deviceWaitIdle()"
+    },
+    {
+      "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc",
+      "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/01_introduction.adoc",
+      "words": 419,
+      "title": "Host Image Copies & Memory Mapped Sync: Direct Access"
+    },
+    {
+      "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc",
+      "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/02_cpu_to_image_access.adoc",
+      "words": 532,
+      "title": "Direct CPU-to-Image Access: Utilizing Host Image Copies"
+    },
+    {
+      "source": "en/Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc",
+      "target": "zh/Synchronization/Host_Image_Copies_Memory_Sync/03_visibility_flushes.adoc",
+      "words": 432,
+      "title": "Visibility & Flushes: Mastering Coherency"
+    }
+  ]
+}

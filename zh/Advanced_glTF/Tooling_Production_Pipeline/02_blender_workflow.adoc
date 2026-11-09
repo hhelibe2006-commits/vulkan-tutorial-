@@ -1,0 +1,112 @@
+:pp: {plus}{plus}
+= 从 Blender 到 Vulkan 的工作流
+
+== 命名约定：不成文的契约
+
+美术师与引擎程序员之间最常见的困惑来源就是命名。一个引擎加载器如果去找名为 `"Spine1"` 的骨骼来挂接 IK 链，而骨架用的是 `"spine_1"`、`"Spine_01"` 或 `"spine.001"`（Blender 在你复制骨骼时的默认命名），它就会静默失败。这不是加载器的缺陷，也不是骨架的缺陷——而是两者之间的命名契约破裂了。
+
+在构建第一个角色之前就确立命名约定、把它写下来、并一致地执行，是小团队能做的杠杆率最高的投入之一。约定不必繁复——只需要大家都同意并遵守。
+
+对骨架关节来说，实践中效果良好的标准是：全部小写、单词用下划线分隔、用 `_l` 或 `_r` 后缀表示侧别（分别表示左和右），并遵循一致的层级命名模式。按这套约定，人形脊柱链是 `hips`、`spine`、`spine_upper`、`chest`、`neck`、`head`。腿部链是 `thigh_l`、`shin_l`、`foot_l`、`toes_l`。这也是 Blender 内置的 Rigify 系统和 Mixamo 采用的约定，因此能与大量现有动画内容兼容。
+
+从引擎的角度看，加载器代码永远不应该硬编码关节名——它应该从 glTF 文件，或从一个把语义名称映射到 glTF 名称的小配置文件里发现它们。这样不同资产可以使用不同的命名约定，而无需改动引擎代码。不过，我们在第 2 章定义的基于 extras 的物理与约束元数据用 `"parent_bone"` 作为关节名的字符串引用，因此它们必须与导出的关节名完全一致。
+
+== 顶点组与蒙皮权重
+
+在 Blender 中，骨骼蒙皮通过**顶点组**定义：顶点组是命名的顶点集合，其中每个顶点有一个权重值（0 到 1），表示该组的骨骼对它影响有多大。Blender 会把顶点组权重导出为 glTF 文件中的 `JOINTS` 和 `WEIGHTS` 访问器。
+
+Blender 一侧的几类问题会在导出时破坏蒙皮数据：
+
+**未归一化的权重。** 如果一个顶点的骨骼权重之和不是 1.0，蒙皮数学就会给出错误结果——该顶点在运动时会收缩或膨胀。Blender 的权重绘制模式有归一化选项，导出前用它。glTF 规范并不要求权重归一化，但你的蒙皮着色器几乎肯定按 `sum(weight_i * joint_matrix_i)` 计算混合矩阵，而这假设了归一化。
+
+**每个顶点的影响超过四个。** glTF 的标准蒙皮（`JOINTS_0`/`WEIGHTS_0`）每个顶点恰好支持四个骨骼影响。使用自动权重绘制时，Blender 骨架经常产生超过四个的影响——尤其在腋下、髋部褶皱这类关节交汇处。权重绘制工具里的 `Limit Total` 选项可以把每个顶点的影响数减少到至多 N 个；导出前把 N 设为 4，之后再重新归一化。
+
+**零权重的顶点组。** 如果某个顶点组存在、但某个顶点在其中权重为零，Blender 仍可能把该组算作四个影响之一，浪费掉一个本可用于有意义影响的槽位。用 Blender 的 `Clean Weights` 选项处理掉。
+
+**静止姿势不匹配。** glTF 导出会把骨架在导出时刻的当前姿势作为绑定姿势捕获下来。如果你导出时骨架已经被摆过姿势（不在静止姿势），所有逆绑定矩阵都会是错的，角色在基础 T-pose 下就会显得变形。第一次导出前务必确认骨架处于静止位置（必要时用 `Pose mode → Pose → Apply Pose as Rest Pose`，然后再导出），并把「只从静止姿势导出」定为工作流规则。
+
+== 物理扩展数据的自定义属性
+
+第 2 章我们讲过，物理碰撞体与约束定义如何存放在 glTF 的「extras」JSON 中，并在加载时由引擎解析。在 Blender 一侧，这些 extras 来自 Blender 的**自定义属性**面板，在姿势模式下选中骨骼即可使用（属性 → 骨骼 → 自定义属性）。
+
+关键细节是数据格式。Blender 把自定义属性作为原始 JSON 值导出到 extras 字段中。浮点属性变成 JSON 数字，字符串属性变成 JSON 字符串。现代 Blender glTF 导出器能直接处理字典属性，让你无需手工做字符串编码就能在 glTF 的 `extras` 字段里创建复杂的嵌套 JSON 结构。
+
+对物理 extras 来说，最干净的做法是在 Blender 的脚本编辑器里跑一个 Python 脚本。脚本遍历骨架中的所有骨骼，根据一个配置字典以编程方式设置自定义属性：
+
+[source,python]
+----
+import bpy, json
+
+# Configuration: bone name -> physics settings
+physics_config = {
+    "shin_l": {
+        "physics": {
+            "collider": "capsule",
+            "radius": 0.05,
+            "half_height": 0.18,
+            "mass": 3.0,
+            "constraint": {
+                "type": "hinge",
+                "hinge_axis": [0, 0, 1],
+                "limit_min_deg": -140,
+                "limit_max_deg": 0,
+                "parent_bone": "thigh_l"
+            },
+            "collision_group": "leg",
+            "collision_mask": "world,props"
+        }
+    },
+    # ... more bones
+}
+
+armature = bpy.data.objects["Armature"]
+bpy.context.view_layer.objects.active = armature
+bpy.ops.object.mode_set(mode='POSE')
+
+for bone_name, config in physics_config.items():
+    if bone_name in armature.pose.bones:
+        bone = armature.pose.bones[bone_name]
+        for key, value in config.items():
+            # Modern Blender glTF exporters handle dicts directly,
+            # ensuring 'extras' contains a proper JSON object.
+            bone[key] = value
+
+bpy.ops.object.mode_set(mode='OBJECT')
+print("Physics properties applied.")
+----
+
+这个脚本会生成第 2 章中 `parse_collider_extras` 与 `parse_constraint_def` 函数所期望的嵌套 JSON 结构。现代 Blender 会确保这些字典属性作为正规的 JSON 对象导出到 glTF 的 `extras` 字段，与我们用 `tinygltf` 实现的 C{pp} 解析逻辑相匹配。把这个脚本与 blend 文件放在一起保存，并在任何骨架改动之后运行它。把脚本与 blend 文件一起纳入版本控制，能确保物理参数可复现、可追踪。
+
+== glTF 导出检查清单
+
+从 Blender 导出时，在 `Export glTF 2.0` 对话框中使用下列设置，确保角色数据正确到达引擎：
+
+*   **格式**：`glTF Binary (.glb)`
+*   **包含**：
+    *   [x] `Selected Objects`（确保只选中了网格和骨架）
+    *   [x] `Custom Properties`（**关键**：你的物理元数据就在这里）
+*   **变换**：
+    *   [x] `+Y Up`（glTF 标准约定）
+*   **数据 → 网格**：
+    *   [x] `UVs`、`Normals`、`Tangents`（PBR 与蒙皮都需要）
+    *   [x] `Vertex Weights`（骨骼动画需要）
+    *   [x] `Shape Keys`（形变目标需要）
+*   **数据 → 骨架**：
+    *   [x] `Use Rest Position Armature`
+    *   [ ] `Export Deformation Bones Only`（如果你的 IK 需要引用非形变控制骨，保持**关闭**）
+    *   [ ] `Add Leaf Bones`（**关闭**：避免在链末端多出骨骼）
+*   **动画**：
+    *   [x] `Animation`（启用以导出动画片段）
+    *   [x] `Shape Key Animation`（如果你的面部表情有关键帧则需要）
+
+== 形变目标（形态键）工作流
+
+glTF 中的形变目标（在 Blender 中称为**形态键**）能实现骨骼动画单独无法处理的复杂形变，比如面部表情。
+
+1.  **创建**：在 `Mesh Data` 属性面板中创建形态键。第一个键永远是 `Basis`（静止姿势）。后续的键定义相对于该基础形状的位移。
+2.  **命名**：给形态键起语义化的名字（例如 `blink_l`、`smile`、`mouth_open`）。这些名字会导出到 glTF 的 `extras.targetNames` 字段中，让引擎可以按名字寻址。
+3.  **范围**：确保形态键被设计成可叠加的。如果某个顶点同时被 `smile` 形变和 `blink` 形变移动，引擎会把它们的位移相加。
+4.  **导出**：如检查清单所述，确保 glTF 导出器中启用了**形态键**与**形态键动画**选项。
+5.  **验证**：导出后，用 **glTF-Validator** 检查你的 `.glb`。它会检查你的形态键是否在合适的地方使用了**稀疏访问器**，这对复杂面部骨架是一项关键优化。
+
+xref:Advanced_glTF/Tooling_Production_Pipeline/01_introduction.adoc[上一章：工具链与生产管线] | xref:Advanced_glTF/Tooling_Production_Pipeline/03_validation.adoc[下一章：验证：Khronos glTF-Validator]

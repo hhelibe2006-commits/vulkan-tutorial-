@@ -1,0 +1,48 @@
+{
+  "id": "b018",
+  "words": 5799,
+  "files": [
+    {
+      "source": "en/17_Multithreading.adoc",
+      "target": "zh/17_Multithreading.adoc",
+      "words": 1850,
+      "title": "Multithreading with Vulkan"
+    },
+    {
+      "source": "en/18_Ray_tracing.adoc",
+      "target": "zh/18_Ray_tracing.adoc",
+      "words": 14,
+      "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+    },
+    {
+      "source": "en/90_FAQ.adoc",
+      "target": "zh/90_FAQ.adoc",
+      "words": 320,
+      "title": "Frequently Asked Questions"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc",
+      "words": 848,
+      "title": "Environment Setup"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/02_jetbrains_clion_android_studio.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/02_jetbrains_clion_android_studio.adoc",
+      "words": 1230,
+      "title": "JetBrains CLion & Android Studio"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/03_visual_studio.adoc",
+      "words": 636,
+      "title": "Visual Studio: Windows-Native Development"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc",
+      "target": "zh/AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc",
+      "words": 901,
+      "title": "Xcode & Apple Silicon"
+    }
+  ]
+}

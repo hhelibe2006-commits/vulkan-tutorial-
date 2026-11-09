@@ -1,0 +1,30 @@
+{
+  "id": "b029",
+  "words": 4616,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/12_Mobile_and_Embedded_Compute/04_embedded_beyond_mobile.adoc",
+      "words": 2997,
+      "title": "Beyond Mobile: Embedded and Headless Compute"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/conclusion.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/conclusion.adoc",
+      "words": 713,
+      "title": "Advanced Vulkan Compute: Conclusion"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/introduction.adoc",
+      "words": 584,
+      "title": "Advanced Vulkan Compute: The Power of Parallelism"
+    },
+    {
+      "source": "en/Advanced_glTF/Debugging_Visual_Auditing/01_introduction.adoc",
+      "target": "zh/Advanced_glTF/Debugging_Visual_Auditing/01_introduction.adoc",
+      "words": 322,
+      "title": "Debugging & Visual Auditing"
+    }
+  ]
+}

@@ -1,0 +1,297 @@
+:pp: {plus}{plus}
+
+= 相机与变换：与 Vulkan 集成
+
+== 将相机与 Vulkan 集成
+
+=== 本教程使用的库
+
+在开始集成之前，先简要介绍一下我们将用到的几个关键库：
+
+* *GLFW*（Graphics Library Framework）：一个轻量级、跨平台的库，用于创建窗口、上下文和表面，处理输入与事件。我们用它来管理窗口、处理输入。[https://www.glfw.org/]
+
+* *GLM*（OpenGL Mathematics）：一个面向图形学编程的数学库，提供类似 GLSL 的向量与矩阵运算。我们所有的 3D 数学运算都用它。[https://github.com/g-truc/glm]
+
+现在我们已经有了相机系统，也理解了变换矩阵，接下来把它们集成到 Vulkan 应用中。我们会重点讲如何为矩阵设置统一缓冲区，以及如何根据相机移动逐帧更新它们。
+
+为了让集成过程易于消化，可以把它拆成五个小步骤：
+
+* 定义 UBO 布局（model/view/proj），并创建逐帧缓冲区
+* 创建描述符集布局，为 UBO 分配描述符集
+* 写入描述符集，并持久映射缓冲区以实现快速更新
+* 每帧用相机（view/proj）和模型变换更新 UBO
+* 绑定描述符集，用更新后的矩阵绘制
+
+[NOTE]
+====
+矩阵数学的回顾参见 xref:Building_a_Simple_Engine/Camera_Transformations/03_transformation_matrices.adoc[相机与变换：变换矩阵] 与 xref:Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc[相机与变换：相机实现]。
+====
+
+=== 统一缓冲区设置
+
+首先，我们需要定义统一缓冲区的结构：
+
+[source,cpp]
+----
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+----
+
+接下来，我们创建统一缓冲区和对应的描述符集：
+
+[NOTE]
+====
+统一缓冲区应当按飞行帧（maxConcurrentFrames）分配，而不是按交换链图像分配。这与提交工作和同步帧的方式一致，能避免不必要的分配，也让你的逻辑更简单。
+====
+
+[source,cpp]
+----
+// Use a fixed number of frames-in-flight, not the number of swapchain images
+constexpr uint32_t maxConcurrentFrames = 2; // Adjust to your renderer
+
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
+// Keep the mapped pointer alongside the buffer for clarity and safety
+struct UboBuffer {
+    vk::raii::Buffer buffer{nullptr};
+    vk::raii::DeviceMemory memory{nullptr};
+    void* mapped = nullptr;
+};
+
+std::array<UboBuffer, maxConcurrentFrames> uniformBuffers;
+
+void createUniformBuffers() {
+    vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+    // Create the buffer
+    vk::BufferCreateInfo bufferInfo{
+        .size = bufferSize,
+        .usage = vk::BufferUsageFlagBits::eUniformBuffer,
+        .sharingMode = vk::SharingMode::eExclusive
+    };
+    for (size_t i = 0; i < maxConcurrentFrames; i++) {
+        uniformBuffers[i].buffer = vk::raii::Buffer(device, bufferInfo);
+
+        // Allocate and bind memory
+        vk::MemoryRequirements memRequirements = uniformBuffers[i].buffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo allocInfo{
+            .allocationSize = memRequirements.size,
+            .memoryTypeIndex = findMemoryType(
+                memRequirements.memoryTypeBits,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+            )
+        };
+
+        uniformBuffers[i].memory = vk::raii::DeviceMemory(device, allocInfo);
+        uniformBuffers[i].buffer.bindMemory(*uniformBuffers[i].memory, 0);
+
+        // Persistently map the buffer memory
+        uniformBuffers[i].mapped = uniformBuffers[i].memory.mapMemory(0, bufferSize);
+    }
+}
+----
+
+=== 描述符集布局
+
+我们需要创建一个描述符集布局来描述统一缓冲区：
+
+[source,cpp]
+----
+void createDescriptorSetLayout() {
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+        .pImmutableSamplers = nullptr
+    };
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{
+        .bindingCount = 1,
+        .pBindings = &uboLayoutBinding
+    };
+
+    descriptorSetLayout = device.createDescriptorSetLayout(layoutInfo);
+}
+----
+
+=== 描述符集
+
+现在创建指向统一缓冲区的描述符集：
+
+[source,cpp]
+----
+void createDescriptorSets() {
+    std::array<vk::DescriptorSetLayout, maxConcurrentFrames> layouts{};
+    layouts.fill(*descriptorSetLayout);
+
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = *descriptorPool,
+        .descriptorSetCount = maxConcurrentFrames,
+        .pSetLayouts = layouts.data()
+    };
+
+    descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+    vk::DescriptorBufferInfo bufferInfo{
+        .offset = 0,
+        .range = sizeof(UniformBufferObject)
+    };
+
+    for (size_t i = 0; i < maxConcurrentFrames; i++) {
+        bufferInfo.buffer = *uniformBuffers[i].buffer;
+
+        vk::WriteDescriptorSet descriptorWrite{
+            .dstSet = descriptorSets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eUniformBuffer,
+            .pBufferInfo = &bufferInfo
+        };
+
+        device.updateDescriptorSets(1, &descriptorWrite, 0, nullptr);
+    }
+}
+----
+
+=== 更新统一缓冲区
+
+在主循环里，我们用最新的相机数据更新统一缓冲区：
+
+[source,cpp]
+----
+void updateUniformBuffer(uint32_t currentFrame) {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    UniformBufferObject ubo{};
+
+    // Model matrix: rotate the model around the Y axis
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    // View matrix: get from our camera
+    ubo.view = camera.getViewMatrix();
+
+    // Projection matrix: get from our camera
+    ubo.proj = camera.getProjectionMatrix(swapChainExtent.width / (float)swapChainExtent.height);
+
+    // Vulkan's Y coordinate is inverted compared to OpenGL
+    ubo.proj[1][1] *= -1;
+
+    // Copy the data to the uniform buffer for the current frame-in-flight
+    memcpy(uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+}
+----
+
+=== 处理相机移动的输入
+
+我们需要处理用户输入来控制相机：
+
+[source,cpp]
+----
+void processInput() {
+    // Calculate delta time
+    static float lastFrame = 0.0f;
+    float currentFrame = glfwGetTime();
+    float deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
+
+    // Process keyboard input for camera movement
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::FORWARD, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::BACKWARD, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::LEFT, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::RIGHT, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::UP, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+        camera.processKeyboard(CameraMovement::DOWN, deltaTime);
+}
+----
+
+=== 相机旋转的鼠标回调
+
+我们还需要处理鼠标移动来实现相机旋转：
+
+[source,cpp]
+----
+// Global variables for mouse handling
+float lastX = 0.0f, lastY = 0.0f;
+bool firstMouse = true;
+
+void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (firstMouse) {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // Reversed: y ranges bottom to top
+
+    lastX = xpos;
+    lastY = ypos;
+
+    camera.processMouseMovement(xoffset, yoffset);
+}
+
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    camera.processMouseScroll(yoffset);
+}
+----
+
+=== 设置输入回调
+
+在初始化代码中，我们需要设置好输入回调：
+
+[source,cpp]
+----
+void initWindow() {
+    // ... existing GLFW initialization code ...
+
+    // Set up input callbacks
+    glfwSetCursorPosCallback(window, mouseCallback);
+    glfwSetScrollCallback(window, scrollCallback);
+
+    // Capture the cursor for camera control
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+}
+----
+
+=== 主循环集成
+
+最后，我们在主循环中把这些部分串起来：
+
+[source,cpp]
+----
+void mainLoop() {
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        processInput();
+
+        // Update uniform buffer with latest camera data
+        updateUniformBuffer(currentFrame);
+
+        // Draw frame
+        drawFrame();
+    }
+}
+----
+
+有了这些组件，我们就拥有了一套与 Vulkan 应用集成的完整相机系统。用户可以用键盘和鼠标在 3D 场景中漫游，视图会随之更新。
+
+下一节我们做个小结，并讨论相机系统的一些潜在改进。
+
+xref:Building_a_Simple_Engine/Camera_Transformations/04_camera_implementation.adoc[上一篇：相机与变换：相机实现] | xref:Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc[下一篇：相机与变换：结语]

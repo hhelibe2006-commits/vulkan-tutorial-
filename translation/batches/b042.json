@@ -1,0 +1,12 @@
+{
+  "id": "b042",
+  "words": 5987,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/02_math_foundations.adoc",
+      "words": 5987,
+      "title": "Camera & Transformations: Mathematical Foundations"
+    }
+  ]
+}

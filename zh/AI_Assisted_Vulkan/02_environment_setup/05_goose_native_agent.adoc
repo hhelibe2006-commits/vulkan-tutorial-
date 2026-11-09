@@ -1,0 +1,139 @@
+:pp: {plus}{plus}
+
+= Goose：自主代理与本地智能
+
+== 简介
+
+IDE 内置的助手（JetBrains AI、Copilot）专注于编辑器内的实时建议。**Goose** 属于另一类工具：它是一个能直接对你的项目动手的代理——运行命令、编辑多个文件、检查构建——而不只是产出代码片段让你粘贴。
+
+本章是三条 IDE 路径（CLion、Visual Studio、Xcode）的交汇点——无论你用哪一个，这里的代理设置都相同。
+
+== 为什么它是代理，而不只是助手
+
+实际差别在于：工具只是提出代码，还是真的拿代码去做点什么。基于聊天的助手给你一段新建 `VkDescriptorPool` 的代码，你自己复制进去再修补。代理则可以被要求「把这个池加到 `VulkanContext.cpp` 里」，然后真的跑一遍构建来确认能编译——它会读你的头文件、写代码、打开终端、运行 `cmake`，并针对自己引入的错误反复迭代。
+
+这确实是一项很有用的能力，但也恰恰是那种你需要持续掌握其改动内容的能力，尤其是任何涉及同步或内存生命周期的部分——前面几章讲的是更贴近你审阅流程的 IDE 内置代理；像 Goose 这样的系统级代理触达范围更广（它能与外部 RenderDoc 实例通信、调整系统配置），相应地，内建的监督也更少。
+
+== 安装 Goose
+
+=== 1. 安装
+
+**macOS 和 Linux：**
+[source,bash]
+----
+curl -fsSL https://block.github.io/goose/install.sh | bash
+----
+
+**Windows：**
+有 PowerShell 安装程序可用，但若想获得更多控制权，请手动安装：
+
+1.  打开 link:https://goose-docs.ai/[goose-docs.ai]，下载 Goose 可执行文件。
+2.  把它解压到一个固定位置（例如 `C:\Programs\Goose`）。
+3.  把 `goose.exe` 固定到开始菜单。
+4.  如果你需要手动编辑配置，`config.yaml` 通常位于 `C:\Users\[YourUserName]\AppData\Roaming\Block\goose\config\config.yaml`。
+
+=== 2. 启动会话
+
+在项目根目录启动会话：
+
+[source,bash]
+----
+cd /path/to/your/vulkan_project
+goose session
+----
+
+从这里开始，你可以添加 **工具**（通过 MCP），让 Goose 读取文件系统、运行 shell 命令、搜索 Vulkan 规范。
+
+==== 文件系统访问（MCP）
+
+要让 Goose 可靠地访问本地文件：
+
+1.  **安装 Node.js：** 使用 link:https://nodejs.org/[nodejs.org] 上的 LTS 安装包。用 `node --version` 和 `npm --version` 验证。
+2.  **在 Goose 中添加扩展：** 进入 **Extensions -> Add Custom Extension**：
+    *   **名称：** `Filesystem Access`
+    *   **类型：** `STDIO`
+    *   **描述：** `Allows goose to access project files.`
+    *   **命令：** `npx -y @modelcontextprotocol/Filesystem_Access [filepath]`（把 `[filepath]` 换成你的项目路径，使用正斜杠，例如 `C:/Users/Dev/VulkanProject`）。
+    *   **超时：** `300`
+3.  **重启 Goose** 以加载这个扩展。
+
+== 在云端模型与本地模型之间分工
+
+混合方案——云端模型负责规划、本地模型负责实现——往往比只挑一个包打天下效果更好，因为这两类模型擅长的方向不同，花的钱也完全不在一个量级。
+
+=== 1. 用云端模型做规划
+
+对于最初的会话搭建和更难的架构规划，云端模型（**Claude 4.6**、**GPT-5.3**）通常值得那份成本——这里需要模型真正对设计做推理，而不只是产出看起来像模像样的代码。
+
+要在 Goose 中配置云端提供方：
+
+1.  打开 Goose Settings -> Models -> Configure Providers。
+2.  选择 **Anthropic**。你需要一个来自 link:https://platform.claude.com/[Claude Console] 的 API 密钥——粘贴后提交。
+
+=== 2. 用本地模型做实现
+
+有了计划之后，通过 **Ollama** 切换到本地模型来做实际的实现工作，既免费，又能让代码留在你自己的机器上。
+
+**配置 Ollama：**
+
+1.  从 link:https://ollama.com[ollama.com] 下载安装程序。
+2.  选一个空闲空间足够的模型存放位置。
+3.  拉取你需要的模型：
++
+[source,bash]
+----
+# Download the 17B model (Llama 4) for low-latency coding
+ollama run llama4
+
+# Download the 30B Qwen model for complex architectural implementation
+# NOTE: qwen3-coder:30b requires 20+ GB of VRAM even at 4-bit quantization.
+# Most consumer GPUs (16 GB or less) will not have sufficient VRAM when a
+# Vulkan application is also running. Use qwen3-coder:14b as a practical
+# alternative on systems with 16 GB or less.
+ollama run qwen3-coder:30b
+
+# Download the 12B Mistral-Nemo model for balanced reasoning and context
+ollama run mistral-nemo
+----
+4.  **连接到 Goose：** 在 Goose Settings -> Models -> Configure Providers 中找到 **Ollama**，从下拉菜单里选择你的模型（例如 `qwen3-coder:14b`）。
+
+=== 3. 把两者组合起来
+
+在实践中，这意味着先用云端模型开一个会话起草计划——例如为了加入阴影贴图功能而分析你现有的 `VulkanContext`——然后切到本地的 Ollama 配置文件，让 Goose 去实现这个计划。这样在云端规划阶段能留出 VRAM，而把（免费、但在正确性上迭代更慢的）本地模型留给实现阶段，在那里错误的代价更容易承受。
+
+==== VS Code 中的权限
+
+如果你在 VS Code 里使用 Goose（或 Claude Code 之类的其它代理），默认每条命令都会弹出权限确认。要跳过它：
+1.  按 `Ctrl + ,` 打开设置。
+2.  搜索 `permissions`。
+3.  把你的 AI 扩展的 **Initial Permission Mode** 设为 `bypassPermissions`。
+4.  启用 **Allow Dangerously Skip Permissions**。
+*注意：* 只在你能承受它被未经确认就修改的环境里这样做——虚拟机和容器，而不是你的主力机器——因为它会让代理在无人看管的情况下运行脚本、编辑文件。
+
+== VRAM 预算
+
+在跑 Vulkan 应用的同时再跑一个本地模型，意味着两者在争抢同一份 GPU 内存，所以动手之前值得先把账算清楚。
+
+=== 粗略的预算
+
+以 16GB VRAM 的机器为例：一个 1440p 的现代延迟渲染器可能用掉约 4.5GB，操作系统/IDE 再占约 1.5GB，剩下大约 10GB 留给本地模型（`16 - (4.5 + 1.5) = 10GB`）。
+
+=== 量化
+
+量化能降低模型的内存占用，Ollama 会自动处理，但这个取舍值得了解。**4 位（Q4_K_M）** 通常是合理的默认值——比全精度小约 75%，输出质量只小幅下降（约 5%）。**8 位（Q8_0）** 更精确，但需要的 VRAM 明显更多。
+
+NOTE: 即便采用 4 位量化，`qwen3-coder:30b` 也需要大约 20GB VRAM——超过大多数消费级显卡的容量。在同时运行 Vulkan 应用的 16GB GPU 上，这装不下。如果你只有 16GB 的预算，改用 `qwen3-coder:14b`（Q4_K_M 下约 9GB）。
+
+如果 VRAM 耗尽，你可能会遇到 **TDR（Timeout Detection and Recovery，超时检测与恢复）** 事件，它会让模型和你的 Vulkan 渲染器一起崩溃。请留出 1–2GB 的安全余量。
+
+== 什么时候用哪个工具
+
+内层循环的工作交给 **IDE 助手**（JetBrains AI、Copilot）——自动补全、解释代码、修复当前文件里的语法错误。跨文件的外层循环工作则切到 **Goose**——新增一个 `PostProcess` 类，或者在整个引擎范围内把裸指针迁移到智能指针。
+
+== 小结
+
+到这里，无论你从哪个 IDE 出发，都应该已经配好了作为系统级代理的 Goose、通过 Ollama 运行的本地模型，以及一份为 Vulkan 应用留出空间的 VRAM 预算。后续章节把这个配置当作基线。
+
+下一篇：xref:AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc[上下文桥：模型上下文协议（MCP）]。
+
+xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[上一篇：环境搭建] | xref:AI_Assisted_Vulkan/02_environment_setup/06_mcp_context_bridge.adoc[下一篇：上下文桥：模型上下文协议（MCP）]

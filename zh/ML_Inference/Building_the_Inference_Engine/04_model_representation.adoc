@@ -1,0 +1,235 @@
+:pp: {plus}{plus}
+
+= 模型表示
+
+我们已经识别出层的抽象并提炼出通用模式。但我们仍然在手工把层连接起来——按顺序创建它们、连接缓冲区、管理执行顺序。这无法扩展。
+
+我们需要的是一种能表示整个网络的数据结构：存在哪些运算、它们如何连接、它们之间流动什么数据。然后我们就能写出遍历这个结构并自动执行的代码。
+
+这就是图表示。它指的不是图形渲染中的图，而是计算图。可以把它看作网络的蓝图。
+
+== 图里有什么？
+
+一张计算图包含三个基本组成部分：
+
+**张量**：数据。输入图像、中间激活、学习到的权重、最终输出。每个张量都有一个形状（比如灰度图像的 [1, 28, 28]）、一种数据类型（通常是 float32），并且可选地带有实际数据（用于权重和常量）。
+
+**运算**：计算。全连接层、卷积、ReLU、池化。每个运算都有一个类型、该类型专属的参数（比如卷积的卷积核大小），以及到输入/输出张量的连接。
+
+**连接**：运算之间的边。运算 A 产出张量 X。运算 B 把张量 X 作为输入消费。这种依赖关系意味着 B 在 A 完成之前无法执行。
+
+三者合起来构成一张有向无环图（directed acyclic graph，DAG）。有向，是因为数据只朝一个方向流动——从输入流向输出。无环，是因为没有回路——不可能出现运算 A 依赖 B、B 依赖 C、C 又依赖回 A 的情况。
+
+== 表示张量
+
+张量需要形状信息，并可选地持有数据：
+
+[source,cpp]
+----
+class Tensor {
+public:
+    Tensor(std::string name, std::vector<int64_t> shape)
+        : name_(std::move(name)), shape_(std::move(shape)) {}
+
+    const std::string& name() const { return name_; }
+    const std::vector<int64_t>& shape() const { return shape_; }
+
+    // For constant tensors (weights, biases)
+    void setData(std::vector<float> data) { data_ = std::move(data); }
+    bool hasData() const { return data_.has_value(); }
+
+    // GPU buffer (set during allocation)
+    void setBuffer(vk::raii::Buffer buffer) { buffer_ = std::move(buffer); }
+
+private:
+    std::string name_;
+    std::vector<int64_t> shape_;
+    std::optional<std::vector<float>> data_;  // CPU data for constants
+    std::optional<vk::raii::Buffer> buffer_;  // GPU buffer when allocated
+};
+----
+
+很简单。一个张量知道自己的名字（用于调试）、形状（用于校验）、数据（如果它是常量）以及 GPU 缓冲区（一旦完成分配）。
+
+形状是一个维度向量。标量是 []，向量是 [N]，矩阵是 [M, N]，图像是 [height, width, channels]，一批图像是 [batch, height, width, channels]。
+
+== 表示运算
+
+一个运算有类型，并连接张量：
+
+[source,cpp]
+----
+enum class OpType {
+    Dense, Conv2D, ReLU, MaxPool, /* ... */
+};
+
+class Operation {
+public:
+    Operation(std::string name, OpType type)
+        : name_(std::move(name)), type_(type) {}
+
+    // Connections
+    void addInput(std::shared_ptr<Tensor> tensor) { inputs_.push_back(tensor); }
+    void addOutput(std::shared_ptr<Tensor> tensor) { outputs_.push_back(tensor); }
+
+    // Type-specific parameters stored as attributes
+    template<typename T>
+    void setAttribute(const std::string& name, T value) {
+        attributes_[name] = value;
+    }
+
+private:
+    std::string name_;
+    OpType type_;
+    std::vector<std::shared_ptr<Tensor>> inputs_;
+    std::vector<std::shared_ptr<Tensor>> outputs_;
+    std::unordered_map<std::string, std::any> attributes_;
+};
+----
+
+输入和输出向量定义了图的结构。全连接层有两个输入（数据和权重）和一个输出。卷积可能有三个输入（数据、权重、偏置）。加法运算有两个输入（被相加的两个张量）和一个输出。
+
+属性（attribute）存放运算专属的参数。对卷积来说是卷积核大小、步幅、填充。对池化来说是池大小和步幅。我们用 std::any 做类型擦除——不同的运算需要不同的参数类型。
+
+== 图容器
+
+现在我们需要一个容器，容纳全部张量和运算：
+
+[source,cpp]
+----
+class ComputationGraph {
+public:
+    std::shared_ptr<Tensor> addTensor(
+        std::string name,
+        std::vector<int64_t> shape
+    ) {
+        auto tensor = std::make_shared<Tensor>(name, shape);
+        tensors_[name] = tensor;
+        return tensor;
+    }
+
+    std::shared_ptr<Operation> addOperation(std::string name, OpType type) {
+        auto op = std::make_shared<Operation>(name, type);
+        operations_.push_back(op);
+        return op;
+    }
+
+    // Mark graph inputs/outputs
+    void addInput(std::shared_ptr<Tensor> tensor) { inputs_.push_back(tensor); }
+    void addOutput(std::shared_ptr<Tensor> tensor) { outputs_.push_back(tensor); }
+
+    // Access
+    const std::vector<std::shared_ptr<Tensor>>& inputs() const { return inputs_; }
+    const std::vector<std::shared_ptr<Tensor>>& outputs() const { return outputs_; }
+    const std::vector<std::shared_ptr<Operation>>& operations() const { return operations_; }
+
+private:
+    std::unordered_map<std::string, std::shared_ptr<Tensor>> tensors_;
+    std::vector<std::shared_ptr<Operation>> operations_;
+    std::vector<std::shared_ptr<Tensor>> inputs_;
+    std::vector<std::shared_ptr<Tensor>> outputs_;
+};
+----
+
+这是核心数据结构。你通过添加张量和运算、把它们连接起来、再标记哪些张量是图的输入和输出来构建一张图。
+
+== 手工构建图
+
+我们把三层 MNIST 网络构建成图：
+
+[source,cpp]
+----
+ComputationGraph graph;
+
+// Input tensor
+auto input = graph.addTensor("input", {1, 784});
+graph.addInput(input);
+
+// First dense layer
+auto fc1_weights = graph.addTensor("fc1_weights", {128, 784});
+fc1_weights->setData(weights.fc1_weights);  // Set constant data
+
+auto fc1_bias = graph.addTensor("fc1_bias", {128});
+fc1_bias->setData(weights.fc1_bias);
+
+auto fc1_output = graph.addTensor("fc1_output", {1, 128});
+
+auto fc1_op = graph.addOperation("fc1", OpType::Dense);
+fc1_op->addInput(input);
+fc1_op->addInput(fc1_weights);
+fc1_op->addInput(fc1_bias);
+fc1_op->addOutput(fc1_output);
+
+// Second dense layer (similar pattern)
+auto fc2_output = graph.addTensor("fc2_output", {1, 64});
+// ... create operation, connect tensors
+
+// Third dense layer
+auto fc3_output = graph.addTensor("fc3_output", {1, 10});
+// ... create operation, connect tensors
+
+graph.addOutput(fc3_output);
+----
+
+注意这个模式：创建张量、创建运算、连接输入/输出。现在图里已经包含了完整的网络结构。
+
+== 执行顺序
+
+图告诉我们*要执行什么*，但没告诉我们*何时*执行。我们需要确定执行顺序——哪些运算可以先跑，哪些必须先等别的运算完成。
+
+这就是 DAG 的拓扑排序。我们从没有依赖的运算开始（只消费图的输入或常量），执行它们，然后执行依赖已经满足的运算，依此类推。
+
+思路如下（已简化）：
+
+[source,cpp]
+----
+std::vector<std::shared_ptr<Operation>> computeExecutionOrder(
+    const ComputationGraph& graph
+) {
+    std::vector<std::shared_ptr<Operation>> ordered;
+    std::unordered_set<Operation*> executed;
+
+    // Keep trying to execute operations until all are done
+    while (ordered.size() < graph.operations().size()) {
+        for (const auto& op : graph.operations()) {
+            if (executed.count(op.get())) continue;  // Already executed
+
+            // Check if all input tensors are ready
+            bool ready = true;
+            for (const auto& input : op->inputs()) {
+                if (!input->hasData() && !isProducedByExecutedOp(input, executed)) {
+                    ready = false;
+                    break;
+                }
+            }
+
+            if (ready) {
+                ordered.push_back(op);
+                executed.insert(op.get());
+            }
+        }
+    }
+
+    return ordered;
+}
+----
+
+这样我们就得到了一个执行顺序，其中每个运算只在其输入就绪后才运行。对我们这个简单的顺序网络，顺序是平凡的：fc1、fc2、fc3。对于带跳跃连接或并行分支的网络，这个算法会自动算出正确的顺序。
+
+== 我们得到了什么
+
+图表示给我们带来了：
+
+**关注点分离**：构建图与执行图是彼此分开的。你可以构建一次、执行多次。
+
+**自动排序**：拓扑排序负责算出执行顺序——我们不必把它硬编码进去。
+
+**优化机会**：有了完整的图，我们就可以分析融合机会、内存复用和并行化。
+
+**调试**：我们可以把图可视化、打印出来、在执行前校验它。
+
+但我们仍在手工构建图。真实模型有几十甚至几百层。我们需要从模型文件加载图，而不是亲手搭建。
+
+下一步就是它：解析模型格式。
+
+xref:ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc[上一篇：从硬编码到灵活实现] | xref:ML_Inference/Building_the_Inference_Engine/05_model_formats_as_input.adoc[下一篇：以模型格式作为输入]

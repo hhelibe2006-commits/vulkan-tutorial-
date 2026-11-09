@@ -1,0 +1,12 @@
+{
+  "id": "b089",
+  "words": 3624,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/08_data_transfer_optimization.adoc",
+      "words": 3624,
+      "title": "Data Transfer Optimization"
+    }
+  ]
+}

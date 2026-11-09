@@ -1,0 +1,66 @@
+{
+  "id": "b108",
+  "words": 5837,
+  "files": [
+    {
+      "source": "en/Synchronization/Timeline_Semaphores/01_introduction.adoc",
+      "target": "zh/Synchronization/Timeline_Semaphores/01_introduction.adoc",
+      "words": 423,
+      "title": "Timeline Semaphores: The Master Clock"
+    },
+    {
+      "source": "en/Synchronization/Timeline_Semaphores/02_unifying_sync.adoc",
+      "target": "zh/Synchronization/Timeline_Semaphores/02_unifying_sync.adoc",
+      "words": 444,
+      "title": "Unifying Synchronization: Replacing Fences and Binary Semaphores"
+    },
+    {
+      "source": "en/Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc",
+      "target": "zh/Synchronization/Timeline_Semaphores/03_monotonic_counter.adoc",
+      "words": 544,
+      "title": "The Monotonic Counter: Tracking Global Progress"
+    },
+    {
+      "source": "en/Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc",
+      "target": "zh/Synchronization/Timeline_Semaphores/04_wait_before_signal.adoc",
+      "words": 590,
+      "title": "Wait-Before-Signal Submission: Decoupling Execution"
+    },
+    {
+      "source": "en/Synchronization/Transfer_Queues_Streaming/01_introduction.adoc",
+      "target": "zh/Synchronization/Transfer_Queues_Streaming/01_introduction.adoc",
+      "words": 389,
+      "title": "Transfer Queues & Asset Streaming Sync: Non-Blocking Uploads"
+    },
+    {
+      "source": "en/Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc",
+      "target": "zh/Synchronization/Transfer_Queues_Streaming/02_non_blocking_uploads.adoc",
+      "words": 695,
+      "title": "Non-Blocking Data Uploads: Utilizing the Dedicated Transfer Queue"
+    },
+    {
+      "source": "en/Synchronization/Transfer_Queues_Streaming/03_staging_sync.adoc",
+      "target": "zh/Synchronization/Transfer_Queues_Streaming/03_staging_sync.adoc",
+      "words": 596,
+      "title": "Staging Synchronization: Coordinating Graphics and Transfer"
+    },
+    {
+      "source": "en/Synchronization/introduction.adoc",
+      "target": "zh/Synchronization/introduction.adoc",
+      "words": 802,
+      "title": "Synchronization 2: Mastering the GPU/CPU Handshake"
+    },
+    {
+      "source": "en/conclusion.adoc",
+      "target": "zh/conclusion.adoc",
+      "words": 723,
+      "title": "Conclusion"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/00_Overview.adoc",
+      "target": "zh/courses/18_Ray_tracing/00_Overview.adoc",
+      "words": 631,
+      "title": "SIGGRAPH 2025: Hands-on Vulkan Ray Tracing with Dynamic Rendering"
+    }
+  ]
+}

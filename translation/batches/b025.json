@@ -1,0 +1,42 @@
+{
+  "id": "b025",
+  "words": 5730,
+  "files": [
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc",
+      "words": 999,
+      "title": "A Practical Sample: Vulkan Rendering Powered by OpenCL"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/07_clspv_for_production.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/07_clspv_for_production.adoc",
+      "words": 1292,
+      "title": "clspv for Production: OpenCL C as Vulkan SPIR-V"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc",
+      "words": 391,
+      "title": "Advanced Data Structures on the GPU"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc",
+      "words": 1188,
+      "title": "GPU-Resident Trees: BVH and Octrees"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/03_global_atomic_management.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/03_global_atomic_management.adoc",
+      "words": 1103,
+      "title": "Global Atomic Management: Lock-Free Lists and Queues"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc",
+      "words": 757,
+      "title": "Device-Addressable Buffers: Pointer-like Flexibility"
+    }
+  ]
+}

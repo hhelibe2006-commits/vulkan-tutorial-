@@ -1,0 +1,222 @@
+:pp: {plus}{plus}
+= 蒙皮一次，处处使用
+
+== 回报
+
+在前两节里，我们构建了一条计算蒙皮管线，它把静止姿势的顶点缓冲区变换成动画顶点缓冲区，并把结果写入一个专用的输出 SSBO。现在我们来收获这笔投资的回报。
+
+「蒙皮一次，处处使用」的前提是：每个需要动画顶点数据的系统都应该读同一个输出缓冲区。我们不会为光栅化器和光线追踪器各跑一遍蒙皮。我们不会用 T-pose 几何去近似物理碰撞。我们只蒙皮一次，所有人都拿到同一份正确的、带动画的网格。本节说明如何把每个消费者接入这套数据流。
+
+== 消费者 1：光栅化器
+
+这是最容易接的消费者，因为输出顶点缓冲区在创建时就带上了 `VK_BUFFER_USAGE_VERTEX_BUFFER_BIT` 标志。在 Vulkan 看来，它就是一个顶点缓冲区。光栅化器不知道也不关心它是被计算着色器写出来的。
+
+改动很小。为蒙皮网格发起绘制调用时，不再绑定静止姿势的顶点缓冲区，而是绑定输出顶点缓冲区：
+
+[source,cpp]
+----
+void draw_skinned_mesh(
+    VkCommandBuffer cmd,
+    const SkinComputeResources& skin,
+    VkBuffer index_buffer,
+    uint32_t index_count)
+{
+    // The key change: bind the COMPUTE OUTPUT buffer as the vertex source,
+    // not the original rest-pose vertex buffer.
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &skin.output_vertex_buffer, &offset);
+    vkCmdBindIndexBuffer(cmd, index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    // Draw as normal - the rasterizer will read animated positions and normals
+    vkCmdDrawIndexed(cmd, index_count, 1, 0, 0, 0);
+}
+----
+
+有一点很重要：**索引缓冲区**保持不变。网格的拓扑——哪些顶点组成哪个三角形——不会随着角色动画而改变，变的只有顶点位置、法线和切线。索引缓冲区始终引用静止姿势的顶点布局，而因为我们保持了顶点顺序完全一致，这个布局现在直接对应到输出缓冲区的结构。
+
+蒙皮网格的顶点着色器也变得更简单了。它不再需要做任何蒙皮数学，只需从缓冲区里读取已经动画好的位置和法线，然后进行裁剪空间变换：
+
+[source,slang]
+----
+// skinned_mesh.vert.slang
+// The vertex shader for skinned meshes does NO skinning itself.
+// The compute shader already did the work.
+// Field order matches OutputVertex in renderer_advanced_types.h:
+// position, normal, texcoord, tangent.
+struct VertexInput {
+    float3 position  : POSITION;
+    float3 normal    : NORMAL;
+    float2 texcoord  : TEXCOORD0;
+    float4 tangent   : TANGENT;
+};
+
+struct VertexOutput {
+    float4 clip_pos  : SV_Position;
+    float3 world_pos : TEXCOORD1;
+    float3 normal    : TEXCOORD2;
+    float2 texcoord  : TEXCOORD0;
+};
+
+cbuffer CameraUBO {
+    float4x4 view;
+    float4x4 projection;
+};
+
+[shader("vertex")]
+VertexOutput main(VertexInput input)
+{
+    VertexOutput output;
+    // The position is already in world space — compute shader handled the animation.
+    output.clip_pos  = mul(projection, mul(view, float4(input.position, 1.0)));
+    output.world_pos = input.position;
+    output.normal    = input.normal;
+    output.texcoord  = input.texcoord;
+    return output;
+}
+----
+
+== 消费者 2：光线追踪加速结构
+
+Vulkan 的光线追踪需要两层加速结构。**底层加速结构**（Bottom-Level Acceleration Structure，BLAS）存放实际几何体——某个网格的三角形。**顶层加速结构**（Top-Level Acceleration Structure，TLAS）存放 BLAS 的实例，每个实例带一个变换矩阵，光线追踪着色器真正遍历的是它。
+
+对于静态几何体，BLAS 建一次就再也不碰。对于带动画、带蒙皮的几何体，顶点位置每帧都在变，这意味着 BLAS 也必须每帧更新。
+
+Vulkan 通过 **BLAS 更新**（也叫 **BLAS refit**）支持这一点。refit 是一种快速的原位更新，它重新三角化 BVH（Bounding Volume Hierarchy，包围体层次结构）树，而不必从头重建。refit 比完整重建快得多（通常快 5-10 倍），适合在蒙皮几何体上做逐帧更新。
+
+让它与我们共享缓冲区配合的关键很简单：指定 BLAS 的几何体时，我们指向计算着色器的输出缓冲区，而不是静止姿势缓冲区。
+
+[source,cpp]
+----
+// Called at initialization: create the initial BLAS pointing at our output buffer.
+// The BLAS uses our output buffer as its geometry source.
+VkAccelerationStructureGeometryKHR geometry{};
+geometry.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+
+auto& triangles = geometry.geometry.triangles;
+triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
+triangles.vertexStride   = sizeof(OutputVertex); // Stride of our output vertex layout
+
+// The crucial line: use the output vertex buffer's device address as the geometry source
+triangles.vertexData.deviceAddress = get_buffer_device_address(device, skin.output_vertex_buffer);
+triangles.maxVertex      = skin.vertex_count - 1;
+triangles.indexType      = VK_INDEX_TYPE_UINT32;
+triangles.indexData.deviceAddress = get_buffer_device_address(device, skin.index_buffer);
+----
+
+然后，每帧——在计算蒙皮派发及其管线屏障之后——我们发起一次 BLAS refit：
+
+[source,cpp]
+----
+// Called every frame, after the skinning barrier
+void update_blas(
+    VkCommandBuffer cmd,
+    VkAccelerationStructureKHR blas,
+    const VkAccelerationStructureBuildGeometryInfoKHR& build_info_template,
+    uint32_t primitive_count)
+{
+    VkAccelerationStructureBuildGeometryInfoKHR build_info = build_info_template;
+
+    // Specify UPDATE mode (not BUILD) — this is the "refit" operation
+    build_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    build_info.srcAccelerationStructure = blas; // Refit in-place
+    build_info.dstAccelerationStructure = blas;
+
+    VkAccelerationStructureBuildRangeInfoKHR range_info{};
+    range_info.primitiveCount = primitive_count; // Number of triangles
+
+    const VkAccelerationStructureBuildRangeInfoKHR* p_range_info = &range_info;
+    vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build_info, &p_range_info);
+}
+----
+
+refit 完成后，BLAS 里就是更新过的几何体，这一帧中任何光线追踪查询都会正确地与动画网格求交。角色的阴影、反射和环境光遮蔽都会响应它们的动画姿势，而不是 T-pose。
+
+有一个重要的注意事项：当拓扑不变、且顶点位置在帧与帧之间没有剧烈移动时，BLAS refit 效果最好。它们对平滑的骨骼动画最为理想。如果你的动画里有顶点长距离移动（例如布料模拟或非常快速的动作），完整重建 BLAS 可能带来更好的光线遍历性能，代价是多花重建时间。
+
+== 消费者 3：物理系统集成
+
+物理系统大概是蒙皮顶点缓冲区最微妙的消费者。光栅化器和光线追踪器可以直接寻址 GPU 缓冲区，而大多数物理引擎（Bullet、Jolt、PhysX）是 CPU 侧的库。它们完全在 CPU 上计算碰撞和力，无法直接访问 GPU 内存。
+
+这就产生了一个矛盾：我们的动画顶点数据在 GPU 上，而物理引擎需要它在 CPU 上。
+
+有两种办法解决，正确的选择取决于你的用例。
+
+=== 方案 1：骨骼代理碰撞体（推荐）
+
+对于角色布娃娃和大多数玩法物理来说，把整个网格顶点缓冲区读回来既不必要又昂贵。我们改为把简化的**碰撞形状**——胶囊体、盒子或球体——挂到骨架的特定骨骼上。上一章的「物理同步」一节已经建立了这种做法。
+
+在这种方案下，我们永远不需要从 GPU 读取真正的网格顶点。物理系统操作的是骨骼代理，它们由骨架的关节变换驱动。这些变换已经在 CPU 上（我们在关节矩阵计算这一步里算过）。GPU 上的网格蒙皮纯粹是视觉的——它让角色*看起来*正确。
+
+这是 95% 的角色物理用例该选的做法。它开销低、鲁棒，而且让美术能直接控制碰撞几何体。
+
+=== 方案 2：网格精确的物理查询（进阶）
+
+偶尔，你需要骨骼代理给不了的物理精度。例如：
+
+- **布料与软体模拟**，物理引擎必须知道每个顶点的位置
+- **网格精确碰撞**，用于非常精细的物体，比如角色的斗篷与几何体交互
+- **基于物理的音效触发**，在特定网格区域发生碰撞时触发
+
+在这些情况下，你需要把输出顶点缓冲区的部分或全部内容从 GPU 读回 CPU。这要借助**暂存缓冲区**和一次 GPU 到 CPU 的内存传输来完成。
+
+[source,cpp]
+----
+// Only do this if you truly need mesh-accurate CPU-side physics.
+// This is expensive: it stalls the GPU pipeline and involves a memory copy.
+void readback_vertices_to_physics(
+    VkCommandBuffer cmd,
+    VkBuffer output_vertex_buffer,
+    VkBuffer staging_buffer,  // CPU-visible (host-coherent) staging buffer
+    uint32_t vertex_count,
+    std::vector<PhysicsVertex>& physics_verts_out)
+{
+    VkBufferCopy copy_region{};
+    copy_region.srcOffset = 0;
+    copy_region.dstOffset = 0;
+    copy_region.size = vertex_count * sizeof(OutputVertex);
+
+    // Copy from GPU-local output buffer to CPU-accessible staging buffer
+    vkCmdCopyBuffer(cmd, output_vertex_buffer, staging_buffer, 1, &copy_region);
+
+    // After the command buffer executes and fences signal, map the staging buffer
+    // and copy the data into the physics system's vertex array.
+    // (This part happens after vkQueueSubmit and fence wait)
+}
+----
+
+这种做法会引入延迟：你读的是*这一帧*刚算出来的数据，却要用它驱动*下一帧*的物理模拟。对大多数游戏来说，这一帧的滞后可以接受，也看不出来。对于要求紧凑时序的极快节奏玩法，你可能需要围绕这段延迟来设计架构。
+
+== 归纳起来：数据流
+
+值得停下来欣赏一下我们搭出的数据流：
+
+....
+[glTF File on Disk]
+         |
+         | (load at startup)
+         v
+[CPU: Rest-Pose Vertices]  ──upload──>  [GPU: Input Vertex Buffer]
+[CPU: Inverse Bind Matrices]            (never changes again)
+         |
+    (each frame)
+         |
+[CPU: Animation Update]
+[CPU: Scene Graph Update]
+[CPU: Compute Joint Matrices]  ──upload──>  [GPU: Joint Matrix Buffer]
+                                             (updated each frame)
+         |
+    (GPU Compute Dispatch)
+         v
+         [GPU: Output Vertex Buffer]  (animated, correct, up to date)
+        /           |              \
+       v            v               v
+[Rasterizer]  [Ray Tracing BLAS]  [Physics Readback (if needed)]
+....
+
+渲染与模拟栈的每一部分都从同一个权威来源读取动画顶点数据。如果角色的手臂抬起来了，阴影、反射、碰撞和光栅化图像显示的都是手臂抬起。没有不一致，没有重复计算，也没有 T-pose 残留的瑕疵。
+
+下一节我们把注意力转向动画本身的质量。此前我们一直假设使用线性关键帧插值，它简单，但运动起来僵硬、机械。我们将实现三次样条插值，得到平滑自然的曲线，并加入在多个动画片段之间混合的能力——包括从动画向物理驱动布娃娃的关键过渡。
+
+xref:Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc[上一章：计算蒙皮管线] | xref:Advanced_glTF/Skeletal_Compute_Skinning/05_interpolation_blending.adoc[下一章：插值与混合]

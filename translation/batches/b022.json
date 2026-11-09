@@ -1,0 +1,48 @@
+{
+  "id": "b022",
+  "words": 5217,
+  "files": [
+    {
+      "source": "en/AI_Assisted_Vulkan/08_deployment/01_introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/08_deployment/01_introduction.adoc",
+      "words": 380,
+      "title": "Desktop, Mobile, and Embedded Deployment"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/08_deployment/02_android_ios_mobile.adoc",
+      "target": "zh/AI_Assisted_Vulkan/08_deployment/02_android_ios_mobile.adoc",
+      "words": 594,
+      "title": "Android & iOS Deployment"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc",
+      "target": "zh/AI_Assisted_Vulkan/08_deployment/03_embedded_safety_critical.adoc",
+      "words": 706,
+      "title": "Embedded & Safety Critical Systems"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/09_faq.adoc",
+      "target": "zh/AI_Assisted_Vulkan/09_faq.adoc",
+      "words": 842,
+      "title": "Common Questions & Troubleshooting (FAQ)"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/10_final_project.adoc",
+      "target": "zh/AI_Assisted_Vulkan/10_final_project.adoc",
+      "words": 1343,
+      "title": "Final Project: AI-Assisted Graphics Lab"
+    },
+    {
+      "source": "en/AI_Assisted_Vulkan/introduction.adoc",
+      "target": "zh/AI_Assisted_Vulkan/introduction.adoc",
+      "words": 709,
+      "title": "AI-Assisted Vulkan Development"
+    },
+    {
+      "source": "en/Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc",
+      "target": "zh/Advanced_Vulkan_Compute/02_Compute_Architecture/01_introduction.adoc",
+      "words": 643,
+      "title": "The Compute Architecture and Execution Model: Introduction"
+    }
+  ]
+}

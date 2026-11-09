@@ -1,0 +1,83 @@
+:pp: {plus}{plus}
+
+= 硬件与 VRAM 预算
+
+== VRAM 是共享资源
+
+一旦引入本地 AI 助手，你争抢的就不只是别的应用占用的 CPU 时间——你是在和自己的引擎争 VRAM。认真对待这件事意味着算出一份预算，而不是假设什么都装得下。
+
+== VRAM 争用与换出到系统内存
+
+VRAM 不是一次装满就完事的静态水桶。本地模型运行时，你的 GPU 会在两份吃资源的工作负载之间来回切换：
+
+1.  **LLM 推理引擎**，把模型权重保持在内存中以生成输出。
+2.  **Vulkan 应用**，持有纹理、缓冲区和渲染目标。
+
+如果两者合计的需求超过物理 VRAM，操作系统就会开始把 AI 权重或 Vulkan 资源搬到慢得多的系统内存里。这对双方都不利：token 生成速度可能从约 50/s 掉到个位数，你的应用帧率也可能掉到个位数。
+
+== 计算你实际的预算
+
+下载页面上标的模型大小并不是全部——你还需要算上 KV 缓存，也就是模型对当前对话的短期记忆。
+
+[source,text]
+----
+Total VRAM - (OS/Desktop + Vulkan Peak + (Model Size * Quantization) + KV Cache) = Safety Margin
+----
+
+*   **操作系统/桌面：** 在 Windows/Linux 上通常是 1.5–2GB。
+*   **Vulkan 峰值：** 在繁重的调试会话中你的引擎用到的最大 VRAM。
+*   **模型大小 × 量化：** 30B 模型（例如 Qwen 3-Coder）在 4 位（Q4_K_M）下约为 18GB；12B 模型（例如 Mistral-Nemo）约为 8GB。
+*   **KV 缓存：** 很容易被忽略。在 16k 上下文窗口下，这会再加 1–2GB。
+
+**示例：24GB 的显卡。** 在 RTX 4090（24GB）上，6GB 给操作系统 + Vulkan 应用，18GB 给 Q4_K_M 的 Qwen 3-Coder（30B），余量就是 `24 - (6 + 18) = 0GB`。任何让 KV 缓存增长的长对话都会把你推进换页。解决办法要么换小模型（Mistral-Nemo 12B 或 Llama 4 17B），要么把上下文窗口降到 4,096 token 之类，把那 1–2GB 腾出来。
+
+== 量化
+
+以全精度（FP16）运行模型通常没有必要。量化减少每个权重所用的位数——思路类似纹理压缩（BC7、ASTC）：你用一些精度换取内存的大幅下降。
+
+4 位（Q4_K_M）或 5 位（Q5_K_M）是合理的默认值。在 4 位下，体积下降约 75%，而对 C{pp} 代码的推理能力仍接近原水平。低于 4 位（例如 2 位）往往会造成实质性退化——模型开始在 Vulkan 状态机的细微之处犯错，因为权重已经无法足够精确地编码这些细节。
+
+== 自己量化模型
+
+大多数人从 HuggingFace 下载已经量化好的模型，但自己会做这件事是值得的，这样你就能拿到刚发布的 FP16 模型并把它适配到自己的硬件上。
+
+主要工具是 **llama.cpp**：
+
+1.  **克隆并构建：**
++
+[source,bash]
+----
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp
+make -j  # Builds the quantize and convert binaries
+----
+
+2.  **转换为 GGUF。** 大多数模型以 HuggingFace 的 `SafeTensors` 格式发布，需要转成 GGUF 才能本地推理：
++
+[source,bash]
+----
+python3 convert_hf_to_gguf.py models/my_vulkan_model/
+----
+
+3.  **量化。** `Q4_K_M` 是速度与精度之间合理的平衡：
++
+[source,bash]
+----
+./quantize models/my_vulkan_model/model-f16.gguf models/my_vulkan_model/model-Q4_K_M.gguf Q4_K_M
+----
+
+4.  **验证。** 一个 32GB 的 FP16 模型应该会得到大约 18GB。把它加载进 Ollama 或 LM Studio，检查留给交换链的 VRAM 余量。
+
+== 如果 VRAM 仍然紧张
+
+如果硬件受限，有几个具体可选项：
+
+1.  **限制上下文窗口。** 在 Ollama/LM Studio 中把 `context_length` 设成 8192 之类——通常够放几个文件的 Vulkan 代码，而且相比默认值能省下约 1.5GB。
+2.  **把层卸载到 CPU。** 使用 GGUF 时，你可以把部分层从 GPU 上挪走——例如 60 层里的 10 层——用大约 20% 的推理速度换回几 GB VRAM。
+3.  **用第二块 GPU。** 如果你有一张闲置的 8–12GB 显卡，把它插到第二个 PCIe 插槽，让 Ollama 独占它，主 GPU 则专门留给 Vulkan 应用。
+
+== 小结
+
+硬件预算是在本地跑 AI 配置里最不光鲜的部分，但弄清楚你的 VRAM 占用——并主动管理 KV 缓存和量化——正是让助手不去和你的渲染器抢内存的关键。
+
+下一篇：xref:AI_Assisted_Vulkan/03_model_selection_specialization/04_rag_mcp_specialization.adoc[MCP 与 RAG 特化]

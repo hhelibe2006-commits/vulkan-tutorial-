@@ -1,0 +1,24 @@
+{
+  "id": "b036",
+  "words": 5309,
+  "files": [
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/02_skinning_math.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/02_skinning_math.adoc",
+      "words": 1652,
+      "title": "The Mathematics of Skinning"
+    },
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/03_compute_skinning.adoc",
+      "words": 2041,
+      "title": "The Compute Skinning Pipeline"
+    },
+    {
+      "source": "en/Advanced_glTF/Skeletal_Compute_Skinning/04_shared_vertex_buffer.adoc",
+      "target": "zh/Advanced_glTF/Skeletal_Compute_Skinning/04_shared_vertex_buffer.adoc",
+      "words": 1616,
+      "title": "Skin Once, Use Everywhere"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+= OpenXR 引擎
+
+本目录包含简易引擎的一个变体，它在 Vulkan 之上集成了 OpenXR 支持。
+
+== 依赖
+
+本项目依赖位于同级目录 `../simple_engine` 中的 `simple_engine`。
+`CMakeLists.txt` 已配置为直接从 `simple_engine` 目录获取共享的源文件、头文件和资产，以避免冗余。
+
+== 构建
+
+要构建本项目，请确保已安装 Vulkan SDK 与 OpenXR SDK。
+由于它会引用 `simple_engine` 中的文件，请不要移动本目录相对于 `simple_engine` 目录的位置。

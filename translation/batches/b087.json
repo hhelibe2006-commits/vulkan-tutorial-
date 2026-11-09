@@ -1,0 +1,12 @@
+{
+  "id": "b087",
+  "words": 3055,
+  "files": [
+    {
+      "source": "en/ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc",
+      "target": "zh/ML_Inference/Third_Party_Libraries/06_integration_patterns.adoc",
+      "words": 3055,
+      "title": "Integration Patterns"
+    }
+  ]
+}

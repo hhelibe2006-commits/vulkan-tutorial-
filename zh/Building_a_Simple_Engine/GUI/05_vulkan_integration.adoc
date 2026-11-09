@@ -1,0 +1,988 @@
+:pp: {plus}{plus}
+
+== GUI：与 Vulkan 集成
+
+== Vulkan 集成
+
+本节将探讨如何把 ImGui 渲染正确地接入 Vulkan 渲染管线。虽然「配置 Dear ImGui」一节已经讲过基础设置，但这里会深入 ImGui 与 Vulkan 协作的技术细节，以及如何优化这种集成。
+
+=== 理解渲染流程
+
+在深入实现细节之前，先理解 ImGui 渲染如何嵌入 Vulkan 渲染管线：
+
+1. *准备帧*：在 ImGui 中开始新的一帧，并创建 UI 元素
+2. *生成绘制数据*：ImGui 为 UI 生成顶点缓冲区与索引缓冲区
+3. *录制命令*：录制用于渲染 ImGui 绘制数据的 Vulkan 命令
+4. *提交命令*：把命令提交到 Vulkan 队列
+5. *呈现*：把渲染好的帧呈现到屏幕
+
+这一流程需要与你现有的 Vulkan 渲染管线结合，而后者通常包含：
+
+1. 获取下一张交换链图像
+2. 录制场景渲染的命令缓冲区
+3. 提交命令缓冲区
+4. 呈现渲染好的图像
+
+=== 动态渲染配置
+
+ImGui 可以与 Vulkan 的动态渲染特性配合，省去显式的渲染通道与帧缓冲区，从而简化渲染流程：
+
+[source,cpp]
+----
+// When initializing ImGui, we set up our custom Vulkan renderer with dynamic rendering
+ImGuiVulkanRenderer renderer;
+// ... configure the renderer ...
+renderer.initialize(*device, *physicalDevice);
+
+// Set up dynamic rendering info
+vk::PipelineRenderingCreateInfo renderingInfo{};
+renderingInfo.colorAttachmentCount = 1;
+vk::Format formats[] = { vk::Format::eB8G8R8A8Unorm };
+renderingInfo.pColorAttachmentFormats = formats;
+renderer.setDynamicRenderingInfo(renderingInfo);
+----
+
+动态渲染去掉了对渲染通道与帧缓冲区的依赖，让集成更简单，代码也更灵活、更易维护。
+
+=== 命令缓冲区集成
+
+把 ImGui 命令接入 Vulkan 命令缓冲区主要有两种做法：
+
+1. *单个命令缓冲区*：把场景渲染与 ImGui 渲染命令录制到同一个命令缓冲区
+2. *多个命令缓冲区*：场景渲染与 ImGui 渲染各用一个命令缓冲区
+
+下面分别来看：
+
+==== 单命令缓冲区方案
+
+这是最简单的方案，适合大多数应用。配合动态渲染，代码还会更干净：
+
+=== 命令缓冲区初始化
+
+帧渲染流程从命令缓冲区的准备开始：我们在这里设置录制状态，为向 GPU 提交命令做好准备。
+
+[source,cpp]
+----
+void drawFrame() {
+    // ... existing frame preparation code ...
+
+    // Initialize command buffer recording
+    // This tells Vulkan we're about to record a sequence of GPU commands
+    vk::CommandBufferBeginInfo beginInfo{};
+    commandBuffer.begin(beginInfo);
+----
+
+命令缓冲区录制是 Vulkan 显式 GPU 控制模型的核心。旧式 API 会把渲染命令立即提交给 GPU，而 Vulkan 允许你在提交之前先构建出一整套操作序列。这种做法带来了强大的优化空间，例如命令重排、并行构建命令缓冲区，以及高效的 GPU 调度。
+
+`begin` 操作把命令缓冲区从初始状态切换到录制状态，此后调用的 API 会被记录为 GPU 指令，而不是立即执行。这种显式状态管理让你能精确控制 GPU 工作的提交时机与方式，从而获得细粒度的性能控制——这正是 Vulkan 在苛刻应用中如此强大的原因。
+
+=== 动态渲染附件设置
+
+动态渲染要求你显式描述渲染目标及其属性，用更灵活的方式取代传统的渲染通道体系。
+
+[source,cpp]
+----
+    // Configure color attachment for the main render target
+    // This describes how the GPU should handle the color output
+    vk::RenderingAttachmentInfo colorAttachment{};
+    colorAttachment.imageView = *swapChainImageViews[imageIndex];       // Target swapchain image
+    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;  // Optimal layout for color output
+    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;              // Clear the image before rendering
+    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;            // Preserve results after rendering
+    colorAttachment.clearValue.color = std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f};  // Clear to black
+
+    // Configure depth attachment for 3D depth testing
+    // This enables proper occlusion and depth sorting for 3D objects
+    vk::RenderingAttachmentInfo depthAttachment{};
+    depthAttachment.imageView = *depthImageView;                        // Depth buffer image
+    depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;  // Optimal for depth operations
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;              // Clear depth buffer to far plane
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;         // Don't preserve depth after rendering
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue{1.0f, 0};  // Clear to maximum depth
+----
+
+附件配置体系让你显式控制 GPU 在整个渲染过程中如何处理渲染目标。通过指定加载与存储操作，你可以只保留需要传给后续通道的数据，从而优化内存带宽。清除操作则确保从已知状态开始，避免上一帧数据造成的视觉瑕疵。
+
+图像布局转换会按你的声明自动发生，GPU 驱动会处理必要的内存屏障与缓存刷新，以保证数据一致性。这里指定的 optimal 布局告诉驱动：按对目标用途性能最好的方式来组织图像数据，而不是强制某种特定的内存排布。
+
+=== 动态渲染通道设置
+
+附件配置好后，我们把它们组装成一次完整的渲染通道，向 GPU 描述整个渲染操作。
+
+[source,cpp]
+----
+    // Assemble the complete rendering operation description
+    // This ties together all our attachments and rendering parameters
+    vk::RenderingInfo renderingInfo{};
+    renderingInfo.renderArea = vk::Rect2D{{0, 0}, swapChainExtent};     // Render to entire swapchain area
+    renderingInfo.layerCount = 1;                                       // Single layer (not array rendering)
+    renderingInfo.colorAttachmentCount = 1;                             // One color output
+    renderingInfo.pColorAttachments = &colorAttachment;                 // Our configured color attachment
+    renderingInfo.pDepthAttachment = &depthAttachment;                  // Our configured depth attachment
+
+    // Begin the dynamic rendering pass
+    // This establishes the rendering context for subsequent draw commands
+    commandBuffer.beginRendering(renderingInfo);
+----
+
+动态渲染是相对传统 Vulkan 渲染通道的一次重要演进：它在保持显式 GPU 控制性能优势的同时提供了更大灵活性。你不再需要在初始化时预先定义渲染通道对象，而是在录制命令时指定渲染目标及其属性，从而实现更动态、更灵活的渲染架构。
+
+渲染区域（render area）的指定允许只渲染屏幕的一部分；当只有局部需要更新时，这能带来可观的性能收益。像本例这样的全屏渲染，则指定整个交换链范围以保证完整覆盖。
+
+=== 3D 场景渲染
+
+主场景渲染阶段在已建立的渲染上下文中处理所有 3D 几何、光照与材质渲染。
+
+[source,cpp]
+----
+    // Execute 3D scene rendering
+    // All your existing 3D geometry, lighting, and material rendering happens here
+    // ... your existing scene rendering code ...
+
+    // Complete the 3D rendering pass
+    // This finalizes all 3D rendering operations and prepares for UI overlay
+    commandBuffer.endRendering();
+----
+
+场景渲染阶段在我们建立的渲染上下文中运行，GPU 会按管线配置自动处理深度测试、颜色混合等光栅化操作。在 `beginRendering` 与 `endRendering` 之间发出的所有绘制命令，都会以指定的清除与存储行为作用于我们配置的附件。
+
+显式调用 `endRendering` 可确保所有场景渲染操作正确完成，并把渲染目标转换到适合后续操作的状态。这种显式控制让 GPU 驱动能针对渲染负载做最优的调度与内存管理。
+
+=== UI 叠加层集成
+
+最后的渲染阶段把 ImGui UI 元素作为叠加层置于 3D 场景之上，这需要两套渲染系统之间仔细配合。
+
+[source,cpp]
+----
+    // Render ImGui UI overlay on top of the 3D scene
+    // The custom renderer handles ImGui's own dynamic rendering setup internally
+    // This includes vertex buffer uploads, pipeline binding, and draw command generation
+    renderer.render(ImGui::GetDrawData(), commandBuffer);
+
+    // Finalize command buffer recording
+    // This transitions the command buffer to executable state for GPU submission
+    commandBuffer.end();
+
+    // Submit command buffer
+    // ... your existing submission code ...
+}
+----
+
+==== 多命令缓冲区方案
+
+这种方案更灵活，适合更复杂的渲染管线。配合动态渲染，它甚至更加直截了当：
+
+=== 多缓冲区：场景命令缓冲区录制
+
+多命令缓冲区方案先把 3D 场景渲染隔离到独立的命令缓冲区中，为复杂渲染管线提供更大灵活性。
+
+[source,cpp]
+----
+void drawFrame() {
+    // ... existing frame preparation code ...
+
+    // Initialize scene-specific command buffer recording
+    // This dedicated buffer will contain only 3D geometry and lighting operations
+    vk::CommandBufferBeginInfo beginInfo{};
+    sceneCommandBuffer.begin(beginInfo);
+----
+
+把场景渲染拆到独立命令缓冲区有几项架构上的好处。第一，它允许多个线程并行录制命令：不同线程可以同时构建场景与 UI 命令序列，从而提升多核系统上的 CPU 利用率。第二，它让每个渲染阶段都能独立优化，场景渲染可以使用与 UI 渲染不同的 GPU 队列或提交时机。
+
+这种分离还为多帧延迟优化等高级渲染技术提供了便利：场景渲染可以与 UI 更新解耦，即使其中一个系统出现性能波动，也能保持稳定的帧节奏。
+
+=== 多缓冲区：场景附件配置
+
+场景渲染的设置与单缓冲区方案类似，只是附件配置明确归属于场景命令缓冲区。
+
+[source,cpp]
+----
+    // Configure scene rendering attachments with explicit ownership
+    // These configurations belong specifically to the scene rendering pass
+    vk::RenderingAttachmentInfo colorAttachment{};
+    colorAttachment.imageView = *swapChainImageViews[imageIndex];        // Target swapchain image
+    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;  // Optimal for color rendering
+    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;               // Clear for fresh scene start
+    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;             // Preserve for UI overlay
+    colorAttachment.clearValue.color = std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f};  // Clear to black
+
+    // Configure depth attachment for 3D scene depth testing
+    // UI rendering won't need depth testing, so this is scene-specific
+    vk::RenderingAttachmentInfo depthAttachment{};
+    depthAttachment.imageView = *depthImageView;                         // Scene depth buffer
+    depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;  // Optimal for depth ops
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;               // Clear depth for new frame
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;          // UI doesn't need depth data
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue{1.0f, 0};  // Clear to far plane
+----
+
+场景渲染的附件配置强调 3D 渲染与 UI 渲染的职责分离。颜色附件使用存储操作，确保场景渲染结果保留给随后的 UI 叠加层；深度附件则使用 `eDontCare` 存储，因为 UI 元素通常不需要深度测试。
+
+这种显式配置让渲染依赖关系一目了然，并且只保留后续通道真正需要的数据，有助于优化内存带宽。
+
+=== 多缓冲区：场景渲染执行
+
+场景渲染的执行发生在其专属命令缓冲区内，从而对 3D 渲染操作提供隔离的控制。
+
+[source,cpp]
+----
+    // Assemble scene rendering configuration
+    // This defines the complete 3D rendering context
+    vk::RenderingInfo renderingInfo{};
+    renderingInfo.renderArea = vk::Rect2D{{0, 0}, swapChainExtent};      // Full screen rendering
+    renderingInfo.layerCount = 1;                                        // Single rendering layer
+    renderingInfo.colorAttachmentCount = 1;                              // One color output
+    renderingInfo.pColorAttachments = &colorAttachment;                  // Scene color configuration
+    renderingInfo.pDepthAttachment = &depthAttachment;                   // Scene depth configuration
+
+    // Execute complete 3D scene rendering pass
+    sceneCommandBuffer.beginRendering(renderingInfo);
+    // All 3D geometry, lighting, materials, and effects render here
+    // ... your existing scene rendering code ...
+    sceneCommandBuffer.endRendering();
+
+    // Finalize scene command buffer for submission
+    sceneCommandBuffer.end();
+----
+
+把场景渲染放在独立命令缓冲区上下文中执行很有好处：所有 GPU 状态变更与绘制调用都被限定在清晰的作用域内。这种隔离让调试更容易，因为可以脱离 UI 渲染的复杂度单独分析场景相关的问题。
+
+用 `end()` 结束命令缓冲区录制会把缓冲区切换到可执行状态，随时可以提交给 GPU，同时让不同渲染职责之间的边界保持清晰。
+
+=== 多缓冲区：UI 命令缓冲区设置
+
+UI 渲染阶段从自己的命令缓冲区录制开始，其配置专门针对叠加层渲染的需求。
+
+[source,cpp]
+----
+    // Initialize UI-specific command buffer recording
+    // This dedicated buffer handles only UI overlay operations
+    imguiCommandBuffer.begin(beginInfo);
+
+    // Configure UI attachment to preserve scene rendering results
+    // This is the key difference from scene rendering - we load existing content
+    colorAttachment.loadOp = vk::AttachmentLoadOp::eLoad;                // Preserve scene rendering
+
+    // Ensure proper ordering/visibility between scene and UI when using multiple command buffers.
+    // If you submit scene and UI command buffers separately, synchronize them either by:
+    // - Submitting both on the same queue with a semaphore (scene signals, UI waits with stage = COLOR_ATTACHMENT_OUTPUT), or
+    // - Recording a pipeline barrier in the UI command buffer before beginRendering() to make scene color writes visible.
+    // Example barrier inserted in the UI command buffer:
+    {
+        vk::ImageMemoryBarrier2 barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite,
+            .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .image = *swapChainImages[imageIndex],
+            .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+        };
+        vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
+        imguiCommandBuffer.pipelineBarrier2(depInfo);
+    }
+
+    // UI rendering typically doesn't need depth testing
+    // Remove depth attachment to optimize UI rendering performance
+    renderingInfo.pDepthAttachment = nullptr;
+----
+
+UI 命令缓冲区的设置通过不同的附件配置展示了多缓冲区方案的威力。把加载操作改成 `eLoad` 后，场景渲染结果得以保留，成为 UI 叠加层渲染的基础。相比依赖渲染通道的自动依赖关系，这种做法更显式、更可控。
+
+UI 渲染去掉深度附件消除了不必要的深度测试开销，因为 UI 元素通常在屏幕空间中渲染，没有复杂的遮挡关系。这一优化能带来可测量的性能提升，在带宽尤为宝贵的移动 GPU 上尤其明显。
+
+=== 多缓冲区：UI 渲染与提交协调
+
+最后阶段执行 UI 渲染，并按正确顺序协调两个命令缓冲区的提交。
+
+[source,cpp]
+----
+    // Execute UI overlay rendering
+    // The custom renderer handles ImGui's dynamic rendering internally
+    renderer.render(ImGui::GetDrawData(), imguiCommandBuffer);
+
+    // Finalize UI command buffer
+    imguiCommandBuffer.end();
+
+    // Coordinate submission of both command buffers in dependency order
+    // Scene must complete before UI to ensure proper overlay rendering
+    std::array<vk::CommandBuffer, 2> submitCommandBuffers = {
+        *sceneCommandBuffer,     // Execute scene rendering first
+        *imguiCommandBuffer      // Then execute UI overlay
+    };
+
+    // Configure batch submission for optimal GPU utilization
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = static_cast<uint32_t>(submitCommandBuffers.size());
+    submitInfo.pCommandBuffers = submitCommandBuffers.data();
+
+    // Submit both command buffers as a cohesive frame
+    // ... rest of your submission code ...
+}
+----
+
+=== Handling Multiple Viewports
+
+ImGui 支持多视口，允许把 UI 窗口从主窗口中分离出来。要支持这一特性，还需要处理额外步骤：
+
+[source,cpp]
+----
+// In your main loop, after rendering ImGui
+if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+}
+----
+
+这会渲染所有已分离的 ImGui 窗口。注意该特性需要额外的平台相关代码，并且并非所有应用都需要。
+
+=== 处理窗口缩放
+
+窗口大小改变时，需要重建交换链并更新 ImGui：
+
+[source,cpp]
+----
+void recreateSwapChain() {
+    // ... existing swap chain recreation code ...
+
+    // Update ImGui display size
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(swapChainExtent.width),
+                           static_cast<float>(swapChainExtent.height));
+}
+----
+
+=== 性能考量
+
+以下是一些在 Vulkan 中优化 ImGui 渲染性能的建议：
+
+1. *减少状态切换*：尽量在一次渲染通道中绘制所有 ImGui 元素，以减少状态切换。
+
+2. *使用合适的描述符池大小*：为 ImGui 分配足够的描述符，避免描述符耗尽。
+
+3. *考虑次级命令缓冲区*：对于复杂的 UI，可以考虑用次级命令缓冲区并行录制 ImGui 命令。
+
+4. *优化 UI 更新*：只更新发生变化的 UI 元素；对静态 UI 元素，可以考虑给 ImGui 的 `Begin()` 函数传入 `ImGuiWindowFlags_NoDecoration` 标志。
+
+5. *使用 ImGui 的内存分配器*：ImGui 允许你提供自定义内存分配器，这对控制内存占用很有用。
+
+=== 完整集成示例
+
+下面把所有内容整合成一个完整示例，把 ImGui 接入 Vulkan 应用：
+
+[source,cpp]
+----
+class VulkanApplication {
+private:
+    // ... existing Vulkan members ...
+
+    // ImGui-specific members
+    vk::raii::DescriptorPool imguiPool = nullptr;
+    bool showDemoWindow = true;
+    bool showMetricsWindow = false;
+
+public:
+    void initVulkan() {
+        // ... existing Vulkan initialization ...
+
+        // Initialize ImGui
+        createImGuiDescriptorPool();
+        initImGui();
+    }
+
+    void createImGuiDescriptorPool() {
+        // ImGui typically needs a handful of descriptors (font texture + user UI textures).
+        // Adjust these values to your app's needs (e.g., expected number of UI textures, buffers).
+        // As a starting point:
+        vk::DescriptorPoolSize poolSizes[] =
+        {
+            { vk::DescriptorType::eSampler, 8 },
+            { vk::DescriptorType::eCombinedImageSampler, 128 },   // font + user-provided textures
+            { vk::DescriptorType::eSampledImage, 128 },
+            { vk::DescriptorType::eStorageImage, 8 },
+            { vk::DescriptorType::eUniformTexelBuffer, 8 },
+            { vk::DescriptorType::eStorageTexelBuffer, 8 },
+            { vk::DescriptorType::eUniformBuffer, 32 },
+            { vk::DescriptorType::eStorageBuffer, 32 },
+            { vk::DescriptorType::eUniformBufferDynamic, 16 },
+            { vk::DescriptorType::eStorageBufferDynamic, 16 },
+            { vk::DescriptorType::eInputAttachment, 8 }
+        };
+
+        // A conservative maxSets equals the sum of descriptor counts.
+        uint32_t maxSets = 0;
+        for (const auto& ps : poolSizes) maxSets += ps.descriptorCount;
+
+        vk::DescriptorPoolCreateInfo poolInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = maxSets,
+            .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
+            .pPoolSizes = poolSizes
+        };
+
+        imguiPool = vk::raii::DescriptorPool(device, poolInfo);
+    }
+
+    void initImGui() {
+        // Initialize ImGui context
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+        // Set up ImGui style
+        ImGui::StyleColorsDark();
+
+        // Initialize our custom backend
+        int width = static_cast<int>(swapChainExtent.width);
+        int height = static_cast<int>(swapChainExtent.height);
+        ImGuiPlatform::Init(width, height);
+
+        // Initialize our custom ImGui Vulkan renderer with dynamic rendering
+        ImGuiVulkanRenderer renderer;
+        renderer.initialize(
+            *instance,
+            *physicalDevice,
+            *device,
+            graphicsFamily,
+            *graphicsQueue,
+            *imguiPool,
+            static_cast<uint32_t>(swapChainImages.size()),
+            vk::SampleCountFlagBits::e1
+        );
+
+        // Set up dynamic rendering info
+        vk::PipelineRenderingCreateInfo renderingInfo{};
+        renderingInfo.colorAttachmentCount = 1;
+        vk::Format formats[] = { swapChainImageFormat };
+        renderingInfo.pColorAttachmentFormats = formats;
+        renderer.setDynamicRenderingInfo(renderingInfo);
+
+        // Note: With modern ImGui (v1.92+), we no longer need to manually upload fonts here.
+        // The renderer will handle font atlas updates automatically during the draw phase
+        // using the RendererHasTextures protocol.
+    }
+
+    void drawFrame() {
+        // ... existing frame preparation code ...
+
+        // Start the ImGui frame
+        ImGui::NewFrame();
+
+        // Create ImGui UI
+        createImGuiUI();
+
+        // Render ImGui
+        ImGui::Render();
+
+        // ... existing command buffer recording code ...
+
+        // Begin dynamic rendering for scene
+        vk::RenderingAttachmentInfo colorAttachment{};
+        colorAttachment.imageView = *swapChainImageViews[imageIndex];
+        colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        colorAttachment.clearValue.color = std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f};
+
+        vk::RenderingAttachmentInfo depthAttachment{};
+        depthAttachment.imageView = *depthImageView;
+        depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue{1.0f, 0};
+
+        vk::RenderingInfo renderingInfo{};
+        renderingInfo.renderArea = vk::Rect2D{{0, 0}, swapChainExtent};
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &colorAttachment;
+        renderingInfo.pDepthAttachment = &depthAttachment;
+
+        commandBuffer.beginRendering(renderingInfo);
+
+        // Render 3D scene
+        // ... your existing scene rendering code ...
+
+        commandBuffer.endRendering();
+
+        // Render ImGui using our custom renderer
+        // ImGui will handle its own dynamic rendering internally
+        renderer.render(ImGui::GetDrawData(), commandBuffer);
+
+        // ... existing command buffer submission code ...
+    }
+
+    void createImGuiUI() {
+        // Menu bar
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("Exit", "Alt+F4")) {
+                    // Generic way to request application exit
+                    requestApplicationExit();
+                }
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Demo Window", nullptr, &showDemoWindow);
+                ImGui::MenuItem("Metrics", nullptr, &showMetricsWindow);
+                ImGui::EndMenu();
+            }
+
+            ImGui::EndMainMenuBar();
+        }
+
+        // Demo window
+        if (showDemoWindow) {
+            ImGui::ShowDemoWindow(&showDemoWindow);
+        }
+
+        // Metrics window
+        if (showMetricsWindow) {
+            ImGui::ShowMetricsWindow(&showMetricsWindow);
+        }
+
+        // Custom windows
+        ImGui::Begin("Settings");
+
+        static float color[3] = { 0.5f, 0.5f, 0.5f };
+        if (ImGui::ColorEdit3("Clear Color", color)) {
+            // Update clear color
+            clearColor = { color[0], color[1], color[2], 1.0f };
+        }
+
+        static int selectedModel = 0;
+        const char* models[] = { "Cube", "Sphere", "Teapot", "Custom Model" };
+        if (ImGui::Combo("Model", &selectedModel, models, IM_ARRAYSIZE(models))) {
+            // Change model
+            loadModel(models[selectedModel]);
+        }
+
+        ImGui::End();
+    }
+
+    void cleanup() {
+        // ... existing cleanup code ...
+
+        // Cleanup ImGui
+        renderer.cleanup();
+        ImGuiPlatform::Shutdown();  // Our custom platform backend
+        ImGui::DestroyContext();
+    }
+};
+----
+
+=== 进阶主题
+
+==== 为 ImGui 定制着色器
+
+ImGui 使用自带的着色器进行渲染，但你可以按需替换：
+
+[source,cpp]
+----
+// Create custom shader modules
+vk::raii::ShaderModule customVertShaderModule = createShaderModule("custom_imgui_vert.spv");
+vk::raii::ShaderModule customFragShaderModule = createShaderModule("custom_imgui_frag.spv");
+
+// Initialize our custom renderer with custom shaders and dynamic rendering
+ImGuiVulkanRenderer renderer;
+renderer.initialize(
+    *instance,
+    *physicalDevice,
+    *device,
+    queueFamily,
+    *queue,
+    *descriptorPool,
+    minImageCount,
+    imageCount,
+    vk::SampleCountFlagBits::e1
+);
+
+// Set up dynamic rendering info
+vk::PipelineRenderingCreateInfo renderingInfo{};
+renderingInfo.colorAttachmentCount = 1;
+vk::Format formats[] = { swapChainImageFormat };
+renderingInfo.pColorAttachmentFormats = formats;
+renderer.setDynamicRenderingInfo(renderingInfo);
+
+// Set custom shaders
+renderer.setCustomShaders(
+    customVertShaderModule,
+    customFragShaderModule
+);
+----
+
+==== 将 ImGui 渲染到纹理
+
+你可以把 ImGui 渲染到纹理而不是直接渲染到屏幕，这在制作游戏内 UI 元素时很有用：
+
+[source,cpp]
+----
+// Create a texture to render ImGui to
+vk::raii::Image imguiTargetImage = createImage(
+    width, height,
+    vk::Format::eR8G8B8A8Unorm,
+    vk::ImageTiling::eOptimal,
+    vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
+);
+
+// Create image view
+vk::raii::ImageView imguiTargetImageView = createImageView(
+    imguiTargetImage,
+    vk::Format::eR8G8B8A8Unorm,
+    vk::ImageAspectFlagBits::eColor
+);
+
+// Render ImGui to the texture using dynamic rendering
+vk::RenderingAttachmentInfo colorAttachment{};
+colorAttachment.imageView = *imguiTargetImageView;
+colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+colorAttachment.clearValue.color = std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f};
+
+vk::RenderingInfo renderingInfo{};
+renderingInfo.renderArea = vk::Rect2D{{0, 0}, {width, height}};
+renderingInfo.layerCount = 1;
+renderingInfo.colorAttachmentCount = 1;
+renderingInfo.pColorAttachments = &colorAttachment;
+
+commandBuffer.beginRendering(renderingInfo);
+renderer.render(ImGui::GetDrawData(), commandBuffer);
+commandBuffer.endRendering();
+
+// Later, use the texture in your 3D scene
+// ...
+----
+
+==== 处理高 DPI 显示器
+
+对于高 DPI 显示器，需要在不同平台上正确处理缩放：
+
+[source,cpp]
+----
+// Cross-platform display scaling
+void updateDisplayScale(int width, int height, float scaleX, float scaleY) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+    io.DisplayFramebufferScale = ImVec2(scaleX, scaleY);
+
+    // Update our platform backend
+    ImGuiPlatform::SetDisplaySize(width, height);
+}
+
+// Platform-specific implementations
+// Here's an example using GLFW, but you can implement similar functions
+// for any windowing library you choose to use
+
+void updateDisplayScaleWithGLFW(GLFWwindow* window) {
+    // Get the framebuffer size (which may differ from window size on high DPI displays)
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    // Get the content scale (DPI scaling factor)
+    float xscale, yscale;
+    glfwGetWindowContentScale(window, &xscale, &yscale);
+
+    // Update ImGui with the correct display size and scale
+    updateDisplayScale(width, height, xscale, yscale);
+}
+
+// With other windowing libraries, you would use their equivalent APIs
+// to get the framebuffer size and DPI scaling factor
+
+----
+
+=== ImGui 工具类
+
+为了把所有 ImGui 功能封装成跨平台可用的形式，我们来写一个工具类，思路类似 Vulkan-Samples 仓库中提到的那个：
+
+[source,cpp]
+----
+// ImGuiUtil.h
+#pragma once
+
+import vulkan_hpp;
+#include <imgui.h>
+#include <functional>
+#include <memory>
+
+class ImGuiUtil {
+public:
+    // Initialize ImGui with Vulkan using dynamic rendering
+    static void Init(
+        vk::raii::Instance& instance,
+        vk::raii::PhysicalDevice& physicalDevice,
+        vk::raii::Device& device,
+        uint32_t queueFamily,
+        vk::raii::Queue& queue,
+        uint32_t minImageCount,
+        uint32_t imageCount,
+        vk::Format swapChainImageFormat,
+        vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1
+    );
+
+    // Shutdown ImGui
+    static void Shutdown();
+
+    // Start a new frame
+    static void NewFrame();
+
+    // Render ImGui draw data to a command buffer
+    static void Render(vk::raii::CommandBuffer& commandBuffer);
+
+    // Update display size
+    static void UpdateDisplaySize(int width, int height, float scaleX = 1.0f, float scaleY = 1.0f);
+
+    // Process platform-specific input event
+    static bool ProcessInputEvent(void* event);
+
+    // Set input callback
+    static void SetInputCallback(std::function<void(ImGuiIO&)> callback);
+
+private:
+    // Create descriptor pool for ImGui
+    static void createDescriptorPool();
+
+    // Upload fonts
+    static void uploadFonts();
+
+    // Begin single-time commands
+    static vk::raii::CommandBuffer beginSingleTimeCommands();
+
+    // End single-time commands
+    static void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
+
+    // Vulkan objects - using inline static initialization (C++17)
+    inline static vk::raii::Instance* instance = nullptr;
+    inline static vk::raii::PhysicalDevice* physicalDevice = nullptr;
+    inline static vk::raii::Device* device = nullptr;
+    inline static uint32_t queueFamily = 0;
+    inline static vk::raii::Queue* queue = nullptr;
+    inline static vk::raii::DescriptorPool descriptorPool = nullptr;
+    inline static vk::raii::CommandPool commandPool = nullptr;
+    inline static vk::PipelineRenderingCreateInfo renderingInfo{};
+
+    // Input callback
+    inline static std::function<void(ImGuiIO&)> inputCallback = nullptr;
+
+    // Initialization state
+    inline static bool initialized = false;
+};
+
+// ImGuiUtil.cpp
+#include "ImGuiUtil.h"
+
+void ImGuiUtil::Init(
+    vk::raii::Instance& instance,
+    vk::raii::PhysicalDevice& physicalDevice,
+    vk::raii::Device& device,
+    uint32_t queueFamily,
+    vk::raii::Queue& queue,
+    uint32_t minImageCount,
+    uint32_t imageCount,
+    vk::Format swapChainImageFormat,
+    vk::SampleCountFlagBits msaaSamples
+) {
+    ImGuiUtil::instance = &instance;
+    ImGuiUtil::physicalDevice = &physicalDevice;
+    ImGuiUtil::device = &device;
+    ImGuiUtil::queueFamily = queueFamily;
+    ImGuiUtil::queue = &queue;
+
+    // Set up dynamic rendering info
+    renderingInfo.colorAttachmentCount = 1;
+    vk::Format formats[] = { swapChainImageFormat };
+    renderingInfo.pColorAttachmentFormats = formats;
+
+    // Create command pool for font upload
+    vk::CommandPoolCreateInfo poolInfo{
+        .flags = vk::CommandPoolCreateFlagBits::eTransient,
+        .queueFamilyIndex = queueFamily
+    };
+    commandPool = vk::raii::CommandPool(device, poolInfo);
+
+    // Create descriptor pool
+    createDescriptorPool();
+
+    // Initialize ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    // Set up ImGui style
+    ImGui::StyleColorsDark();
+
+    // Initialize our custom Vulkan renderer with dynamic rendering
+    renderer = ImGuiVulkanRenderer();
+    renderer.initialize(
+        *instance,
+        *physicalDevice,
+        *device,
+        queueFamily,
+        *queue,
+        *descriptorPool,
+        minImageCount,
+        imageCount,
+        msaaSamples
+    );
+
+    // Set dynamic rendering info
+    renderer.setDynamicRenderingInfo(renderingInfo);
+
+    // Upload fonts
+    uploadFonts();
+
+    initialized = true;
+}
+
+void ImGuiUtil::Shutdown() {
+    if (!initialized) return;
+
+    // Wait for device to finish operations
+    device->waitIdle();
+
+    // Cleanup ImGui
+    renderer.cleanup();
+    ImGui::DestroyContext();
+
+    // Cleanup Vulkan resources
+    commandPool = nullptr;
+    descriptorPool = nullptr;
+
+    // Reset pointers
+    instance = nullptr;
+    physicalDevice = nullptr;
+    device = nullptr;
+    queue = nullptr;
+
+    initialized = false;
+}
+
+void ImGuiUtil::NewFrame() {
+    if (!initialized) return;
+
+    // Update ImGui IO with platform-specific input
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Call input callback if registered
+    if (inputCallback) {
+        inputCallback(io);
+    }
+
+    ImGui::NewFrame();
+}
+
+void ImGuiUtil::Render(vk::raii::CommandBuffer& commandBuffer) {
+    if (!initialized) return;
+
+    ImGui::Render();
+    renderer.render(ImGui::GetDrawData(), commandBuffer);
+}
+
+void ImGuiUtil::UpdateDisplaySize(int width, int height, float scaleX, float scaleY) {
+    if (!initialized) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+    io.DisplayFramebufferScale = ImVec2(scaleX, scaleY);
+}
+
+bool ImGuiUtil::ProcessInputEvent(void* event) {
+    // Platform-specific event processing would go here
+    // This is a placeholder for the actual implementation
+    return false;
+}
+
+void ImGuiUtil::SetInputCallback(std::function<void(ImGuiIO&)> callback) {
+    inputCallback = callback;
+}
+
+void ImGuiUtil::createDescriptorPool() {
+    // Tune these to match your expected number of UI textures and buffers.
+    vk::DescriptorPoolSize poolSizes[] =
+    {
+        { vk::DescriptorType::eSampler, 8 },
+        { vk::DescriptorType::eCombinedImageSampler, 128 },
+        { vk::DescriptorType::eSampledImage, 128 },
+        { vk::DescriptorType::eStorageImage, 8 },
+        { vk::DescriptorType::eUniformTexelBuffer, 8 },
+        { vk::DescriptorType::eStorageTexelBuffer, 8 },
+        { vk::DescriptorType::eUniformBuffer, 32 },
+        { vk::DescriptorType::eStorageBuffer, 32 },
+        { vk::DescriptorType::eUniformBufferDynamic, 16 },
+        { vk::DescriptorType::eStorageBufferDynamic, 16 },
+        { vk::DescriptorType::eInputAttachment, 8 }
+    };
+
+    uint32_t maxSets = 0;
+    for (const auto& ps : poolSizes) maxSets += ps.descriptorCount;
+
+    vk::DescriptorPoolCreateInfo poolInfo{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = maxSets,
+        .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
+        .pPoolSizes = poolSizes
+    };
+
+    descriptorPool = vk::raii::DescriptorPool(*device, poolInfo);
+}
+
+void ImGuiUtil::uploadFonts() {
+    vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+    renderer.uploadFonts(commandBuffer);
+    endSingleTimeCommands(commandBuffer);
+}
+
+vk::raii::CommandBuffer ImGuiUtil::beginSingleTimeCommands() {
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = *commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1
+    };
+
+    vk::raii::CommandBuffer commandBuffer = vk::raii::CommandBuffers(*device, allocInfo).front();
+
+    vk::CommandBufferBeginInfo beginInfo{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    };
+
+    commandBuffer.begin(beginInfo);
+
+    return commandBuffer;
+}
+
+void ImGuiUtil::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer) {
+    commandBuffer.end();
+
+    vk::SubmitInfo submitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffer
+    };
+
+    queue->submit(submitInfo);
+    queue->waitIdle();
+}
+----
+
+=== 结语
+
+本节探讨了如何把 ImGui 与 Vulkan 集成，包括命令缓冲区集成、渲染通道配置与性能考量。通过一套灵活的实现，我们的 GUI 系统可以适配你选择的任何窗口系统。
+
+主要改进包括：
+
+1. 建立了与平台无关的集成方式
+2. 实现了可配合多种窗口库的灵活输入系统
+3. 开发了通用的 ImGui 工具类
+4. 设计了不依赖窗口系统的集成方案
+
+掌握这些之后，你就能为 Vulkan 应用构建健壮的 GUI 系统，无论使用哪种窗口系统都能提供流畅的用户体验。
+
+下一节做总结，并讨论 GUI 系统可能的一些改进。
+
+xref:Building_a_Simple_Engine/GUI/04_ui_elements.adoc[上一篇：GUI：UI 元素与集成概念] | xref:Building_a_Simple_Engine/GUI/06_conclusion.adoc[下一篇：GUI：结语]

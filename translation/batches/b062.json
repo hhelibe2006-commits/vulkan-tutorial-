@@ -1,0 +1,36 @@
+{
+  "id": "b062",
+  "words": 4790,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/05_vulkan_extensions.adoc",
+      "words": 2035,
+      "title": "Mobile Development: Vulkan Extensions"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc",
+      "words": 766,
+      "title": "Mobile Development: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Mobile_Development/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Mobile_Development/index.adoc",
+      "words": 70,
+      "title": "Mobile Development"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/01_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/01_introduction.adoc",
+      "words": 1057,
+      "title": "Subsystems: Introduction"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc",
+      "target": "zh/Building_a_Simple_Engine/Subsystems/02_audio_basics.adoc",
+      "words": 862,
+      "title": "Subsystems: Audio Basics"
+    }
+  ]
+}

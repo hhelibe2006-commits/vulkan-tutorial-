@@ -1,0 +1,77 @@
+:pp: {plus}{plus}
+
+= 阶段 1：系统设计
+
+== 简介：人们跳过的那一步
+
+规划是开发者最常跳过的阶段。直接扎进 `VkGraphicsPipelineCreateInfo` 样板代码很诱人，结果做到一半才发现描述符管理根本不支持你真正想要的无绑定纹理系统。
+
+在动手写代码之前，先用高推理能力的模型设计这个特性，在这里是有帮助的——不是因为规划是什么新鲜想法，而是因为模型擅长把设计中的某些部分摆到台面上，这些部分你本来只有重写一遍才会发现。目标是得到一份足够具体、可以直接照着实现的路线图。
+
+== 一份好的方案覆盖什么
+
+一份有用的 Vulkan 特性方案需要清楚地覆盖几件事：
+
+**资源生命周期。**这个特性需要哪些缓冲区、图像和采样器，谁拥有它们，何时创建、何时销毁？跳过这一点，是 AI 生成代码中内存泄漏和释放后使用（use-after-free）缺陷最常见的来源，因为模型无法推断你从未写下来的所有权关系。
+
+**同步策略。**明确写出该特性每个阶段所需的 `VkImageMemoryBarrier2` 转换。这是 Vulkan 开发中最容易出错的部分，在规划阶段把它写下来，能让模型之后有具体的东西可照着实现，而不必靠猜。
+
+**接口边界。**新特性如何与你现有的 `VulkanDevice`、`Swapchain` 或 `CommandPool` 包装交互？事先把现有类的签名交给模型，意味着生成的代码更有可能适配你的引擎，而不需要为了集成再重写一遍。
+
+== 为什么这个阶段要用高推理模型
+
+架构规划意味着同时在脑子里装下若干相互作用的系统。小型本地模型擅长写单个函数，但当一项改动会波及整个引擎时，它们往往力不从心。
+
+更大的推理模型（Claude 或 GPT 级）更适合这里——它们能把几百行现有架构作为上下文，推理新特性如何融入，同时不破坏已有同步、不违反目标硬件的内存对齐规则。它们仍然不是万无一失的，值得把它们的建议对照规范核一遍，而不是照单全收。
+
+== 示例：设计一条 Bloom 管线
+
+=== 步骤 1：给它真实的上下文
+
+不要只是问「设计一个 bloom 系统」。把模型真正需要的文件给它——你的 `VulkanContext.hpp`、内存管理头文件，以及渲染器中相关的部分。
+
+**示例提示：**「我正在实现一个 Bloom 通道。我们的引擎使用 Vulkan 1.3，采用动态渲染，内存管理用 VMA。这是我们的 `Renderer` 类。设计一条使用 13 抽头降采样/升采样链的 Bloom 管线。给出一份路线图，定义类结构以及每个 mip 层级的图像布局转换。」
+
+=== 步骤 2：对照你的硬件检查方案
+
+模型会产出一份方案，但你仍需对照它并不知道的约束来审查。例如，如果它建议 bloom 通道使用 `STORAGE_IMAGE_OPTIMAL`，而你可能知道目标移动硬件（比如 Mali GPU）用 `ATTACHMENT_OPTIMAL` 加输入附件性能更好。这时就反驳它，让它修改方案，在升采样通道中改用输入附件式的读取，以在移动端节省带宽。
+
+=== 步骤 3：把它写下来
+
+产出是一个 `bloom_design.md` 文件——一份具体的技术规格，你将以此作为实现阶段的基础。
+
+== 规划一个特性的实用步骤
+
+规划更大的东西，比如帧图或聚簇渲染器，比单次提示更需要一点结构：
+
+1.  **先加载上下文。**
+    用你的 MCP 工具（例如 `mcp-vulkan` 服务器）拉取你正在构建的特性对应的现行规范，这样模型依据的是 Vulkan 1.3/1.4 的语义，而不是它在训练中可能见过的过时模式。
+
+2.  **明确说出你的约束。**
++
+[source,text]
+----
+I am adding a Bloom pass.
+Our engine uses a fixed 24-bit depth buffer.
+We use VMA for all allocations.
+We are using Dynamic Rendering (no manual RenderPasses).
+----
+
+3.  **分层索要方案。**
++
+[source,text]
+----
+Generate a 3-layer roadmap:
+1. Architectural design: class hierarchy, state management
+2. Data flow: descriptor layout, push constants, VMA allocation flags
+3. Synchronization map: pipeline barriers, layout transitions, image memory dependencies
+----
+
+4.  **审查，然后写入文件。**
+    在接受方案之前，先批判性地通读一遍。一旦你满意，就让模型把它写到仓库里的 `DESIGN_DOC.md` 文件中——这会成为实现阶段的参考。
+
+== 小结
+
+阶段 1 就是用高推理模型，在写任何 C{pp} 之前把一个特性想法变成具体、可审查的方案。产出——一份把资源生命周期、同步和接口边界都写清楚的设计文档——正是让实现阶段顺利推进、而不是变成一堆互不相干的补丁的原因。
+
+下一篇：xref:AI_Assisted_Vulkan/05_workflow/03_phase_2_implementation.adoc[阶段 2：实现]

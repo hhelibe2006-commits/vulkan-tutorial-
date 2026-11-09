@@ -1,0 +1,58 @@
+:pp: {plus}{plus}
+
+= clspv 管线：从 OpenCL C 到 SPIR-V
+
+== 什么是 clspv？
+
+**clspv** 是一个开源编译器（属于 Google/Khronos 生态），它把 OpenCL C 源代码转换成一种专门设计为可作为 Vulkan 计算着色器运行的 SPIR-V 二进制。
+
+标准 OpenCL 编译器针对的是 OpenCL 专属版本的 SPIR-V，而 `clspv` 则会执行一系列复杂的变换，让代码兼容 Vulkan 更严格的内存模型与执行模型。
+
+== 编译流程
+
+使用 `clspv` 时，你的内核要经过几个阶段：
+
+1.  **解析**：使用 **Clang**（LLVM 的 C 语言家族前端）解析 OpenCL C 代码。
+2.  **LLVM 变换**：生成的 **LLVM IR**（Low-Level Virtual Machine Intermediate Representation，一种平台无关的汇编语言）会被变换，以移除 Vulkan 中不存在的 OpenCL 专属特性（例如物理指针或某些内建变量）。
+3.  **SPIR-V 生成**：变换后的 IR 被转换成 Vulkan 风味的 SPIR-V。
+4.  **描述符映射**：`clspv` 会为你的内核自动生成**描述符集布局**。例如，一个 OpenCL 的 `__global float*` 缓冲区可能被映射到位于 `set=0, binding=0` 的 Vulkan 存储缓冲区。
+
+== 在工作流中使用 clspv
+
+最常见的方式是在构建过程中把 `clspv` 当作命令行工具使用：
+
+[source,bash]
+----
+clspv my_kernel.cl -o my_kernel.spv
+----
+
+之后你就可以像加载其他计算着色器一样，把 `my_kernel.spv` 加载进 Vulkan 应用。不过，你需要知道 `clspv` 是如何把你的参数映射到描述符绑定的。默认情况下，它按内核函数中参数的顺序进行确定性映射。
+
+[source,c]
+----
+// OpenCL C Kernel
+__kernel void MyKernel(__global float* input, __global float* output) {
+    // ...
+}
+----
+
+在 Vulkan 中，这通常映射为：
+
+*   `input`：`set=0, binding=0`（存储缓冲区）
+*   `output`：`set=0, binding=1`（存储缓冲区）
+
+== 关键挑战：指针与内存
+
+`clspv` 解决的最大难题之一是**指针支持**。OpenCL C 允许任意指针算术，而标准 Vulkan 不允许。`clspv` 借助 `VK_KHR_variable_pointers` 扩展（Vulkan 1.1 起成为核心）来模拟这种行为，但如果你避免复杂的指针的指针运算，效率会高得多。
+
+Vulkan 1.4 对**缓冲区设备地址**的改进支持让这件事更容易了，`clspv` 因而能在现代硬件上生成既可移植又更高性能的代码。
+
+== clspv 的优势
+
+*   **提前编译（AOT）**：运行时不需要沉重的 OpenCL 编译器，只要一个小小的 SPIR-V 二进制。
+*   **Vulkan 集成**：你的 OpenCL 逻辑在你现有的 Vulkan 管线里变成“又一个着色器”。
+*   **性能**：因为它使用原生 Vulkan 驱动，你能拿到硬件的全部性能，运行时没有任何转换层开销。
+
+下一节，我们来看如何处理**内核可移植性**，确保代码在不同厂商的硬件上都能正确运行。
+
+xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/02_setup_and_installation.adoc[上一节：安装与配置：准备你的环境] | xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/04_kernel_portability.adoc[下一节：内核可移植性：面向 Vulkan 的 OpenCL C]

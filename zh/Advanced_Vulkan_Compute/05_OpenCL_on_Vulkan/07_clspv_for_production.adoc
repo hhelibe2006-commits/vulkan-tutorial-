@@ -1,0 +1,131 @@
+= 生产环境中的 clspv：将 OpenCL C 作为 Vulkan SPIR-V
+
+当你用 `clspv` 为 Vulkan 引擎编译 OpenCL 内核时，你并没有把 OpenCL 包进 Vulkan 里，也没有在运行时跑一层兼容层。你是在把 SPIR-V 当作*共享的中间语言*来用——也就是 Vulkan 为每个着色器所消费的同一种二进制格式——而 `clspv` 就是把 OpenCL C 翻译成这种格式的翻译器。
+
+这个区别很重要，因为 SPIR-V 有两种不同的方言。OpenCL 生态定义了自己的一套 SPIR-V 能力（执行模型、存储类、内建变量、扩展指令），Vulkan 同样如此。两者在中间地带重叠，但任何一方都不是另一方的严格子集。
+
+== 同一格式的两种方言
+
+image::images/spirv_dialects_venn.svg[SPIR-V 方言维恩图——OpenCL 与 Vulkan 在共享的公共区域重叠,780]
+
+`clspv` 的目标是*Vulkan 方言*——它产出的是 `GLCompute` 执行模型，配上 `StorageBuffer` 与 `Workgroup` 存储类，而不是 OpenCL 的 `Kernel` 执行模型。生成的 SPIR-V 是合法的 Vulkan 着色器代码，可以像你用 GLSL 或 HLSL 写的任何计算着色器一样由 `vkCreateShaderModule` 加载。
+
+正因如此，AOT 路径才能成立：Vulkan 驱动层面并没有任何特殊处理。驱动看到的只是一个普通的计算着色器，完全不知道它来自 OpenCL C。
+
+== 哪些能干净地编译
+
+OpenCL C 的核心部分可以直接映射到 Vulkan 计算着色器：
+
+* **缓冲区参数**（`__global` 指针）→ `StorageBuffer` 描述符。第 *n* 个参数 → `set=0, binding=n`。可预测、确定，并且可以用 `--descriptormap` 检查。
+* **共享内存**（固定大小的 `__local`）→ `Workgroup` 存储类的数组——也就是你的 GLSL `shared` 变量所在的那块内存。
+* **NDRange 内建**（`get_global_id`、`get_local_id`、`get_group_id`、`get_global_size`）→ `gl_GlobalInvocationID`、`gl_LocalInvocationID`、`gl_WorkGroupID` 等。
+* **数学内建**（`sin`、`cos`、`sqrt`、`fma`、`clamp`、`mix`、`dot`、`cross`、`native_sqrt` 等）→ `GLSL.std.450` 扩展指令。映射几乎是 1 对 1 的。
+* **全局缓冲区上的整型原子操作**（`atomic_add`、`atomic_cmpxchg` 等）→ `OpAtomicIAdd`、`OpAtomicCompareExchange`。
+* **屏障**（`barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE)`）→ 带相应作用域的 `OpControlBarrier`。
+* **子组操作**（经由 `cl_khr_sub_groups`）→ GLSL 子组扩展所产出的同一批 `OpGroupNon-Uniform*` 指令。
+
+== 哪些无法在翻译后存活
+
+有些 OpenCL C 特性在 Vulkan SPIR-V 方言中并不存在，或者需要并非普遍可用的 Vulkan 硬件特性。
+
+=== 没有 printf
+
+Vulkan 计算着色器里的 `printf` 没有标准化机制。`clspv` 不支持它。惯用的替代方案是一个调试输出存储缓冲区：把诊断值写入 `__global uint*`（或结构化缓冲区），在内核结束后于主机端读回。
+
+=== double / float64 受限
+
+`double` 以及 `double` 类型的内建需要 `shaderFloat64` 这个 Vulkan 设备特性，而它在许多移动 GPU 与集成 GPU 上都缺失。`clspv` 默认关闭 double 支持。使用 `double` 的内核必须：
+
+. 给 `clspv` 传入 `-DCMAKE_DOUBLE_SUPPORT=ON`（或等效选项），并且
+. 在选择设备时验证 `VkPhysicalDeviceFeatures::shaderFloat64 == VK_TRUE`。
+
+为了可移植性，请用 `float` 编写内核，只在你已验证过设备特性的、面向桌面的部署中才保留 `double`。
+
+=== 管道与设备端入队
+
+`read_pipe`、`write_pipe` 和 `enqueue_kernel` 是 OpenCL 2.0 的特性，在 Vulkan 中没有对应物。`clspv` 以 OpenCL 1.2 语义（`-cl-std=CL1.2`）为目标，不会编译这些构造。
+
+=== 从缓冲区读取的动态循环边界
+
+这是使用 `clspv` AOT 路径时最重要的生产陷阱之一。`clspv` 的结构化控制流处理过程必须能够证明每个循环都会终止，才能产出合法的结构化 SPIR-V。当循环边界在运行时从存储缓冲区加载时，该处理过程无法给出这个证明，生成的着色器通常会让 GPU 挂起。
+
+这是 `clspv` 特有的限制，而不是 OpenCL 规范的限制。一个符合规范的原生 OpenCL 驱动（NVIDIA、AMD ROCm）能毫无怨言地编译动态边界，因为它不要求结构化控制流。这类内核在那些平台上工作正常，而只有经由 `clspv` AOT 编译时才会静默地产生 GPU 挂起。
+
+`clspv` AOT 路径的规则是：**循环边界必须是编译期常量。** 用 `#define`、`constexpr` 或 SPIR-V 特化常量——绝不要用从描述符读来的值。
+
+[WARNING]
+====
+这种失败模式会产生**静默的 GPU 挂起**，而不是编译错误或验证层消息。如果一个在原生 OpenCL 驱动下能工作的内核在 `clspv` AOT 路径下挂起，第一个要检查的就是动态循环边界。
+====
+
+=== 没有变长数组
+
+变长数组 https://registry.khronos.org/OpenCL/specs/unified/html/OpenCL_C.html#_footnotedef_31[在 OpenCL C 中不受支持]——这是规范限制，不是 `clspv` 的限制。`__local` 数组的大小必须在编译期固定。实践中这意味着，对于任何你原本想作为内核参数传入的局部数组维度，都要改用 `#define` 或特化常量。
+
+=== 无法从 OpenCL C 触及的 Vulkan 专有能力
+
+维恩图的右侧——光线追踪、网格着色器、可变速率着色、协作矩阵、片元操作——完全无法从 OpenCL C 访问。需要这些能力的内核必须用 GLSL/HLSL/SLANG 编写，并用能识别 Vulkan 的编译器编译。clspv AOT 路径是纯计算工作负载的正确选择；它不是通往完整 Vulkan 着色器生态的道路。
+
+== 生产环境中的参数映射
+
+确定性的描述符布局是 `clspv` 最有用的生产属性：每个 `__global` 缓冲区参数 *n* 都映射到 `set=0, binding=n` 处的存储缓冲区，而标量（POD）参数则被归入一个位于可预测绑定点上的统一缓冲区。绝不要凭记忆依赖这一点——始终生成并提交映射文件：
+
+[source,bash]
+----
+clspv -cl-std=CL1.2 --inline-entry-points \
+      --descriptormap=forest.map \
+      forest.cl -o forest.spv
+----
+
+`.map` 文件是你的内核接口的权威规范。把它和 `.cl` 源码一起纳入版本控制，并把映射文件与你的 `VkDescriptorSetLayout` 之间的分歧当作构建错误。
+
+=== POD 参数与推送常量
+
+默认情况下，`clspv` 把标量参数（例如 `float scale, int steps`）放进统一缓冲区。如果你更希望用推送常量——延迟更低、无需更新描述符——请传入 `--pod-pushconstant`：
+
+[source,bash]
+----
+clspv --pod-pushconstant -cl-std=CL1.2 --descriptormap=kernel.map kernel.cl -o kernel.spv
+----
+
+`.map` 文件会显示 `pushconstant` 偏移而不是绑定点，而你的 `VkPipelineLayout` 必须声明一个匹配的 `VkPushConstantRange`。两种做法都是正确的；选定一种并把映射文件提交上去，让主机代码可以遵循它。
+
+== 特化常量
+
+当你需要一个每次派发固定、但无需重新编译就能改变的值（工作组瓦片大小、算法变体、特性开关）时，`clspv` 可以通过 `clspv_builtin` 属性支持 SPIR-V 特化常量。对于引擎在运行时改变的值，这比 `#define` 更可取，而且能避开动态边界问题，因为从着色器的角度看，该值仍然是编译期常量：
+
+[source,c]
+----
+int __attribute__((annotate("clspv,spec_constant,0,0"))) kMaxSteps;
+----
+
+`spec_constant` 后面的两个整数，是特化常量在生成的 SPIR-V 中的描述符集与绑定点。在创建管线时通过 `VkSpecializationInfo` 设置该值，无需重新编译着色器。
+
+== 必需的 Vulkan 设备特性
+
+`clspv` 生成的 SPIR-V 在内部使用指针算术，这需要两个默认未启用的 Vulkan 1.1 特性：
+
+[source,cpp]
+----
+vk::PhysicalDeviceVulkan11Features vk11{
+    .variablePointersStorageBuffer = true,
+    .variablePointers               = true};
+----
+
+把它加到你的设备特性链中。缺少特性会立刻被验证层捕获；本章的 `compute_common.h` 为所有示例启用了这两项。
+
+== 生产检查清单
+
+在通过 `clspv` AOT 路径交付内核之前：
+
+[%checklist]
+- [ ] 所有循环边界都是编译期常量（`#define`、特化常量）。
+- [ ] 没有 `printf`——改用调试输出缓冲区。
+- [ ] 审计了 `double` 的使用；若存在则验证了 `shaderFloat64`。
+- [ ] 已生成并提交 `--descriptormap`；主机布局完全匹配。
+- [ ] `variablePointers` + `variablePointersStorageBuffer` 已加入设备特性链。
+- [ ] `VkPipelineShaderStageCreateInfo::pName` 中的入口点名称与 OpenCL 内核名一致，而**不是** `"main"`。
+- [ ] 工作组大小已通过 `reqd_work_group_size` 固定，并与主机端派发的向上取整相匹配。
+- [ ] SPIR-V 已在 CI 中用 `spirv-val forest.spv` 验证。
+
+xref:Advanced_Vulkan_Compute/05_OpenCL_on_Vulkan/06_a_practical_sample.adoc[上一节：实战示例：由 OpenCL 驱动的 Vulkan 渲染] | xref:Advanced_Vulkan_Compute/06_Advanced_Data_Structures/01_introduction.adoc[下一节：GPU 上的高级数据结构]

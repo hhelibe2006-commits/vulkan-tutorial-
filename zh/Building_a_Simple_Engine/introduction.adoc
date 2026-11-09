@@ -1,0 +1,71 @@
+:pp: {plus}{plus}
+
+= 构建简易引擎：简介
+
+== 简介
+
+欢迎来到「构建简易引擎」教程系列！这个系列标志着从前面各章介绍的 Vulkan 基础概念，转向更有结构、专注于构建可复用渲染引擎的做法。
+
+=== 一种新的学习方式
+
+之前的教程系列侧重于一步步介绍单个 Vulkan 概念，而本系列采用了不同的思路：
+
+本系列面向已经完成 xref:00_Introduction.adoc[Vulkan 教程]、并且对基础概念已经得心应手的读者。我们会更强调架构概念与设计模式，而不是穷举 API 的各种组合，目的是让你养成引擎思维，而不是攒下一堆代码片段。请做好更多独立工作的准备：自己补齐较小的空白、多做实验，并把 https://docs.vulkan.org/guide/latest/[Vulkan 指南]、https://docs.vulkan.org/samples/latest/[示例] 和 https://docs.vulkan.org/spec/latest/[规范] 作为首要参考资料。如果某个主题显得太深，就回头翻翻原来的教程，准备好后再回来。
+
+=== 你将学到什么
+
+「构建简易引擎」系列是你踏入引擎开发的起点，而不是终点。我们会涵盖：
+
+1. *引擎架构* —— 如何组织代码，以获得灵活性、可维护性和可扩展性。
+
+2. *资源管理* —— 处理模型、纹理及其他资产的更成熟做法。
+
+3. *渲染技术* —— 在引擎框架内实现现代渲染方法。
+
+4. *性能考量* —— 如何以性能为导向来设计引擎。
+
+5. *发布考量* —— 如何为专业环境中的分发做好准备，包括打包、部署和平台相关的考量。
+
+在整个系列中，我们鼓励你动手实验、扩展提供的示例，甚至质疑我们的某些设计决定。学习引擎开发最好的方式就是动手实践，有时也包括犯错（并从错误中学习）。
+
+在我们的引擎实现中，全程使用 vk::raii 动态渲染和 C++20 模块。vk::raii 命名空间为 Vulkan 对象提供了资源获取即初始化（RAII）包装，有助于资源管理，也让代码更清爽。动态渲染免去了显式的渲染通道和帧缓冲区，从而简化渲染流程。相比传统头文件，C++20 模块改善了代码组织、编译时间和封装性。
+
+=== 如何使用本教程
+
+每一章都在前一章的基础上，拼出一个虽小但能力完备的引擎。建议先把一章从头读到尾，再动手实现；中途停下来消化概念；需要复习时也别犹豫，回去翻翻原来的 Vulkan 教程。把代码当作起点——在上面实验，并用自己的功能扩展它。
+
+让我们从下面这些章节开始引擎开发之旅：
+
+1. xref:Building_a_Simple_Engine/Engine_Architecture/01_introduction.adoc[引擎架构：简介] —— 如何组织代码，以获得灵活性、可维护性和可扩展性。
+2. xref:Building_a_Simple_Engine/Camera_Transformations/01_introduction.adoc[相机与变换：简介] —— 相机系统与各类变换的实现。
+3. xref:Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc[光照与材质入门] —— 基础光照模型与推送常量。
+4. xref:Building_a_Simple_Engine/GUI/01_introduction.adoc[GUI：简介] —— 用 Dear ImGui 实现图形用户界面。
+5. xref:Building_a_Simple_Engine/Loading_Models/01_introduction.adoc[加载模型：简介] —— 处理模型、纹理及其他资产的更成熟做法。
+6. xref:Building_a_Simple_Engine/Subsystems/01_introduction.adoc[子系统：简介] —— 用 Vulkan 的计算能力实现音频与物理子系统。
+7. xref:Building_a_Simple_Engine/Tooling/01_introduction.adoc[工具链：简介] —— CI/CD、调试、崩溃小转储、分发，以及提升健壮性的 Vulkan 扩展。
+8. xref:Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc[移动端开发：简介] —— 让引擎适配 Android/iOS，重点关注性能考量与移动端专用的 Vulkan 扩展。
+
+9. xref:Building_a_Simple_Engine/Advanced_Topics/01_introduction.adoc[高级主题（简易引擎）] —— 一批简短、聚焦的教程，为简易引擎扩展特定功能与优化。
+
+xref:conclusion.adoc[上一篇：结语] | xref:Building_a_Simple_Engine/Engine_Architecture/01_introduction.adoc[下一篇：引擎架构：简介]
+
+
+=== 从示例资产开始
+
+如果想跟着附件里的简易引擎示例和场景一起动手，请先把 Bistro 资产取到本地。
+
+image::images/MainEntry.png[Bistro 场景——一个细致的户外咖啡馆环境，展示了引擎的渲染能力]
+
+- Linux/macOS（默认目标：仓库根目录下的 attachments/simple_engine/Assets/bistro）：
++
+在终端运行 `cd attachments/simple_engine`，然后运行 `./fetch_bistro_assets.sh`。
+
+- Windows（默认目标：仓库根目录下的 attachments\simple_engine\Assets\bistro）：
++
+在命令提示符中运行 `cd attachments\simple_engine`，然后运行 `fetch_bistro_assets.bat`。
+
+这些脚本使用 SSH（git@github.com:gpx1000/bistro.git），如果 SSH 不可用则回退到 HTTPS。如果安装了 Git LFS，大文件会自动拉取。
+
+接下来，利用 install_dependencies_* 脚本确认所有必要的依赖都已就绪。
+
+资产就位、依赖齐备之后，就可以构建并运行 attachments/simple_engine 下的简易引擎示例。场景加载以及示例代码所引用的子系统细节，请参阅后续章节。

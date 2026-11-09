@@ -1,0 +1,12 @@
+{
+  "id": "b082",
+  "words": 6014,
+  "files": [
+    {
+      "source": "en/ML_Inference/ML_Inference_Pipeline/05_transfer_learning.adoc",
+      "target": "zh/ML_Inference/ML_Inference_Pipeline/05_transfer_learning.adoc",
+      "words": 6014,
+      "title": "Transfer Learning"
+    }
+  ]
+}

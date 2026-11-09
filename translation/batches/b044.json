@@ -1,0 +1,42 @@
+{
+  "id": "b044",
+  "words": 4935,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/05_vulkan_integration.adoc",
+      "words": 1015,
+      "title": "Camera & Transformations: Vulkan Integration"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/06_conclusion.adoc",
+      "words": 422,
+      "title": "Camera & Transformations: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Camera_Transformations/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/Camera_Transformations/index.adoc",
+      "words": 43,
+      "title": "Camera & Transformations"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/00_introduction.adoc",
+      "words": 817,
+      "title": "Opacity Micromaps: Smarter Shadows for the Real World"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/01_the_shadow_problem.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/01_the_shadow_problem.adoc",
+      "words": 1358,
+      "title": "Shadows, Light, and the Trouble with Leaves"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/Courses/Opacity_Micromaps/02_why_alpha_testing_is_expensive.adoc",
+      "target": "zh/Building_a_Simple_Engine/Courses/Opacity_Micromaps/02_why_alpha_testing_is_expensive.adoc",
+      "words": 1280,
+      "title": "What Your GPU Is Actually Doing"
+    }
+  ]
+}

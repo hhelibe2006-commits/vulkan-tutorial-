@@ -1,0 +1,393 @@
+:pp: {plus}{plus}
+
+= 移动端开发：Vulkan 扩展
+
+== 移动端的 Vulkan 扩展
+
+Vulkan 的可扩展性是其最大的优势之一，它让硬件厂商能够暴露可显著提升性能的专用特性。对移动端开发来说，有几个扩展尤其有价值，因为它们有助于针对移动 GPU 的独特特性做优化。本节将探讨能够提升移动设备性能的关键 Vulkan 扩展。
+
+=== VK_KHR_dynamic_rendering
+
+动态渲染是一个颠覆性的扩展，它免去了显式创建渲染通道与帧缓冲区对象的需要，从而简化了 Vulkan 的渲染工作流。
+
+==== 概览
+
+`VK_KHR_dynamic_rendering` 扩展（现已成为 Vulkan 1.3 核心的一部分）允许你直接在命令缓冲区中开始和结束渲染操作，而无需创建渲染通道和帧缓冲区对象。这让包括桌面与移动端在内的众多平台受益，因为该扩展：
+
+1. *简化代码*：降低了管理渲染通道与帧缓冲区的复杂度。
+2. *实现更灵活的渲染*：让那些不太适合传统渲染通道模型的技术更容易实现。
+3. *可能降低 API 开销*：需要创建和管理的对象更少，可以简化初始化；不过 CPU 侧的节省通常很小，并且取决于工作负载。
+
+==== 实现（分步进行）
+
+我们把配置拆成几个小而专注的步骤。
+
+===== 启用扩展并加载入口点
+
+首先启用设备扩展；如果你使用的不是 Vulkan 1.3 核心，还要加载函数指针。
+
+[source,cpp]
+----
+// Enable the extension when creating the device
+std::vector<const char*> device_extensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
+};
+
+// Get function pointers (if not using Vulkan 1.3)
+PFN_vkCmdBeginRenderingKHR vkCmdBeginRenderingKHR =
+    reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(
+        vkGetDeviceProcAddr(device, "vkCmdBeginRenderingKHR"));
+PFN_vkCmdEndRenderingKHR vkCmdEndRenderingKHR =
+    reinterpret_cast<PFN_vkCmdEndRenderingKHR>(
+        vkGetDeviceProcAddr(device, "vkCmdEndRenderingKHR"));
+----
+
+这样设备就准备好使用动态渲染，并能访问在无需传统渲染通道的情况下开始/结束渲染范围所需的命令。
+
+===== 描述本次渲染范围的附件
+
+我们定义颜色附件与深度附件，并把它们打包进 VkRenderingInfoKHR。可以把它看作一份内联的、一次性的描述，内容原本要固化在渲染通道/帧缓冲区对象里。
+
+[source,cpp]
+----
+VkRenderingAttachmentInfoKHR color_attachment{};
+color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+color_attachment.imageView = color_image_view;
+color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+color_attachment.clearValue = clear_value;
+
+VkRenderingAttachmentInfoKHR depth_attachment{};
+depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+depth_attachment.imageView = depth_image_view;
+depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+depth_attachment.clearValue = depth_clear_value;
+
+VkRenderingInfoKHR rendering_info{};
+rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+rendering_info.renderArea = render_area;
+rendering_info.layerCount = 1;
+rendering_info.colorAttachmentCount = 1;
+rendering_info.pColorAttachments = &color_attachment;
+rendering_info.pDepthAttachment = &depth_attachment;
+----
+
+每一帧（或相当于子通道的每一次），你都可以直接调整这些描述符（例如窗口大小改变后换成交换链视图），从而避免整条管线重建。
+
+===== 开始渲染、绘制、结束渲染
+
+附件描述完成后，我们开启渲染范围、录制绘制命令，然后关闭该范围。
+
+[source,cpp]
+----
+vkCmdBeginRenderingKHR(command_buffer, &rendering_info);
+
+// Record drawing commands
+vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+vkCmdDraw(command_buffer, vertex_count, 1, 0, 0);
+
+// End rendering
+vkCmdEndRenderingKHR(command_buffer);
+----
+
+这对 begin/end 命令取代了 vkCmdBeginRenderPass/vkCmdEndRenderPass，同时为现代渲染流程提供了更大的灵活性。
+
+===== C++ 绑定（vulkan.hpp）写法
+
+如果你使用 vulkan.hpp（vk::），结构体的填充会更顺手，但步骤完全相同。
+
+[source,cpp]
+----
+// Using vulkan.hpp
+vk::RenderingAttachmentInfoKHR color_attachment;
+color_attachment.setImageView(color_image_view);
+color_attachment.setImageLayout(vk::ImageLayout::eColorAttachmentOptimal);
+color_attachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+color_attachment.setStoreOp(vk::AttachmentStoreOp::eStore);
+color_attachment.setClearValue(clear_value);
+
+vk::RenderingAttachmentInfoKHR depth_attachment;
+depth_attachment.setImageView(depth_image_view);
+depth_attachment.setImageLayout(vk::ImageLayout::eDepthAttachmentOptimal);
+depth_attachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+depth_attachment.setStoreOp(vk::AttachmentStoreOp::eDontCare);
+depth_attachment.setClearValue(depth_clear_value);
+
+vk::RenderingInfoKHR rendering_info;
+rendering_info.setRenderArea(render_area);
+rendering_info.setLayerCount(1);
+rendering_info.setColorAttachments(color_attachment);
+rendering_info.setPDepthAttachment(&depth_attachment);
+----
+
+描述组装完成后，开启渲染范围、提交绘制命令，再结束该范围。
+
+[source,cpp]
+----
+command_buffer.beginRenderingKHR(rendering_info);
+
+// Record drawing commands
+command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+command_buffer.draw(vertex_count, 1, 0, 0);
+
+// End rendering
+command_buffer.endRenderingKHR();
+----
+
+=== VK_KHR_dynamic_rendering_local_read
+
+对于基于瓦片的渲染器，`VK_KHR_dynamic_rendering_local_read` 扩展尤其有价值，因为它允许着色器读取附件，而无需把瓦片强制写入主内存再读回来。
+
+==== 概览
+
+该扩展增强了动态渲染，允许片元着色器在同一个渲染范围内读取颜色附件以及深度/模板附件。在基于瓦片的渲染器上，这意味着读取可以直接发生在瓦片内存中，避免往返主内存的高昂开销。
+
+主要收益包括：
+
+1. *降低内存带宽*：读取发生在片上内存而非主内存，从而降低带宽密集型操作的带宽占用。
+2. *提升性能*：对于需要读取此前写入的附件的算法尤为明显。
+3. *能效*：内存带宽更低意味着功耗更低。
+
+==== 它如何降低内存带宽
+
+`VK_KHR_dynamic_rendering_local_read` 扩展在降低内存带宽方面特别有效，原因如下：
+
+1. *消除瓦片刷新操作*：没有该扩展时，着色器若要读取此前写入的附件，GPU 必须把整个瓦片刷新到主内存再读回来。该扩展允许着色器直接从瓦片内存读取，从而消除这些代价高昂的刷新操作。
+
+2. *支持逐像素本地读取*：它让片元着色器可以读取当前渲染范围/瓦片内同一像素上由附件写入的值。这适合逐像素操作（例如色调映射，或读取深度/先前的颜色）。
+
+3. *带宽降低的实测数据*：在实际应用中，对于能够受益于逐像素本地读取的工作负载，该扩展已被证明可以降低内存带宽。收益大小取决于工作负载与 GPU。
+
+4. *实例*：设想一条延迟渲染管线，需要在光照计算时读取同一像素上的 G-buffer 数据。没有该扩展时，G-buffer 必须先写入主内存，然后在光照通道中再读回来。有了该扩展，光照通道可以直接从瓦片内存中的 G-buffer 读取，从而节省带宽。
+
+==== 实现
+
+要使用该扩展：
+
+[source,cpp]
+----
+// Enable the extension when creating the device
+std::vector<const char*> device_extensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME
+};
+
+// Create a pipeline that reads from attachments
+vk::PipelineRenderingCreateInfoKHR rendering_create_info;
+rendering_create_info.setColorAttachmentCount(1);
+rendering_create_info.setColorAttachmentFormats(color_format);
+rendering_create_info.setDepthAttachmentFormat(depth_format);
+
+// Set up the attachment local read info
+vk::AttachmentSampleCountInfoAMD sample_count_info;
+sample_count_info.setColorAttachmentSamples(vk::SampleCountFlagBits::e1);
+sample_count_info.setDepthStencilAttachmentSamples(vk::SampleCountFlagBits::e1);
+
+vk::RenderingAttachmentLocationInfoKHR location_info;
+location_info.setColorAttachmentLocations(0);  // Location 0 for the color attachment
+
+vk::RenderingInputAttachmentIndexInfoKHR input_index_info;
+input_index_info.setColorInputAttachmentIndices(0);  // Index 0 for the color attachment
+
+// Create the graphics pipeline
+vk::GraphicsPipelineCreateInfo pipeline_info;
+pipeline_info.setPNext(&rendering_create_info);
+// ... set other pipeline creation parameters
+
+// In your fragment shader, you can now read from the attachment
+// using subpassLoad() or texture sampling with the appropriate extension
+// Fragment shader example (GLSL):
+// #extension GL_EXT_shader_tile_image : require
+// layout(location = 0) out vec4 outColor;
+// layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput inputColor;
+// void main() {
+//     vec4 color = subpassLoad(inputColor);
+//     outColor = color * 2.0;  // Double the brightness
+// }
+----
+
+=== VK_EXT_shader_tile_image
+
+`VK_EXT_shader_tile_image` 扩展让着色器可以直接访问瓦片内存，可显著提升基于瓦片的渲染器上的性能。
+
+==== 概览
+
+该扩展让着色器能够：
+
+1. *直接访问瓦片内存*：读写当前瓦片的内存，无需经过主内存。
+2. *执行瓦片本地操作*：执行完全留在瓦片内存中的操作。
+3. *优化带宽密集型算法*：对后处理效果尤其有益。
+4. *降低内存带宽*：在多通道工作负载中把数据保留在瓦片本地内存里，有助于降低内存带宽。
+
+==== 它如何降低内存带宽
+
+`VK_EXT_shader_tile_image` 扩展在降低内存带宽方面特别有效，原因如下：
+
+1. *针对瓦片式架构的优化*：移动 GPU 通常采用基于瓦片的渲染，屏幕被划分成小块瓦片分别处理。该扩展充分利用这种架构，让着色器直接在高速的片上内存中操作瓦片数据。
+
+2. *消除中间内存传输*：没有该扩展时，多通道渲染需要在每个通道结束后把结果写入主内存，并在下一个通道前读回来。有了 `VK_EXT_shader_tile_image`，这些中间结果可以留在瓦片内存中，从而消除这些代价高昂的传输。
+
+3. *带宽节省的实测数据*：在各种移动 GPU 上测试表明，复杂的多通道管线可获得可观的带宽降低；实际收益取决于工作负载与 GPU。
+
+4. *实际应用*：
+   - *图像处理滤镜*：应用多个滤镜（模糊、锐化、色彩校正）可以完全不离开瓦片内存完成。
+   - *延迟渲染*：G-buffer 数据可以留在瓦片内存中供光照通道使用。
+   - *阴影贴图*：把深度信息留在瓦片内存中，可以更高效地完成阴影计算。
+
+5. *能效*：内存带宽的降低直接转化为更低的功耗，这对移动设备至关重要。测试显示，图形密集型应用最多可节省 20% 的功耗。
+
+==== 实现
+
+要使用该扩展：
+
+[source,cpp]
+----
+// Enable the extension when creating the device
+std::vector<const char*> device_extensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_EXT_SHADER_TILE_IMAGE_EXTENSION_NAME
+};
+
+// When creating your shader module, make sure your shader uses the extension
+// GLSL example:
+// #extension GL_EXT_shader_tile_image : require
+//
+// layout(tile_image, set = 0, binding = 0) uniform tileImageColor { vec4 color; } tileColor;
+//
+// void main() {
+//     // Read from tile memory
+//     vec4 current_color = tileColor.color;
+//
+//     // Process the color
+//     vec4 new_color = process(current_color);
+//
+//     // Write back to tile memory
+//     tileColor.color = new_color;
+// }
+----
+
+=== 组合使用扩展以获得最佳性能
+
+为了获得最佳移动性能，可以考虑组合使用这些扩展：
+
+[source,cpp]
+----
+// Enable all relevant extensions
+std::vector<const char*> device_extensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME,
+    VK_EXT_SHADER_TILE_IMAGE_EXTENSION_NAME
+};
+
+// Check which extensions are supported
+auto available_extensions = physical_device.enumerateDeviceExtensionProperties();
+std::vector<const char*> supported_extensions;
+
+for (const auto& requested_ext : device_extensions) {
+    for (const auto& available_ext : available_extensions) {
+        if (strcmp(requested_ext, available_ext.extensionName) == 0) {
+            supported_extensions.push_back(requested_ext);
+            break;
+        }
+    }
+}
+
+// Create device with supported extensions
+vk::DeviceCreateInfo device_create_info;
+device_create_info.setPEnabledExtensionNames(supported_extensions);
+// ... set other device creation parameters
+vk::Device device = physical_device.createDevice(device_create_info);
+
+// Now you can use the supported extensions in your rendering code
+// ...
+----
+
+=== 设备扩展支持
+
+不同移动厂商和设备所暴露的 Vulkan 扩展各不相同。了解每台设备的扩展支持情况，有助于你在运行时安全地选择特性。
+
+==== 设备扩展支持详情
+
+不同移动 GPU 厂商对 Vulkan 扩展的支持程度各不相同：
+
+* *动态渲染支持*：许多移动 GPU 支持 `VK_KHR_dynamic_rendering`。这简化了 API 接口面，但当涉及多个子通道时，它可能比使用传统渲染通道更慢，除非支持下列某项基于瓦片的优化。
+
+* *基于瓦片的优化*：在基于瓦片的 GPU（例如 Mali、PowerVR）上，`VK_EXT_shader_tile_image` 与 `VK_KHR_dynamic_rendering_local_read` 很有效，因为它们把读写都保留在瓦片内存中。详情见上文的扩展章节；收益取决于工作负载与 GPU。
+
+* *在当前设备上检查扩展支持（EXT/KHR）*：
+
+[source,cpp]
+----
+// Common vendor IDs (used here only for labeling/logging output)
+const uint32_t VENDOR_ID_QUALCOMM = 0x5143; // Adreno
+const uint32_t VENDOR_ID_ARM = 0x13B5;      // Mali
+const uint32_t VENDOR_ID_IMAGINATION = 0x1010; // PowerVR
+const uint32_t VENDOR_ID_HUAWEI = 0x19E5;   // Kirin
+const uint32_t VENDOR_ID_APPLE = 0x106B;    // Apple
+
+bool log_device_extension_support(vk::PhysicalDevice physical_device) {
+    vk::PhysicalDeviceProperties props = physical_device.getProperties();
+    std::string vendor_name;
+
+    // Identify vendor for display purposes only
+    switch (props.vendorID) {
+        case VENDOR_ID_QUALCOMM: vendor_name = "Qualcomm"; break;
+        case VENDOR_ID_ARM: vendor_name = "ARM Mali"; break;
+        case VENDOR_ID_IMAGINATION: vendor_name = "PowerVR"; break;
+        case VENDOR_ID_HUAWEI: vendor_name = "Huawei"; break;
+        case VENDOR_ID_APPLE: vendor_name = "Apple"; break;
+        default: vendor_name = "Unknown"; break;
+    }
+
+    // Check for widely useful EXT/KHR extensions on this device
+    auto available_extensions = physical_device.enumerateDeviceExtensionProperties();
+    bool has_dynamic_rendering = false;
+    bool has_dynamic_rendering_local_read = false;
+    bool has_shader_tile_image = false;
+
+    for (const auto& ext : available_extensions) {
+        std::string ext_name = ext.extensionName;
+        if (ext_name == VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) {
+            has_dynamic_rendering = true;
+        } else if (ext_name == VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME) {
+            has_dynamic_rendering_local_read = true;
+        } else if (ext_name == VK_EXT_SHADER_TILE_IMAGE_EXTENSION_NAME) {
+            has_shader_tile_image = true;
+        }
+    }
+
+    // Log the extension support
+    std::cout << vendor_name << " device detected with extension support:" << std::endl;
+    std::cout << "  Dynamic Rendering: " << (has_dynamic_rendering ? "Yes" : "No") << std::endl;
+    std::cout << "  Dynamic Rendering Local Read: " << (has_dynamic_rendering_local_read ? "Yes" : "No") << std::endl;
+    std::cout << "  Shader Tile Image: " << (has_shader_tile_image ? "Yes" : "No") << std::endl;
+
+    return has_dynamic_rendering || has_dynamic_rendering_local_read || has_shader_tile_image;
+}
+----
+
+* *平台专用优化*：在为移动设备开发时，
+可以考虑以下优化：
+   - 在基于瓦片的渲染器上优先使用动态渲染，而不是传统渲染通道
+   - 只要可用就使用基于瓦片的扩展
+   - 测试不同配置，为各种设备型号找到最优设置
+
+=== 使用扩展的最佳实践
+
+1. *检查支持情况*：使用扩展前务必确认它是否受支持。
+
+2. *回退路径*：为扩展不可用的情况实现回退路径。
+
+3. *在真实设备上测试*：扩展在不同厂商和设备上的行为可能不同。要在来自不同厂商的多种硬件上测试。
+
+4. *保持关注更新*：持续留意可能有益于移动性能的新扩展，因为移动 GPU 厂商在不断增强其 Vulkan 支持。
+
+下一节将用关键要点与最佳实践的总结，为我们的移动端开发探索收尾。
+
+xref:Building_a_Simple_Engine/Mobile_Development/04_rendering_approaches.adoc[上一页：移动端开发：渲染方案] | xref:Building_a_Simple_Engine/Mobile_Development/06_conclusion.adoc[下一页：移动端开发：结语]

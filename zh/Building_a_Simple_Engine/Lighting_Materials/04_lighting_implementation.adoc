@@ -1,0 +1,786 @@
+= PBR 光照实现
+
+在本节中，我们会基于前几节探讨的概念实现一个基于物理的渲染（PBR）着色器。这个着色器采用与 glTF 模型兼容的金属度-粗糙度工作流，并用推送常量传递材质属性。我们会先检查着色器的实现，然后讨论如何把它集成到引擎中。
+
+== 实现 PBR 着色器
+
+我们来创建一个 PBR 着色器，命名为 `pbr.slang`。该着色器实现前面讨论过的金属度-粗糙度工作流，因此兼容 glTF 模型。它用推送常量保存材质属性，用统一缓冲区保存变换矩阵和光源信息。
+
+为更好地理解它的架构，我们把着色器拆成三个独立部分：
+
+=== 第 1 部分：着色器设置代码 —— CPU 与 GPU 通信
+
+这一部分建立 CPU 应用程序与 GPU 着色器之间的通信接口。它定义数据结构与绑定，让 CPU 能高效地把信息传给 GPU。
+
+[source,slang]
+----
+// Combined vertex and fragment shader for PBR rendering
+
+// Input from vertex buffer - Data sent per vertex from CPU
+struct VSInput {
+    float3 Position : POSITION;     // 3D position in model space
+    float3 Normal : NORMAL;         // Surface normal for lighting calculations
+    float2 UV : TEXCOORD0;          // Texture coordinates for material sampling
+    float4 Tangent : TANGENT;       // Tangent vector for normal mapping (w component = handedness)
+};
+
+// Output from vertex shader / Input to fragment shader - Interpolated data
+struct VSOutput {
+    float4 Position : SV_POSITION; // Required clip space position for rasterization
+    float3 WorldPos : POSITION;    // World space position for lighting calculations
+    float3 Normal : NORMAL;        // World space normal (interpolated)
+    float2 UV : TEXCOORD0;         // Texture coordinates (interpolated)
+    float4 Tangent : TANGENT;      // World space tangent (interpolated)
+};
+
+// Uniform buffer - Global data shared across all vertices/fragments
+struct UniformBufferObject {
+    float4x4 model;                     // Model-to-world transformation matrix
+    float4x4 view;                      // World-to-camera transformation matrix
+    float4x4 proj;                      // Camera-to-clip space projection matrix
+    float4 lightPositions[4];           // Light positions in world space
+    float4 lightColors[4];              // Light intensities and colors
+    float4 camPos;                      // Camera position for view-dependent effects
+    float exposure;                     // HDR exposure control
+    float gamma;                        // Gamma correction value (typically 2.2)
+    float prefilteredCubeMipLevels;     // IBL prefiltered environment map mip levels
+    float scaleIBLAmbient;              // IBL ambient contribution scale
+};
+
+// Push constants - Fast, small data updated frequently per material/object
+struct PushConstants {
+    float4 baseColorFactor;             // Base color tint/multiplier
+    float metallicFactor;               // Metallic property multiplier
+    float roughnessFactor;              // Surface roughness multiplier
+    int baseColorTextureSet;            // Texture binding index for base color (-1 = none)
+    int physicalDescriptorTextureSet;   // Texture binding for metallic/roughness
+    int normalTextureSet;               // Texture binding for normal maps
+    int occlusionTextureSet;            // Texture binding for ambient occlusion
+    int emissiveTextureSet;             // Texture binding for emissive maps
+    float alphaMask;                    // Alpha masking enable flag
+    float alphaMaskCutoff;              // Alpha cutoff threshold
+};
+
+// Mathematical constants
+static const float PI = 3.14159265359;
+
+// Resource bindings - Connect CPU resources to GPU shader registers
+[[vk::binding(0, 0)]] ConstantBuffer<UniformBufferObject> ubo;
+[[vk::binding(1, 0)]] Texture2D baseColorMap;
+[[vk::binding(1, 0)]] SamplerState baseColorSampler;
+[[vk::binding(2, 0)]] Texture2D metallicRoughnessMap;
+[[vk::binding(2, 0)]] SamplerState metallicRoughnessSampler;
+[[vk::binding(3, 0)]] Texture2D normalMap;
+[[vk::binding(3, 0)]] SamplerState normalSampler;
+[[vk::binding(4, 0)]] Texture2D occlusionMap;
+[[vk::binding(4, 0)]] SamplerState occlusionSampler;
+[[vk::binding(5, 0)]] Texture2D emissiveMap;
+[[vk::binding(5, 0)]] SamplerState emissiveSampler;
+
+[[vk::push_constant]] PushConstants material;
+----
+
+**关键概念解释：**
+
+顶点输入布局定义顶点数据在 GPU 内存中的组织方式，POSITION、NORMAL 这类语义标注告诉 GPU 如何解释每个数据分量。这种结构化做法让图形管线能高效处理顶点属性，并把它们传递到各个渲染阶段。
+
+在数据管理方面，我们使用两种主要机制：统一缓冲区和推送常量。统一缓冲区是较大的只读内存块，能高效存储跨多次绘制调用共享的数据，因此非常适合存放多个对象之间保持不变的变换矩阵和光照信息。推送常量则更小（通常限制在 128 字节以内），但对频繁变化的每对象数据（例如材质属性）要快得多，因此很适合我们的材质系统。
+
+使用 `pass:[[[vk::binding(x, y)]]]` 的资源绑定语法在 CPU 资源与 GPU 着色器寄存器之间建立起关键联系。第一个数字是绑定索引，第二个指定描述符集，借此我们能在着色器内部组织并高效访问纹理、采样器及其它资源。
+
+最后，插值系统在后台无缝工作：`VSOutput` 结构中的数据由 GPU 的光栅化硬件在三角形表面自动插值，从而保证法线、纹理坐标等属性在整个渲染表面上平滑过渡。
+
+=== 第 2 部分：辅助函数 —— PBR 数学
+
+这一部分包含基于物理的渲染的数学基础。这些函数实现 Cook-Torrance 微表面 BRDF 模型，它在微观尺度上近似光与真实材质之间的相互作用。
+
+[source,slang]
+----
+// Normal Distribution Function (D) - GGX/Trowbridge-Reitz Distribution
+// Describes the statistical distribution of microfacet orientations
+float DistributionGGX(float NdotH, float roughness) {
+    float a = roughness * roughness;        // Remapping for more perceptual linearity
+    float a2 = a * a;
+    float NdotH2 = NdotH * NdotH;
+
+    float nom = a2;                         // Numerator: concentration factor
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;             // Normalization factor
+
+    return nom / denom;                     // Normalized distribution
+}
+
+// Geometry Function (G) - Smith's method with Schlick-GGX approximation
+// Models self-shadowing and masking between microfacets
+float GeometrySmith(float NdotV, float NdotL, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;               // Direct lighting remapping
+
+    // Geometry obstruction from view direction (masking)
+    float ggx1 = NdotV / (NdotV * (1.0 - k) + k);
+    // Geometry obstruction from light direction (shadowing)
+    float ggx2 = NdotL / (NdotL * (1.0 - k) + k);
+
+    return ggx1 * ggx2;                     // Combined masking-shadowing
+}
+
+// Fresnel Reflectance (F) - Schlick's approximation
+// Models how reflectance changes with viewing angle
+float3 FresnelSchlick(float cosTheta, float3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+----
+
+**数学概念与参考资料：**
+
+我们的 PBR 实现建立在微表面理论之上：该理论认为真实表面由无数朝向各异的微小面元组成。我们不去逐一建模每个面元，而是用 BRDF 以统计方式表示它们的集体行为，这样无需承担模拟每个表面细节的计算复杂度，也能得到逼真的光照。Walter 等人在 2007 年的开创性论文“Microfacet Models for Refraction through Rough Surfaces”中深入探讨了这一方法，你可以在 link:https://www.graphics.cornell.edu/~bjw/microfacetbsdf.pdf[他们详尽的 BSDF 文档] 中找到。
+
+我们选择 GGX 分布函数（也称 Trowbridge-Reitz），是因为相比 Blinn-Phong 等更早的模型，它能生成带更长尾部的逼真高光形状。这一分布函数已成为现代实时渲染的标准，因为它与实测材质数据高度吻合，能产生我们在真实材质中观察到的自然衰减。Eric Heitz 在 2014 年的工作“Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs”深入剖析了这一分布在实践中为何如此有效。
+
+Smith 几何函数起关键作用：它考虑了遮蔽（masking，观察者看不到某个微表面）与阴影（shadowing，光无法到达某个微表面）之间的统计相关性。这看似是个技术细节，但它能防止掠射角处的能量增益 —— 朴素模型在那里会变得不真实地亮 —— 从而保证材质在所有观察条件下都显得可信。
+
+菲涅耳效应描述的是我们每天都能看到的现象：材质在掠射角下反射更强，就像从侧面看水面会像镜子一样。Schlick 近似以有限的精度损失换取了实时应用所需的性能，同时给出了这一关键行为。F0 参数表示垂直入射（0° 视角）时的反射率，让我们能控制不同材质在正视时看起来有多强的反射。
+
+最后，能量守恒保证反射光与透射光之和永不超过入射光，从而维持物理合理性。这一原则指导我们平衡漫反射与镜面反射分量，使材质在不同光照条件下都显得一致且可信。
+
+**延伸阅读：**
+
+若想深入探索这些概念，《Real-Time Rendering, 4th Edition》第 9 章“基于物理的着色”对理论与实践做了全面介绍。Pharr、Jakob 与 Humphreys 的在线《PBR Book》（https://pbr-book.org/）对基于物理的渲染给出了详尽的数学论述。若想看工程实现，Epic Games 在 link:https://blog.selfshadow.com/publications/s2013-shading-course/[2013 着色课程] 上的“Real Shading in Unreal Engine 4”演讲展示了这些概念如何转化为可用于生产的代码。
+
+=== 第 3 部分：顶点与片元着色器主体
+
+这一部分包含真正执行的着色器入口点，它们分别在每个顶点和每个片元（像素）上运行。顶点着色器负责变换几何体，片元着色器则实现完整的 PBR 光照模型。
+
+[source,slang]
+----
+// Vertex shader entry point - Executes once per vertex
+[[shader("vertex")]]
+VSOutput VSMain(VSInput input)
+{
+    VSOutput output;
+
+    // Transform vertex position through the rendering pipeline
+    // Model -> World -> Camera -> Clip space transformation chain
+    float4 worldPos = mul(ubo.model, float4(input.Position, 1.0));
+    output.Position = mul(ubo.proj, mul(ubo.view, worldPos));
+
+    // Pass world position for fragment lighting calculations
+    // Fragment shader needs world space position to calculate light vectors
+    output.WorldPos = worldPos.xyz;
+
+    // Transform normal from model space to world space
+    // Use only rotation/scale part of model matrix (upper-left 3x3)
+    // Normalize to ensure unit length after transformation
+    output.Normal = normalize(mul((float3x3)ubo.model, input.Normal));
+
+    // Pass through texture coordinates unchanged
+    // UV coordinates are typically in [0,1] range and don't need transformation
+    output.UV = input.UV;
+
+    // Pass tangent vector for normal mapping
+    // Will be used in fragment shader to construct tangent-space basis
+    output.Tangent = input.Tangent;
+
+    return output;
+}
+
+// Fragment shader entry point - Executes once per pixel
+[[shader("fragment")]]
+float4 PSMain(VSOutput input) : SV_TARGET
+{
+    // === MATERIAL PROPERTY SAMPLING ===
+    // Sample base color texture and apply material color factor
+    float4 baseColor = baseColorMap.Sample(baseColorSampler, input.UV) * material.baseColorFactor;
+
+    // Sample metallic-roughness texture (metallic=B channel, roughness=G channel)
+    // glTF standard: metallic stored in blue, roughness in green
+    float2 metallicRoughness = metallicRoughnessMap.Sample(metallicRoughnessSampler, input.UV).bg;
+    float metallic = metallicRoughness.x * material.metallicFactor;
+    float roughness = metallicRoughness.y * material.roughnessFactor;
+
+    // Sample ambient occlusion (typically stored in red channel)
+    float ao = occlusionMap.Sample(occlusionSampler, input.UV).r;
+
+    // Sample emissive texture for self-illuminating materials
+    float3 emissive = emissiveMap.Sample(emissiveSampler, input.UV).rgb;
+
+    // === NORMAL CALCULATION ===
+    // Start with interpolated surface normal
+    float3 N = normalize(input.Normal);
+
+    // Apply normal mapping if texture is available
+    if (material.normalTextureSet >= 0) {
+        // Sample normal map and convert from [0,1] to [-1,1] range
+        float3 tangentNormal = normalMap.Sample(normalSampler, input.UV).xyz * 2.0 - 1.0;
+
+        // Construct tangent-space to world-space transformation matrix (TBN)
+        float3 T = normalize(input.Tangent.xyz);              // Tangent
+        float3 B = normalize(cross(N, T)) * input.Tangent.w;  // Bitangent (w = handedness)
+        float3x3 TBN = float3x3(T, B, N);                     // Tangent-Bitangent-Normal matrix
+
+        // Transform normal from tangent space to world space
+        N = normalize(mul(tangentNormal, TBN));
+    }
+
+    // === LIGHTING SETUP ===
+    // Calculate view direction (fragment to camera)
+    float3 V = normalize(ubo.camPos.xyz - input.WorldPos);
+
+    // Calculate reflection vector for environment mapping
+    float3 R = reflect(-V, N);
+
+    // === PBR MATERIAL SETUP ===
+    // Calculate F0 (reflectance at normal incidence)
+    // Non-metals: low reflectance (~0.04), Metals: colored reflectance from base color
+    float3 F0 = float3(0.04, 0.04, 0.04);  // Dielectric default
+    F0 = lerp(F0, baseColor.rgb, metallic); // Lerp to metallic behavior
+
+    // Initialize outgoing radiance accumulator
+    float3 Lo = float3(0.0, 0.0, 0.0);
+
+    // === DIRECT LIGHTING LOOP ===
+    // Calculate contribution from each light source
+    for (int i = 0; i < 4; i++) {
+        float3 lightPos = ubo.lightPositions[i].xyz;
+        float3 lightColor = ubo.lightColors[i].rgb;
+
+        // Calculate light direction and attenuation
+        float3 L = normalize(lightPos - input.WorldPos);      // Light direction
+        float distance = length(lightPos - input.WorldPos);   // Distance for falloff
+        float attenuation = 1.0 / (distance * distance);     // Inverse square falloff
+        float3 radiance = lightColor * attenuation;           // Attenuated light color
+
+        // Calculate half vector (between view and light directions)
+        float3 H = normalize(V + L);
+
+        // === BRDF EVALUATION ===
+        // Calculate all necessary dot products for BRDF terms
+        float NdotL = max(dot(N, L), 0.0);  // Lambertian falloff
+        float NdotV = max(dot(N, V), 0.0);  // View angle
+        float NdotH = max(dot(N, H), 0.0);  // Half vector for specular
+        float HdotV = max(dot(H, V), 0.0);  // For Fresnel calculation
+
+        // Evaluate Cook-Torrance BRDF components
+        float D = DistributionGGX(NdotH, roughness);    // Normal distribution
+        float G = GeometrySmith(NdotV, NdotL, roughness); // Geometry function
+        float3 F = FresnelSchlick(HdotV, F0);           // Fresnel reflectance
+
+        // Calculate specular BRDF
+        float3 numerator = D * G * F;
+        float denominator = 4.0 * NdotV * NdotL + 0.0001; // Prevent division by zero
+        float3 specular = numerator / denominator;
+
+        // === ENERGY CONSERVATION ===
+        // Fresnel term represents specular reflection ratio
+        float3 kS = F;                          // Specular contribution
+        float3 kD = float3(1.0, 1.0, 1.0) - kS; // Diffuse contribution (energy conservation)
+        kD *= 1.0 - metallic;                   // Metals have no diffuse reflection
+
+        // === RADIANCE ACCUMULATION ===
+        // Combine diffuse (Lambertian) and specular (Cook-Torrance) terms
+        // Multiply by incident radiance and cosine foreshortening
+        Lo += (kD * baseColor.rgb / PI + specular) * radiance * NdotL;
+    }
+
+    // === AMBIENT AND EMISSIVE ===
+    // Add simple ambient lighting (should be replaced with IBL in production)
+    float3 ambient = float3(0.03, 0.03, 0.03) * baseColor.rgb * ao;
+
+    // Combine all lighting contributions
+    float3 color = ambient + Lo + emissive;
+
+    // === HDR TONE MAPPING AND GAMMA CORRECTION ===
+    // Apply Reinhard tone mapping to compress HDR values to [0,1] range
+    color = color / (color + float3(1.0, 1.0, 1.0));
+
+    // Apply gamma correction for sRGB display (inverse gamma)
+    color = pow(color, float3(1.0 / ubo.gamma, 1.0 / ubo.gamma, 1.0 / ubo.gamma));
+
+    // Output final color with original alpha
+    return float4(color, baseColor.a);
+}
+----
+
+**顶点着色器的目标：**
+
+顶点着色器是渲染管线的第一个阶段，主要职责是几何变换。它通过标准的 MVP（模型-视图-投影）矩阵链依次把顶点坐标从模型空间变换到世界空间、再到相机空间，最后到裁剪空间，为光栅化做准备。这条变换链确保我们的 3D 几何体在观察者眼中位置与投影都正确。
+
+除基本变换外，顶点着色器还承担关键的属性处理：把法线从模型空间变换到世界空间，并原样传递片元着色器所需的纹理坐标和切线向量。这样处理后，片元着色器中的光照计算能拿到正确变换过的表面信息，而纹理坐标和切线向量则保持彼此的关系，以便准确地进行材质采样和法线贴图。
+
+顶点着色器还要做必要的数据准备：设置片元着色器做光照计算所需的插值量。这些插值量（例如世界空间位置和变换后的法线）由 GPU 的光栅化硬件在三角形表面自动插值，提供平滑过渡，使后续片元阶段能实现逼真的逐像素光照。
+
+**片元着色器的目标：**
+
+片元着色器是 PBR 实现的核心。它首先做全面的材质采样，从纹理贴图中取出颜色、粗糙度和金属度等表面属性。采样过程按 glTF 标准读取多个纹理通道，并把纹理数据与通过推送常量传入的材质参数结合起来，确定每个像素最终的表面特征。
+
+法线贴图重建是另一项关键任务：片元着色器从法线贴图中取出编码的法线信息，重建细节丰富的表面法线，从而在不增加几何量的情况下模拟细微的几何起伏。这个过程包括采样法线贴图、用切线-副切线-法线（TBN）矩阵把值从纹理空间变换到世界空间，再把得到的细节法线用于光照计算。
+
+核心的 PBR 光照实现把这些要素汇集到一起，使用带能量守恒的 Cook-Torrance 微表面模型。其中包括计算 BRDF 的分布项、几何项和菲涅耳项，仔细平衡漫反射与镜面反射的贡献，确保在所有观察角度和各类材质下都得到物理上可信的结果。
+
+最后，后处理操作通过色调映射和 gamma 校正把 HDR 线性光照结果转换为适合显示的 sRGB 值。这一阶段把逼真光照计算产生的高动态范围值压缩到显示器能呈现的有限范围内，同时保持视觉保真度，并避免高亮区域出现生硬的截断。
+
+**关键实现细节：**
+
+我们的实现严格遵循既有约定与最佳实践，以保证兼容性和视觉质量。我们沿用 glTF 的纹理通道约定：金属度信息使用蓝色通道，粗糙度使用绿色通道，从而能与标准 3D 创作工具和资产管线无缝集成。这一约定确保在外部工具中创建的材质无需重映射纹理通道或编写自定义导入流程就能正确渲染。
+
+能量守恒在整个实现中始终是第一位的：我们通过 kS/kD 的关系确保漫反射与镜面反射贡献之和永不超过 1。这一物理约束防止材质表现出发出比接收更多的光，在不同光照条件和观察角度下维持可信的外观，同时避免非基于物理的做法常有的那种虚假亮度。
+
+数值稳定性方面的考量贯穿整个实现：在 BRDF 计算中加入小的 epsilon 值以避免除零，并小心处理数学运算可能产生未定义结果的边界情况。这些看似微不足道的细节，对于在极端材质参数和异常观察角度下不产生瑕疵或渲染失败的健壮渲染至关重要。
+
+HDR 管线架构确保所有光照计算都在线性空间中进行，在计算各阶段完整保留逼真光照的动态范围，只在最终输出阶段应用 gamma 校正。这种做法在光照计算中保持了最高的精度和准确性，同时确保最终图像在标准 sRGB 显示器上看起来是正确的。
+
+这个着色器用金属度-粗糙度工作流实现了 PBR 光照模型，但这里的目标不只是说明代码在“做什么”，而是解释每一部分为什么存在。
+
+== 理解着色器背后的“为什么”
+
+=== 为什么是这些 BRDF 项（D、G、F）
+
+法线分布函数（D）是微表面模型的统计核心，它决定有多少微表面朝向能把光直接反射给观察者。这个函数解释了为什么粗糙表面产生更宽、更暗的高光，而光滑表面产生紧凑明亮的高光。我们选择 GGX 分布，是因为它与实测材质数据吻合得非常好，能产生我们在真实材质中观察到的自然长尾高光，避免 Blinn-Phong 等旧分布函数那种生硬的截断。
+
+几何函数（G）处理一个关键物理现实：微表面之间会互相投下阴影，而且根据表面粗糙度和观察角度，有些微表面会被遮挡而看不到。若缺少正确的几何项，随着粗糙度增加，高光会变得不真实地亮，因为我们会忽略粗糙表面上自然发生的自阴影和遮蔽。Smith 的做法用由粗糙度导出的 k 参数，提供了既高效又物理可信的方案，在所有观察条件下都保持能量守恒。
+
+菲涅耳反射（F）描述我们每天都遇到的最基本光学现象之一：表面在掠射角下反射更强，正如你横看水面时能清楚看到自己的倒影，而垂直向下看时几乎看不到。Schlick 近似以极小的计算代价给出这一关键的随角度变化的行为，而 F0 参数则让我们能控制材质在正视时看起来有多强的反射，从而区分不同材质类型。
+
+能量守恒把这些分量串起来：它保证反射光的总和永不超过入射光，维持物理合理性。当更多光被镜面反射（kS）时，能漫反射的光就相应减少（kD = 1 - kS），这种天然平衡让材质在不同光照条件和观察角度下都显得可信，同时避免可能让渲染场景显得不真实的虚假亮度。
+
+=== 为什么用金属度-粗糙度工作流
+
+金属度-粗糙度工作流之所以成为行业标准，主要是因为 glTF 规范采纳了它：该规范按约定把金属度信息放在蓝色通道、粗糙度放在绿色通道。这种标准化形成了无缝的生态：在任何兼容 glTF 的工具中创建的资产，都能在不同引擎和应用中一致地渲染，消除了早期工作流中纹理通道的混乱，实现了真正的资产互操作。
+
+从美术角度看，这个工作流非常直观，因为它只给美术两个概念上的旋钮：金属度（区分非金属与金属）和粗糙度（控制表面从完全光滑到完全粗糙），再加上基础颜色。这种简化让美术能专注于视觉意图，而不至于迷失在复杂的参数交互中，同时仍能覆盖真实世界中的全部材质外观。
+
+该工作流还通过编码金属与非金属材质的根本差异，正确处理了 F0 的行为。非金属的 F0 通常较低，约在 0.02 到 0.08 之间（我们用 0.04 作为合理默认值），而金属的有色镜面反射率直接来自基础颜色。我们的 lerp(F0, baseColor, metallic) 运算优雅地编码了这一物理区别：随着金属度参数增加，表面会从电介质的无色反射率平滑过渡到导体的有色反射率。
+
+=== 为什么需要法线、环境光遮蔽与自发光贴图
+法线贴图是现代实时渲染中最强大的技术之一，它让我们能添加高频表面细节而不增加几何复杂度。把表面扰动以 RGB 值存进纹理，就能模拟划痕、铆钉或织物纹理这类用真实几何建模代价极高的细节。奇妙之处发生在切线空间：我们用切线-副切线-法线（TBN）矩阵重建扰动后的法线向量 N，确保光照计算对这些小尺度表面特征的反应就如同它们是真实的几何细节。
+- 环境光遮蔽（AO）：削弱全局模型未能捕捉的缝隙处的间接光。我们把环境光/IBL 项乘以 AO，避免着色过于平淡。
+- 自发光：让材质不受光照影响地发光（例如 LED、屏幕），并以相加方式贡献，因此在黑暗中也能看见。
+
+=== 为什么需要 HDR、曝光与色调映射
+- 真实的光强会产生远超 [0,1] 的值（例如被阳光照亮的表面、明亮的发光体）。如果直接把这些值写入 8 位显示器，它们会在 1.0 处截断，压碎细节，并产生难看的阶梯状高光。
+- 在 HDR（线性浮点）中工作能在整个光照管线中保留细节。只有到最后，我们才用色调映射压缩动态范围以适配显示器。
+- 本章使用简单的 Reinhard：color / (color + 1)。它稳健、无瑕疵，适合作为基线。以后你也可以改用：
+  * ACES（RRT/ODT）：电影感色调映射，在极端值范围内也能很好地保持色彩；应用广泛。
+  * Hable/Uncharted2（“Filmic”）：高光过渡漂亮，可通过曲线参数调节。
+  * 带曝光的 Reinhard：在压缩前先把颜色乘以曝光，以移动中灰位置。
+- 曝光参数（ubo.exposure）：从概念上说，它移动场景亮度，使中间调在你选定的色调映射器下处于合适位置。即使代码片段中用的是固定算子，你也可以先用曝光预缩放颜色，以支持动态自动曝光。
+- Gamma 校正（ubo.gamma）：显示器是非线性的（约 2.2）。光照必须在线性空间中进行，然后在写入 sRGB 帧缓冲区之前应用 pow(color, 1/gamma)。跳过这一步会导致图像发白或过暗。
+- 管线注意事项：呈现时颜色附件优先使用 sRGB 格式。如果要写入 sRGB 交换链图像，就在着色器里做 gamma，或者使用 sRGB 格式让硬件处理 —— 二者只取其一，且必须恰好做一个。
+
+=== 实用调参清单
+- 如果各处高光看起来“像塑料”，可能是粗糙度过低，或 kD 没有被金属度削弱；检查 kD *= (1 - metallic)。
+- 如果一切都被截断成白色，添加或调整曝光，并改用 ACES 或 Filmic 色调映射。
+- 如果高光处颜色发生偏移，检查色调映射是否在线性空间进行，以及 gamma 是否只应用了一次。
+- 如果法线贴图看起来反了或出现接缝，检查切线的正负手性（TBN）、法线贴图的通道顺序以及法线贴图所在空间。
+- 如果环境光看起来平，确认 AO 只应用于环境光/IBL，而未用于直接镜面反射。
+
+== 扩展渲染器
+
+现在我们有了 PBR 着色器，需要扩展渲染器来支持它。我们需要：
+
+1. 为 PBR 着色器新增一条管线
+2. 添加对推送常量的支持
+3. 更新统一缓冲区，加入光源信息
+
+我们先添加一个创建 PBR 管线的函数。这一过程包含多个独立步骤，每一步在配置用于基于物理渲染的 Vulkan 图形管线时都有特定用途。
+
+=== 创建着色器模块并设置阶段
+
+首先，加载编译好的着色器，并设置图形管线的可编程阶段。Vulkan 要求我们明确指定使用哪些着色器阶段以及它们的入口点。
+
+[source,cpp]
+----
+bool Renderer::createPBRPipeline() {
+    try {
+        // Load our compiled PBR shader from disk
+        // The .spv file contains both vertex and fragment shader code compiled by slangc
+        auto shaderCode = readFile("shaders/pbr.spv");
+
+        // Create a shader module - this is Vulkan's container for shader bytecode
+        // The shader module acts as a wrapper around the SPIR-V bytecode that GPU drivers understand
+        vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
+
+        // Configure the vertex shader stage
+        // This tells Vulkan which shader stage this module serves and its entry point function
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo;
+        vertShaderStageInfo.setStage(vk::ShaderStageFlagBits::eVertex)
+                          .setModule(*shaderModule)
+                          .setPName("VSMain");  // Must match the vertex shader function name
+
+        // Configure the fragment shader stage
+        // Same module, different entry point - this is how combined shaders work
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo;
+        fragShaderStageInfo.setStage(vk::ShaderStageFlagBits::eFragment)
+                          .setModule(*shaderModule)
+                          .setPName("PSMain");  // Must match the fragment shader function name
+
+        std::array<vk::PipelineShaderStageCreateInfo, 2> shaderStages = {vertShaderStageInfo, fragShaderStageInfo};
+----
+
+入口点名称（“VSMain”和“PSMain”）必须与着色器代码中的函数名完全一致。这种显式绑定体系让我们能细粒度地控制哪个函数服务哪个管线阶段，在处理包含多个顶点或片元着色器变体的着色器库时尤其有用。
+
+=== 顶点输入配置
+
+顶点输入状态定义顶点数据如何从顶点缓冲区流入顶点着色器。这个配置必须与 PBR 着色器所期望的顶点格式精确匹配。
+
+[source,cpp]
+----
+        // Configure how vertex data is structured and fed to the vertex shader
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+
+        // Define the vertex buffer binding - describes the overall vertex structure
+        // This tells Vulkan the total size of each vertex and how vertices are arranged
+        vk::VertexInputBindingDescription bindingDescription;
+        bindingDescription.setBinding(0)                        // Binding point 0
+                         .setStride(sizeof(float) * 14)         // Total vertex size: pos(3) + normal(3) + uv(2) + tangent(4) + bitangent(2)
+                         .setInputRate(vk::VertexInputRate::eVertex); // Data advances per vertex (not per instance)
+
+        // Define individual vertex attributes - each corresponds to an input in our vertex shader
+        std::array<vk::VertexInputAttributeDescription, 5> attributeDescriptions;
+
+        // Position attribute: 3D coordinates in model space
+        attributeDescriptions[0].setBinding(0)                  // From binding 0
+                               .setLocation(0)                  // Shader input location 0
+                               .setFormat(vk::Format::eR32G32B32Sfloat)  // Three 32-bit floats (RGB)
+                               .setOffset(0);                   // Start of vertex data
+
+        // Normal attribute: surface normal for lighting calculations
+        attributeDescriptions[1].setBinding(0)
+                               .setLocation(1)                  // Shader input location 1
+                               .setFormat(vk::Format::eR32G32B32Sfloat)
+                               .setOffset(sizeof(float) * 3);   // After position
+
+        // Texture coordinate attribute: UV mapping coordinates
+        attributeDescriptions[2].setBinding(0)
+                               .setLocation(2)                  // Shader input location 2
+                               .setFormat(vk::Format::eR32G32Sfloat)     // Two 32-bit floats (RG)
+                               .setOffset(sizeof(float) * 6);   // After position + normal
+
+        // Tangent attribute: tangent vector for normal mapping (includes handedness in W)
+        attributeDescriptions[3].setBinding(0)
+                               .setLocation(3)                  // Shader input location 3
+                               .setFormat(vk::Format::eR32G32B32A32Sfloat)   // Four 32-bit floats (RGBA)
+                               .setOffset(sizeof(float) * 8);   // After position + normal + UV
+
+        // Bitangent attribute: completes the tangent space basis
+        attributeDescriptions[4].setBinding(0)
+                               .setLocation(4)                  // Shader input location 4
+                               .setFormat(vk::Format::eR32G32Sfloat)
+                               .setOffset(sizeof(float) * 12);  // After all previous attributes
+
+        // Connect the binding and attribute descriptions to the vertex input state
+        vertexInputInfo.setVertexBindingDescriptionCount(1)
+                      .setPVertexBindingDescriptions(&bindingDescription)
+                      .setVertexAttributeDescriptionCount(static_cast<uint32_t>(attributeDescriptions.size()))
+                      .setPVertexAttributeDescriptions(attributeDescriptions.data());
+----
+
+顶点输入配置相当于顶点缓冲区数据与顶点着色器输入之间的契约。每个属性描述把顶点数据中的特定部分映射到着色器输入位置，并精确指定格式与偏移。这种显式映射体系确保无论顶点数据在内存中如何打包，GPU 都能正确解释它。
+
+步长（14 个 float）的计算反映了我们支持完整 PBR 渲染的顶点格式：位置用于几何，法线用于基本光照，UV 坐标用于纹理采样，切线向量用于法线贴图。切线向量包含第四个分量（W），用来存储手性信息；当切线空间可能被翻转时，这个信息对正确重建副切线向量至关重要。
+
+偏移计算确保每个属性都从每个顶点中的正确字节位置开始。这种精确对齐是出于性能考虑：在某些 GPU 架构上，未对齐的顶点数据会造成明显的性能损失。
+
+=== 输入装配与图元处理
+
+输入装配阶段决定顶点如何被组合成几何图元，以及 GPU 应如何解释顶点流。
+
+[source,cpp]
+----
+        // Configure input assembly - how vertices become triangles
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
+        inputAssembly.setTopology(vk::PrimitiveTopology::eTriangleList)  // Every 3 vertices form a triangle
+                    .setPrimitiveRestartEnable(false);                    // Don't use primitive restart indices
+----
+
+三角形列表是复杂 3D 模型最直接、最常用的图元拓扑。在这种模式下，每三个连续顶点构成一个完整三角形，为表示任意几何体提供了最大灵活性。虽然三角形带或扇形等其它拓扑在某些几何模式下更省内存，但三角形列表避免了退化三角形以及更紧凑表示可能带来的顶点顺序约束所带来的复杂性。
+
+图元重启功能允许用特殊索引值标记一个图元的结束和另一个图元的开始，但它增加了复杂度，对大多数 PBR 渲染场景并不必要。禁用它可确保行为可预测，并避免索引缓冲区扫描可能带来的性能损失。
+
+=== 视口与动态状态配置
+
+视口状态管理从规范化设备坐标到屏幕坐标的变换，而动态状态配置允许在不重建整条管线的情况下改变某些管线参数。
+
+[source,cpp]
+----
+        // Configure viewport and scissor state
+        // We'll set actual viewport and scissor rectangles dynamically at render time
+        vk::PipelineViewportStateCreateInfo viewportState;
+        viewportState.setViewportCount(1)       // Single viewport (most common case)
+                    .setScissorCount(1);        // Single scissor rectangle
+
+        // Define which pipeline state can be changed dynamically
+        // This improves performance by avoiding pipeline recreation for common changes
+        std::vector<vk::DynamicState> dynamicStates = {
+            vk::DynamicState::eViewport,        // Viewport can change (window resize, camera changes)
+            vk::DynamicState::eScissor          // Scissor rectangle can change (UI clipping, effects)
+        };
+
+        vk::PipelineDynamicStateCreateInfo dynamicState;
+        dynamicState.setDynamicStateCount(static_cast<uint32_t>(dynamicStates.size()))
+                   .setPDynamicStates(dynamicStates.data());
+----
+
+动态状态配置是现代 Vulkan 应用的一项关键优化。把视口和剪刀矩形标记为动态后，窗口缩放或相机调整这类常见操作就不再需要付出昂贵的管线重建代价。GPU 驱动在命令录制时就能高效更新这些参数，而不必创建全新的管线状态对象。
+
+单视口方案覆盖了绝大多数渲染场景。多视口渲染主要用于 VR 立体渲染或某些阴影贴图技术等专门场景，而对于标准 PBR 应用，单视口渲染能提供最佳性能。
+
+=== 光栅化配置
+
+光栅化阶段把几何图元转换为片元（潜在像素），并应用各种几何处理选项，这些选项影响三角形如何转换为像素。
+
+[source,cpp]
+----
+        // Configure rasterization - how triangles become pixels
+        vk::PipelineRasterizationStateCreateInfo rasterizer;
+        rasterizer.setDepthClampEnable(false)                           // Don't clamp depth values (standard behavior)
+                 .setRasterizerDiscardEnable(false)                     // Don't discard primitives before rasterization
+                 .setPolygonMode(vk::PolygonMode::eFill)                // Fill triangles (not wireframe or points)
+                 .setLineWidth(1.0f)                                    // Line width (only relevant for wireframe)
+                 .setCullMode(vk::CullModeFlagBits::eBack)              // Cull back-facing triangles
+                 .setFrontFace(vk::FrontFace::eCounterClockwise)        // Counter-clockwise vertices = front-facing
+                 .setDepthBiasEnable(false);                            // No depth bias (used for shadow mapping)
+----
+
+光栅化配置直接影响渲染性能和视觉质量。背面剔除通过丢弃背向相机的三角形带来显著的性能提升，对典型的封闭网格来说，实际上把片元处理工作量减半。逆时针绕序遵循大多数 3D 建模工具和资产管线使用的标准约定。
+
+填充模式生成适合 PBR 渲染的实心三角形，不过线框模式在调试几何或制作特殊视觉效果时很有用。线宽设置只影响线框渲染，但某些图形驱动即使在使用填充模式时也要求指定它。
+
+深度偏移（也称多边形偏移）常用于阴影贴图，以防止自阴影瑕疵，但对标准前向渲染并不需要，使用不当还可能引入自己的瑕疵。
+
+=== 多重采样与抗锯齿
+
+多重采样配置决定 GPU 如何处理抗锯齿，以减少几何边缘的视觉瑕疵。
+
+[source,cpp]
+----
+        // Configure multisampling - anti-aliasing settings
+        vk::PipelineMultisampleStateCreateInfo multisampling;
+        multisampling.setSampleShadingEnable(false)                     // Disable per-sample shading
+                    .setRasterizationSamples(vk::SampleCountFlagBits::e1); // No multisampling (1 sample per pixel)
+----
+
+为简单和性能起见，这个配置禁用了多重采样抗锯齿（MSAA）。MSAA 能通过减少几何边缘的锯齿瑕疵显著提升视觉质量，但也会大幅增加内存带宽需求和片元处理开销。对于学习用途和初始实现，单采样渲染在性能与复杂度之间是不错的平衡。
+
+在生产应用中，你可以根据性能要求和目标硬件能力，把采样数提高到 4x 或 8x 来启用 MSAA。逐采样着色一旦启用，片元着色器会按采样而非按像素运行，提供最高质量的抗锯齿，代价是片元处理时间按比例增加。
+
+=== 阶段 7：深度测试与 Z 缓冲区配置
+
+深度与模板状态配置控制片元如何与深度缓冲区交互，以实现正确的深度排序和遮挡。
+
+[source,cpp]
+----
+        // Configure depth and stencil testing
+        vk::PipelineDepthStencilStateCreateInfo depthStencil;
+        depthStencil.setDepthTestEnable(true)                           // Enable depth testing for proper occlusion
+                   .setDepthWriteEnable(true)                           // Write depth values to depth buffer
+                   .setDepthCompareOp(vk::CompareOp::eLess)             // Fragment passes if its depth is less (closer)
+                   .setDepthBoundsTestEnable(false)                     // Don't use depth bounds testing
+                   .setStencilTestEnable(false);                        // Don't use stencil testing
+----
+
+深度测试是正确 3D 渲染的基础，它确保较近的物体遮挡较远的物体。“小于”比较函数配合标准的深度缓冲区约定使用，即较小的深度值表示较近的片元。这个配置为每个渲染的片元写入深度值，逐步构建深度缓冲区，供后续绘制调用做遮挡测试。
+
+深度边界测试和模板测试是用于特定渲染技术（如光源体积优化或复杂合成操作）的高级特性。对于标准 PBR 渲染，它们只会增加不必要的复杂度而没有好处，因此我们禁用它们以保持最佳性能。
+
+=== 阶段 8：颜色混合与透明
+
+颜色混合状态决定新片元如何与帧缓冲区中已有的颜色值组合，从而实现透明和各种合成效果。
+
+[source,cpp]
+----
+        // Configure color blending - how new pixels combine with existing ones
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+        colorBlendAttachment.setColorWriteMask(
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |     // Write all color channels
+            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+                           .setBlendEnable(true)                                    // Enable alpha blending
+                           .setSrcColorBlendFactor(vk::BlendFactor::eSrcAlpha)      // New fragment's alpha
+                           .setDstColorBlendFactor(vk::BlendFactor::eOneMinusSrcAlpha)  // One minus new fragment's alpha
+                           .setColorBlendOp(vk::BlendOp::eAdd)                      // Add source and destination
+                           .setSrcAlphaBlendFactor(vk::BlendFactor::eOne)           // Preserve new alpha
+                           .setDstAlphaBlendFactor(vk::BlendFactor::eZero)          // Ignore old alpha
+                           .setAlphaBlendOp(vk::BlendOp::eAdd);                     // Add alpha values
+
+        vk::PipelineColorBlendStateCreateInfo colorBlending;
+        colorBlending.setLogicOpEnable(false)                                     // Don't use logical operations
+                    .setAttachmentCount(1)                                        // Single color attachment
+                    .setPAttachments(&colorBlendAttachment);
+----
+
+这个混合配置使用经典的“over”合成操作实现标准 alpha 透明。公式 `(srcAlpha * newColor) + ((1 - srcAlpha) * oldColor)` 产生自然的透明效果：完全不透明的片元（alpha = 1）完全替换背景，部分透明的片元则按比例混合。
+
+单独的 alpha 混合配置为可能的多趟渲染或后处理效果正确保留 alpha 通道。把源 alpha 因子设为一、目标 alpha 因子设为零，可确保最终 alpha 值完全来自新片元，这通常正是透明效果想要的行为。
+
+=== 阶段 9：管线布局与资源绑定
+
+管线布局定义纹理、统一缓冲区和推送常量等资源如何被组织，以及着色器如何访问它们。
+
+[source,cpp]
+----
+        // Configure push constants for fast material property updates
+        vk::PushConstantRange pushConstantRange;
+        pushConstantRange.setStageFlags(vk::ShaderStageFlagBits::eFragment)      // Only fragment shader uses these
+                        .setOffset(0)                                             // Start at beginning
+                        .setSize(sizeof(PushConstantBlock));                      // Size of our material data
+
+        // Create the pipeline layout - defines resource organization
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        pipelineLayoutInfo.setSetLayoutCount(1)                                  // Single descriptor set
+                         .setPSetLayouts(&*descriptorSetLayout)                  // Our texture/uniform bindings
+                         .setPushConstantRangeCount(1)                           // One push constant block
+                         .setPPushConstantRanges(&pushConstantRange);
+
+        // Create the pipeline layout object
+        pbrPipelineLayout = device.createPipelineLayout(pipelineLayoutInfo);
+----
+
+管线布局相当于应用程序与着色器之间关于资源组织的契约。推送常量在绘制调用之间更新少量数据（例如材质属性）时是最快的途径，因为它们绕过内存层次结构，可直接被着色器核心访问。多数实现中推送常量有 128 字节上限，这使它们非常适合每材质的少量数据，但不适合较大的数据集。
+
+描述符集布局的引用把管线与我们先前建立的纹理和统一缓冲区绑定连接起来。这种关注点分离让同一个描述符集布局可用于多条管线，同时保持资源组织清晰。
+
+=== 阶段 10：最终管线创建与动态渲染设置
+
+最后一个阶段把所有配置状态装配成完整的图形管线，并为现代 Vulkan 应用设置动态渲染兼容性。
+
+[source,cpp]
+----
+        // Assemble the complete graphics pipeline
+        vk::GraphicsPipelineCreateInfo pipelineInfo;
+        pipelineInfo.setStageCount(static_cast<uint32_t>(shaderStages.size()))   // Number of shader stages
+                   .setPStages(shaderStages.data())                               // Shader stage configurations
+                   .setPVertexInputState(&vertexInputInfo)                        // Vertex format
+                   .setPInputAssemblyState(&inputAssembly)                        // Primitive topology
+                   .setPViewportState(&viewportState)                             // Viewport configuration
+                   .setPRasterizationState(&rasterizer)                           // Rasterization settings
+                   .setPMultisampleState(&multisampling)                          // Anti-aliasing settings
+                   .setPDepthStencilState(&depthStencil)                          // Depth/stencil testing
+                   .setPColorBlendState(&colorBlending)                           // Blending configuration
+                   .setPDynamicState(&dynamicState)                               // Dynamic state settings
+                   .setLayout(*pbrPipelineLayout)                                 // Resource layout
+                   .setRenderPass(nullptr)                                        // Using dynamic rendering
+                   .setSubpass(0)                                                 // Subpass index
+                   .setBasePipelineHandle(nullptr);                               // No base pipeline
+
+        // Configure for dynamic rendering (modern Vulkan approach)
+        vk::PipelineRenderingCreateInfo renderingInfo;
+        renderingInfo.setColorAttachmentCount(1)                                 // Single color target
+                    .setPColorAttachmentFormats(&swapChainImageFormat)           // Match swapchain format
+                    .setDepthAttachmentFormat(findDepthFormat());                // Depth buffer format
+        pipelineInfo.setPNext(&renderingInfo);
+
+        // Create the final graphics pipeline
+        pbrPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating PBR pipeline: " << e.what() << std::endl;
+        return false;
+    }
+}
+----
+
+管线创建是我们全部配置工作的顶点：Vulkan 会校验整份管线规格，并将其编译为适合 GPU 执行的优化形式。动态渲染配置以更灵活的方式替代传统的渲染通道系统，允许在录制命令时而不是创建管线时指定渲染目标。
+
+对于需要用同一条管线渲染到不同目标（例如阴影贴图、反射纹理或后处理缓冲区）的应用，这种灵活性尤其宝贵。格式指定确保管线生成的输出与我们的目标渲染表面兼容。
+
+异常处理在开发期间提供了必要的反馈，因为管线创建失败可能源于难以调试的细微配置不匹配或资源兼容性问题。
+
+这个函数为 PBR 着色器创建了一条新管线，并包含对推送常量的支持。我们还需要更新统一缓冲区以加入光源信息：
+
+[source,cpp]
+----
+// Update uniform buffer
+void Renderer::updateUniformBuffer(uint32_t currentFrame, Entity* entity, CameraComponent* camera) {
+    // Get the transform component from the entity
+    auto transform = entity->GetComponent<TransformComponent>();
+    if (!transform) {
+        std::cerr << "Entity does not have a transform component" << std::endl;
+        return;
+    }
+
+    // Create the uniform buffer object
+    UniformBufferObject ubo{};
+
+    // Set the model matrix from the entity's transform
+    ubo.model = transform->GetModelMatrix();
+
+    // Set the view and projection matrices from the camera
+    if (camera) {
+        ubo.view = camera->GetViewMatrix();
+        ubo.proj = camera->GetProjectionMatrix();
+    } else {
+        // Default view and projection matrices if no camera is provided
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.0f);
+        ubo.proj[1][1] *= -1; // Flip Y coordinate for Vulkan
+    }
+
+    // Set up lights
+    // Light 1: White light from above
+    ubo.lightPositions[0] = glm::vec4(0.0f, 5.0f, 5.0f, 1.0f);
+    ubo.lightColors[0] = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+
+    // Light 2: Blue light from the left
+    ubo.lightPositions[1] = glm::vec4(-5.0f, 0.0f, 0.0f, 1.0f);
+    ubo.lightColors[1] = glm::vec4(0.0f, 0.0f, 300.0f, 1.0f);
+
+    // Light 3: Red light from the right
+    ubo.lightPositions[2] = glm::vec4(5.0f, 0.0f, 0.0f, 1.0f);
+    ubo.lightColors[2] = glm::vec4(300.0f, 0.0f, 0.0f, 1.0f);
+
+    // Light 4: Green light from behind
+    ubo.lightPositions[3] = glm::vec4(0.0f, -5.0f, 0.0f, 1.0f);
+    ubo.lightColors[3] = glm::vec4(0.0f, 300.0f, 0.0f, 1.0f);
+
+    // Set camera position for view-dependent effects
+    ubo.camPos = glm::vec4(camera ? camera->GetPosition() : glm::vec3(2.0f, 2.0f, 2.0f), 1.0f);
+
+    // Set PBR parameters
+    ubo.exposure = 4.5f;
+    ubo.gamma = 2.2f;
+    ubo.prefilteredCubeMipLevels = 1.0f;
+    ubo.scaleIBLAmbient = 1.0f;
+
+    // Copy the uniform buffer object to the device memory using vk::raii
+    // With vk::raii, we can use the mapped memory directly
+    memcpy(uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+}
+----
+
+最后，我们需要添加把材质属性推送到着色器的支持：
+
+[source,cpp]
+----
+// Push material properties to shader
+void Renderer::pushMaterialProperties(vk::CommandBuffer commandBuffer, const Model* model, uint32_t materialIndex) {
+    // Get material from the model
+    const Material& material = model->materials[materialIndex];
+
+    // Define push constants
+    PushConstantBlock pushConstants{};
+    pushConstants.baseColorFactor = material.baseColorFactor;
+    pushConstants.metallicFactor = material.metallicFactor;
+    pushConstants.roughnessFactor = material.roughnessFactor;
+    pushConstants.baseColorTextureSet = material.baseColorTextureIndex;
+    pushConstants.physicalDescriptorTextureSet = material.metallicRoughnessTextureIndex;
+    pushConstants.normalTextureSet = material.normalTextureIndex;
+    pushConstants.occlusionTextureSet = material.occlusionTextureIndex;
+    pushConstants.emissiveTextureSet = material.emissiveTextureIndex;
+    pushConstants.alphaMask = material.alphaMode == AlphaMode::MASK ? 1.0f : 0.0f;
+    pushConstants.alphaMaskCutoff = material.alphaCutoff;
+
+    // Push constants to shader using vk::raii
+    commandBuffer.pushConstants(
+        *pbrPipelineLayout,
+        vk::ShaderStageFlagBits::eFragment,
+        0,
+        sizeof(PushConstantBlock),
+        &pushConstants
+    );
+}
+----
+
+下一节我们把光照实现与 Vulkan 渲染管线的其余部分集成起来。
+
+xref:Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc[上一篇：推送常量] | xref:Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc[下一篇：与 Vulkan 集成]

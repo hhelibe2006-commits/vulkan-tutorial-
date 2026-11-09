@@ -1,0 +1,23 @@
+:pp: {plus}{plus}
+
+= 加载模型：集成支持动画与 PBR 的 glTF 加载器
+
+== 章节概览
+
+欢迎来到「构建简易引擎」系列的第三章！在前几章探索了引擎架构与相机系统之后，现在我们将专注于创建一个健壮的模型加载系统，它能够处理基于 glTF 格式的现代 3D 资产。我们将实现场景图、动画系统与 PBR 渲染，以完善我们的引擎基础。
+
+本章分为若干小节，以便更容易跟随：
+
+1. xref:Building_a_Simple_Engine/Loading_Models/01_introduction.adoc[加载模型：简介] —— 我们将要构建的内容与前置条件概览
+2. xref:Building_a_Simple_Engine/Loading_Models/02_project_setup.adoc[加载模型：资产管线概念] —— 如何组织我们的引擎项目
+3. xref:Building_a_Simple_Engine/Loading_Models/03_model_system.adoc[加载模型：实现模型加载系统] —— 创建核心数据结构
+4. xref:Building_a_Simple_Engine/Loading_Models/04_loading_gltf.adoc[加载模型：理解 glTF] —— 解析与处理 glTF 文件
+5. xref:Building_a_Simple_Engine/Loading_Models/05_pbr_rendering.adoc[加载模型：为 glTF 模型实现 PBR] —— 搭建基于物理的渲染
+6. xref:Building_a_Simple_Engine/Loading_Models/06_multiple_objects.adoc[加载模型：管理多个对象] —— 管理多个模型实例
+7. xref:Building_a_Simple_Engine/Loading_Models/07_scene_rendering.adoc[加载模型：渲染场景] —— 绘制场景图
+8. xref:Building_a_Simple_Engine/Loading_Models/08_animations.adoc[加载模型：更新动画] —— 为模型添加动画
+9. xref:Building_a_Simple_Engine/Loading_Models/09_conclusion.adoc[加载模型：结语] —— 总结与未来方向
+
+每一节都建立在前一节之上，因此建议按顺序阅读。本章同样建立在「引擎架构」与「相机与变换」章节所介绍的概念之上。完成本章后，你将拥有一个全面的基础，可用来构建一个结构良好、具备相机系统与模型加载能力的、基于 Vulkan 的 3D 引擎。
+
+xref:../index.adoc[返回：构建简易引擎：简介]

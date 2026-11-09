@@ -1,0 +1,73 @@
+:pp: {plus}{plus}
+= 计算验证与 GPU 辅助调试
+
+调试计算着色器是出了名的困难。与 CPU 代码不同，你无法轻易设置断点，也无法逐行跟踪逻辑。大多数错误——例如越界的缓冲区访问——只会产生垃圾数据，或者最糟的情况下报出 "Device Lost" 错误，却几乎不告诉你哪里出了问题。
+
+== GPU-AV
+
+**GPU-AV**（GPU 辅助验证）正是为此而生。它属于标准 Vulkan 验证层的一部分，工作方式是在运行时把少量诊断代码直接注入你的着色器。这种**插桩**让验证层能够跟踪并报告那些原本不可见的错误。
+
+=== 在 C++ 中启用 GPU-AV
+GPU-AV 也可以通过 **Vulkan Configurator**（`vkconfig`）启用，无需改动代码；这是 Vulkan SDK 随附的 GUI 工具。另一种方式是在创建 Vulkan 实例时以编程方式配置，传入 `vk::ValidationFeaturesEXT` 结构：
+
+[source,cpp]
+----
+// Enabling GPU-AV via ValidationFeaturesEXT
+std::vector<vk::ValidationFeatureEnableEXT> enabledFeatures = {
+    vk::ValidationFeatureEnableEXT::eGpuAssisted,
+    vk::ValidationFeatureEnableEXT::eGpuAssistedReserveBindingSlot
+};
+
+vk::ValidationFeaturesEXT validationFeatures {
+    .enabledValidationFeatureCount = static_cast<uint32_t>(enabledFeatures.size()),
+    .pEnabledValidationFeatures = enabledFeatures.data()
+};
+
+vk::InstanceCreateInfo createInfo {
+    .pNext = &validationFeatures,
+    // ... other setup ...
+};
+----
+
+=== GPU-AV 能检测什么
+* **越界访问**：如果你试图读取 `data[100]`，而缓冲区只有 50 个元素，GPU-AV 会捕获它。
+* **非法指针**：使用**缓冲区设备地址（BDA）** 时，GPU-AV 能检测出你是否在解引用空指针或非法指针。
+* **未初始化的描述符**：它确保着色器接触到的每个描述符都已正确绑定并初始化。
+
+== 着色器 printf：看见内核内部
+
+GPU-AV 擅长捕捉错误，但有时你就是想看到变量的值。这时 `debugPrintfEXT`（来自 `GL_EXT_debug_printf` 扩展）就是你最好的朋友。
+
+=== 在着色器中（Slang）
+Slang 直接支持 `printf`，它会映射到底层的 Vulkan 扩展。
+
+[source,slang]
+----
+// Using printf in a compute shader
+void computeMain(uint3 globalID : SV_DispatchThreadID) {
+    float some_value = calculate_complex_math(globalID.x);
+
+    if (some_value < 0.0f) {
+        // Output will appear in your application's debug callback
+        printf("Thread %d: Warning! Negative value detected: %f\n", globalID.x, some_value);
+    }
+}
+----
+
+=== 在主机端代码中
+要看到 `printf` 的输出，你必须：
+
+1. 在设备上启用 `VK_KHR_shader_non_semantic_info` 扩展。
+2. 注册一个标准的**调试信使**回调。着色器的输出会以 `VkDebugUtilsMessengerCallbackDataEXT` 的形式到达，其消息 ID 会标明这是一次 printf 调用。
+
+== 解读输出
+
+当出现验证错误或 `printf` 时，输出可能相当冗长。你要找的是：
+
+* **着色器模块**：是哪个着色器触发了这条消息。
+* **指令偏移**：出错的具体 SPIR-V 指令。
+* **值**：对于 `printf`，这就是你格式化的字符串；对于 GPU-AV，可能是非法的索引或指针地址。
+
+虽然 GPU-AV 和 `printf` 会带来明显的性能开销，但它们在开发中不可或缺。它们把 GPU 这个"黑盒"变成透明的环境，让你能放心地构建复杂而可靠的计算管线。
+
+xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/01_introduction.adoc[上一篇：诊断与 AI 辅助计算优化：简介] | xref:Advanced_Vulkan_Compute/11_Diagnostics_and_Refinement/03_assistant_led_optimization.adoc[下一篇：AI 辅助的优化与改进]

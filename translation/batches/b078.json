@@ -1,0 +1,30 @@
+{
+  "id": "b078",
+  "words": 5385,
+  "files": [
+    {
+      "source": "en/ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/06_scene_understanding_openxr.adoc",
+      "words": 2239,
+      "title": "Scene Understanding: Leveraging Vulkan in the XR Pipeline"
+    },
+    {
+      "source": "en/ML_Inference/Embedded_Applications/07_ml_compiler.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/07_ml_compiler.adoc",
+      "words": 1157,
+      "title": "ML Compilers on Embedded Devices"
+    },
+    {
+      "source": "en/ML_Inference/Embedded_Applications/08_nnef_example.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/08_nnef_example.adoc",
+      "words": 793,
+      "title": "NNEF on Embedded: A Small Example"
+    },
+    {
+      "source": "en/ML_Inference/Embedded_Applications/09_conclusion.adoc",
+      "target": "zh/ML_Inference/Embedded_Applications/09_conclusion.adoc",
+      "words": 1196,
+      "title": "Conclusion: The Future of High-Performance ML"
+    }
+  ]
+}

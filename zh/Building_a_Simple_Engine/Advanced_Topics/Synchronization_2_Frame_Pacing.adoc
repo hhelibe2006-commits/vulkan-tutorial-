@@ -1,0 +1,65 @@
+= 本引擎中的 Synchronization 2 与帧节奏控制
+
+Vulkan Synchronization 2 让屏障和提交更易读。本示例用它让上传与渲染步调一致，而不产生停顿。
+
+这里的目标不是「极致取巧」，而是可预测的顺序：
+
+* 传输队列把数据搬到 GPU
+* 图形队列用已经就绪的数据绘制
+* CPU 只在确知 GPU 用完逐帧资源时才修改它们
+
+== 各个部件
+
+* 传输队列上的时间线信号量——一批批纹理上传会发出递增的值。
+* 图形提交等待最新的上传值——到我们绘制时，纹理已经可以采样。
+* 帧栅栏——每个飞行帧有一个栅栏，下一帧 CPU 工作开始时我们会等待它。
+
+== 我们依赖的屏障
+
+上传路径：
+
+* `UNDEFINED → TRANSFER_DST_OPTIMAL`（dstStage 为 TRANSFER，dstAccess 为 TRANSFER_WRITE）
+* 拷贝之后：`TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL`（srcStage 为 TRANSFER，dstStage 为 FRAGMENT_SHADER）
+
+渲染路径：
+
+* 附件图像在活跃的动态渲染块之外完成转换，使用 `vkCmdPipelineBarrier2`。
+* 交换链转换：合成／透明之前转到 `COLOR_ATTACHMENT_OPTIMAL`，结束最后一个渲染通道之后转到 `PRESENT_SRC_KHR`。
+
+== 在安全点更新描述符
+
+在一帧开始时，等待该帧的栅栏之后，我们只刷新这一帧的描述符集。这样既避免了「绑定后更新」的陷阱，也避免了流式加载期间帧与帧之间的闪烁。
+
+== 要点
+
+* 把转换保持在活跃的 `beginRendering`／`endRendering` 作用域之外。
+* 使用清晰的阶段／访问配对；为可读性优先使用 Synchronization 2。
+* 把时间线信号量与栅栏配对：时间线协调队列；栅栏界定 CPU 的这一轮。
+
+== 代码里该看哪里
+
+* 上传提交与时间线信号量发信号：
+** `renderer_resources.cpp`
+** `renderer_utils.cpp`
+* 图形提交等待（包括「最新上传值」）：
+** `renderer_rendering.cpp`
+* 渲染路径的图像屏障（附件 + 交换链）：
+** `renderer_rendering.cpp`
+* 交换链与呈现集成：
+** `swap_chain.h`
+** `renderer_rendering.cpp`
+
+== 后续工作想法
+
+如果你想试验节奏控制与延迟：
+
+* 增加飞行帧数量的 UI 开关，并测量输入延迟与吞吐量。
+* 增加「固定相机路径」模式（仅开发期），以便产生可复现的 GPU 计时对比。
+* 在主要通道前后加入 GPU 时间戳查询，以可视化时间花在哪里。
+* 增加异步计算实验（如果设备支持），用于 Forward+ 光源列表构建之类的工作。
+
+== 接下来读什么
+
+* xref:Building_a_Simple_Engine/Advanced_Topics/Synchronization_and_Streaming.adoc[同步与流式加载]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Descriptor_Indexing_UpdateAfterBind.adoc[描述符索引与稳定的描述符更新]
+* xref:Building_a_Simple_Engine/Advanced_Topics/Rendering_Pipeline_Overview.adoc[渲染管线概览（本示例）]

@@ -1,0 +1,142 @@
+:pp: {plus}{plus}
+
+= Vulkan 1.4 标量布局：紧凑打包
+
+== 简介
+
+前面几节我们关注的是如何通过高占用率让 GPU 的计算单元保持忙碌。但即便你有几千个线程在跑，仍可能被**带宽**拖住。
+
+你从 VRAM 取的每一个字节都宝贵。如果数据布局糟糕，你可能一直在取永远用不到的字节。在计算架构章的这最后一节，我们看 Vulkan 1.4 的**标量布局**如何解决 GPU 编程中最古老也最令人沮丧的问题之一：对齐税。
+
+== 对齐税：std140 与 std430
+
+历史上，OpenGL 与 Vulkan 要求你用严格的**std140** 与 **std430**（标准 140/430 布局）规则来布局缓冲区。这些规则是为旧硬件设计的，那时的硬件很难读取未按 4 字节或 16 字节边界完美对齐的数据。
+
+例如在 `std140` 下，一个简单的 `vec3`（即三个 float）通常会被补齐到 `vec4` 的大小。这意味着如果你的数组元素是 `vec3`，就有 25% 的内存带宽浪费在空洞的填充上！
+
+[source,slang]
+----
+// Under std140:
+struct MyData {
+    float3 position; // 12 bytes + 4 bytes padding
+    float radius;    // 4 bytes
+};
+// Total size: 20 bytes (but logically 16)
+----
+
+`std430` 改进了这一点，允许标量数组和向量数组更紧凑地打包，但对嵌套结构如何对齐仍有严格规则。
+
+== 引入 GL_EXT_scalar_block_layout
+
+为了解决这个问题，人们引入了一个新扩展 **GL_EXT_scalar_block_layout**。该扩展允许你使用**标量布局**，它本质上移除了结构体成员之间或数组元素之间的所有填充。
+
+在 Vulkan 1.4 中，这一功能已成为核心要求。使用 `scalar` 布局后，对于仅由标量、向量和数组构成的扁平结构，你在 GPU 上的数据结构与 C{pp} 结构逐字节一致。
+
+不过有一个重要的边界情况：一旦结构发生__嵌套__，标量布局就不再等同于 C/C{pp} 布局。GLSL 与 Slang 的标量布局会把外层结构体的尾部成员打包进内层结构体成员留下的尾部填充里——C/C{pp} 从不这样做。例如：
+
+[source,slang]
+----
+struct Inner {
+    uint a;
+    uint16_t b;
+};
+
+struct Outer {
+    Inner ab;
+    uint16_t c;
+};
+// Scalar layout (GLSL/Slang): sizeof(Outer) == 8 -- `c` gets packed into
+// the trailing padding left after `Inner::b`.
+// C/C++ layout:               sizeof(Outer) == 12 -- that padding is never reused.
+----
+
+Slang 为此提供了一个独立的布局模式：命令行上的 `-fvk-use-c-layout`（通过 API 是 `CompilerOptionName::ForceCLayout`，语言内是 `CDataLayout` 标签）会让缓冲区布局与原生 C/C{pp} 布局完全一致，嵌套结构也一样——已知的唯一例外是空结构体，在 Slang 中占 0 字节，在 C/C{pp} 中占 1 字节。GLSL 没有等价的选项，所以如果你在 GLSL 中把嵌套结构与标量布局混用，请在 CPU/GPU 边界两侧都核对它们的大小，而不要假设二者一致。
+
+=== 为什么这很重要？
+
+这不只是省下几个字节的 VRAM，而是关于**缓存效率**。
+
+GPU 从 VRAM 取数据时，是以很大的「缓存行」（通常是 64 或 128 字节）为单位取的。如果你的数据满是填充，每条缓存行里的「真实」数据就更少。这意味着要取更多次内存才能拿到同样的信息，直接导致性能下降。
+
+=== Slang：启用标量布局
+
+这里值得说清楚，因为这是一个常见误解：Slang 并不默认使用标量布局，而且这一点不会随你所针对的 Vulkan 版本而改变——Slang 针对的是 SPIR-V 版本，不是 Vulkan 版本，而没有任何 SPIR-V 版本会把默认缓冲布局切换为标量布局。默认情况下，Slang 中的 `StructuredBuffer<T>` 或 `RWStructuredBuffer<T>` 采用与 HLSL 相同的 std430 风格对齐规则，所以一个未加修饰的 `float3` 成员仍然会按 GLSL `std430` 的方式被填充。
+
+要在 Slang 中得到标量布局，你必须主动请求，可以按缓冲区请求，也可以对整次编译请求。按缓冲区请求时，用 `ScalarDataLayout` 标记资源类型：
+
+[source,slang]
+----
+struct MyData {
+    float3 position;
+    float radius;
+};
+
+[[vk::binding(0, 0)]]
+RWStructuredBuffer<MyData, ScalarDataLayout> MyBuffer;
+----
+
+在全局层面，等价物是给 `slangc` 的 `-fvk-use-scalar-layout` 标志，或通过 Slang API 编译时的 `CompilerOptionName::GLSLForceScalarLayout`。无论哪种方式，`RWStructuredBuffer` 都映射到 Vulkan 的 `Storage Buffer`，而一旦请求了标量布局，它的打包方式就与下面用 `scalar` 限定的 GLSL 缓冲区完全一致。
+
+=== GLSL：请求标量布局
+
+标量布局在 GLSL 中也必须显式请求——只是写法不同。下面看看同一个结构在旧的 `std430` 规则下、以及在 Vulkan 1.4 启用的 `scalar` 布局下分别如何处理。
+
+[source,glsl]
+----
+// The "Old" Way (std430)
+struct MyData {
+    vec3 position; // 12 bytes + 4 bytes padding (arrays of vec3 are even worse!)
+    float radius;  // 4 bytes
+};
+
+layout(std430, binding = 0) buffer MyBuffer {
+    MyData data[];
+};
+----
+
+在 `std430` 下，如果你有一个 `MyData` 数组，每个 `vec3` 都会被填充到 16 字节。如果你在 CPU 侧用一个简单的 `struct { glm::vec3 p; float r; }` 去对应它，很可能会遇到内存损坏，因为 GPU 期望 `position` 与 `radius` 之间存在那 4 字节的空隙。
+
+现在看看用 **scalar** 布局的 Vulkan 1.4 写法：
+
+[source,glsl]
+----
+// The "Modern" Way (Vulkan 1.4 / GL_EXT_scalar_block_layout)
+#extension GL_EXT_scalar_block_layout : enable
+
+struct MyData {
+    vec3 position; // 12 bytes
+    float radius;  // 4 bytes
+};
+
+layout(scalar, binding = 0) buffer MyBuffer {
+    MyData data[];
+};
+// Total size of MyData: 16 bytes. No padding!
+----
+
+通过显式使用 `layout(scalar)`，你告诉驱动你想要更紧凑的打包规则。这让你的 GLSL 代码能完美匹配标准 C{pp} 结构体，无需任何手写的 `float padding` 成员。
+
+=== C{pp} 侧对比
+
+要在 CPU 侧与之对应，你不再需要手动添加 `float padding[1]` 或使用 `alignas(16)`。你只需自然地定义结构：
+
+[source,cpp]
+----
+struct MyData {
+    glm::vec3 position;
+    float radius;
+};
+// Total size: 16 bytes. No padding!
+----
+
+这里也要记住前面提到的嵌套结构注意事项：这种逐字节一致对上面 `MyData` 这样的扁平结构成立，但一旦你把结构互相嵌套，无论在 GLSL 还是 Slang 的标量布局中，它都不再自动成立。如果你即便有嵌套也需要与 C/C{pp} 完全一致的布局，那就改用 Slang 专门的 C 布局模式，而不是标量布局。
+
+== 小结
+
+本章我们讲了很多内容。我们看到了工作组如何映射到硅片、占用率如何帮我们掩盖访存的巨大延迟，以及标量布局如何确保我们不浪费辛苦争取来的带宽。
+
+准确知道标量布局何时与你的 C{pp} 结构一致、何时不一致——以及需要哪个布局限定符或编译标志才能做到——正是把「在我机器上能跑」变成你能放心推理、放心调试的缓冲区布局的关键。
+
+下一章我们会更进一步，看 **Vulkan 内存模型**，以及如何在数千个线程之间安全地同步数据。
+
+xref:Advanced_Vulkan_Compute/02_Compute_Architecture/03_occupancy_and_latency_hiding.adoc[上一篇：占用率与延迟隐藏：让 GPU 保持忙碌] | xref:Advanced_Vulkan_Compute/03_Memory_Models/01_introduction.adoc[下一篇：内存模型与一致性：简介]

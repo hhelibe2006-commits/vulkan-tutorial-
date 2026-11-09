@@ -1,0 +1,187 @@
+:pp: {plus}{plus}
+
+= 顶点输入描述
+
+== 简介
+
+在接下来几章里，我们要用内存中的顶点缓冲区替换顶点着色器里硬编码的顶点数据。
+先从最简单的做法开始：创建一个 CPU 可见的缓冲区，用 `memcpy` 把顶点数据直接拷进去；之后我们会看到如何用暂存缓冲区把顶点数据拷贝到高性能内存。
+
+== 顶点着色器
+
+首先，修改顶点着色器，不再把顶点数据直接写进着色器代码。
+顶点着色器通过按正确顺序在结构体中声明输入，从顶点缓冲区获取数据。
+
+[,slang]
+----
+struct VSInput {
+    float2 inPosition;
+    float3 inColor;
+};
+
+struct VSOutput
+{
+    float4 pos : SV_Position;
+    float3 color;
+};
+
+[shader("vertex")]
+VSOutput vertMain(VSInput input) {
+    VSOutput output;
+    output.pos = float4(input.inPosition, 0.0, 1.0);
+    output.color = input.inColor;
+    return output;
+}
+
+[shader("fragment")]
+float4 fragMain(VSOutput vertIn) : SV_TARGET {
+    return float4(vertIn.color, 1.0);
+}
+----
+
+`inPosition` 和 `inColor` 变量是 _顶点属性_。
+它们是顶点缓冲区中逐顶点指定的属性，正如之前我们用两个数组手动为每个顶点指定位置和颜色一样。
+
+== 顶点数据
+
+我们要把顶点数据从着色器代码移到程序代码中的数组里。
+首先包含 GLM 库，它提供了向量、矩阵等线性代数相关类型。
+我们将用这些类型来表示位置和颜色向量。
+
+[,c++]
+----
+#include <glm/glm.hpp>
+----
+
+新建一个名为 `Vertex` 的结构体，把顶点着色器中要用到的两个属性放进去：
+
+[,c++]
+----
+struct Vertex
+{
+    glm::vec2 pos;
+    glm::vec3 color;
+};
+----
+
+GLM 恰好提供了与着色器语言中向量类型完全对应的 C{pp} 类型。
+
+[,c++]
+----
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
+----
+
+现在用 `Vertex` 结构体来指定一个顶点数据数组。
+位置和颜色值与之前完全相同，只是现在合并到了一个顶点数组里。
+这称为顶点属性的 _交错_ 排列。
+
+== 绑定描述
+
+下一步是告诉 Vulkan，数据上传到 GPU 内存后如何把这个数据格式传递给顶点着色器。
+需要两种结构体来传达这些信息。
+
+第一个结构体是 `vk::VertexInputBindingDescription`，我们会给 `Vertex` 结构体加一个成员函数，用正确的数据填充它。
+
+[,c++]
+----
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    static vk::VertexInputBindingDescription getBindingDescription()
+    {
+      return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
+    }
+};
+----
+
+顶点绑定描述的是遍历各顶点时从内存加载数据的速率。
+它指定了数据条目之间的字节数，以及是在每个顶点之后还是每个实例之后移动到下一个数据条目。
+
+我们的所有逐顶点数据都打包在一个数组里，所以只会有一个绑定。
+`binding` 参数指定该绑定在绑定数组中的索引。
+`stride` 参数指定从一个条目到下一个条目的字节数，`inputRate` 参数可取以下值之一：
+
+* `vk::VertexInputRate::eVertex`  ：在每个顶点之后移动到下一个数据条目
+* `vk::VertexInputRate::eInstance`：在每个实例之后移动到下一个数据条目
+
+我们不会使用实例化渲染，所以只用逐顶点数据。
+
+== 属性描述
+
+描述如何处理顶点输入的第二种结构体是 `vk::VertexInputAttributeDescription`。
+我们再给 `Vertex` 加一个辅助函数来填充这些结构体。
+
+[,c++]
+----
+#include <array>
+
+...
+
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
+    {
+      return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
+               {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)}}};
+    }
+}
+----
+
+从函数原型可以看出，会有两个这样的结构体。
+属性描述结构体描述如何从源自某个绑定描述的一块顶点数据中提取顶点属性。
+我们有两个属性——位置和颜色，所以需要两个属性描述结构体。
+
+`location` 参数对应顶点着色器中输入的 `location` 指令。
+顶点着色器中 location 为 `0` 的输入是位置，它有两个 32 位浮点分量。
+`binding` 参数告诉 Vulkan 逐顶点数据来自哪个绑定。
+
+`format` 参数描述属性的数据类型。
+有点容易混淆的是，格式用的是与颜色格式相同的枚举。
+以下着色器类型与格式通常搭配使用：
+
+* `float` 对应 `vk::Format::eR32Sfloat`
+* `float2` 对应 `vk::Format::eR32G32Sfloat`
+* `float3` 对应 `vk::Format::eR32G32B32Sfloat`
+* `float4` 对应 `vk::Format::eR32G32B32A32Sfloat`
+
+如你所见，应当使用颜色通道数量与着色器数据类型分量数相匹配的格式。
+允许通道数多于着色器中的分量数，但多出的通道会被静默丢弃。
+如果通道数少于分量数，那么 BGA 分量将使用默认值 `(0, 0, 1)`。
+颜色类型（`Sfloat`、`Uint`、`Sint`）和位宽也应与着色器输入的类型匹配。
+见下面这些例子：
+
+* `int2`  : `vk::Format::eR32G32Sint`，由 32 位有符号整数组成的 2 分量向量
+* `uint4` : `vk::Format::eR32G32B32A32Uint`，由 32 位无符号整数组成的 4 分量向量
+* `double`: `vk::Format::eR64Sfloat`，双精度（64 位）浮点数
+
+`format` 参数隐含地定义了属性数据的字节大小，而 `offset` 参数指定了从逐顶点数据起始处算起要读取的字节数。
+该绑定一次加载一个 `Vertex`，位置属性（`pos`）相对这个结构体起始处的偏移是 `0` 字节。
+这由 `offsetof` 宏自动计算。
+
+颜色属性的描述方式基本相同。
+
+== 管线顶点输入
+
+现在需要在 `createGraphicsPipeline` 中引用这些结构体，让图形管线接受这种格式的顶点数据。
+找到 `vertexInputInfo` 结构体，修改它引用这两个描述：
+
+[,c++]
+----
+auto                                     bindingDescription    = Vertex::getBindingDescription();
+auto                                     attributeDescriptions = Vertex::getAttributeDescriptions();
+vk::PipelineVertexInputStateCreateInfo   vertexInputInfo{.vertexBindingDescriptionCount   = 1,
+                                                         .pVertexBindingDescriptions      = &bindingDescription,
+                                                         .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+                                                         .pVertexAttributeDescriptions    = attributeDescriptions.data()};
+----
+
+现在管线已经可以接受 `vertices` 容器这种格式的顶点数据，并把它传给顶点着色器。
+下一步是 xref:./01_Vertex_buffer_creation.adoc[创建顶点缓冲区]，把顶点数据搬进去，好让 GPU 能够访问。
+
+link:/attachments/19_vertex_buffer.cpp[C{pp} 代码] /
+link:/attachments/19_shader_vertexbuffer.slang[slang 着色器] /
+link:/attachments/19_shader_vertexbuffer.vert[GLSL 顶点着色器] /
+link:/attachments/19_shader_vertexbuffer.frag[GLSL 片元着色器]

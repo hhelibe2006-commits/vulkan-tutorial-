@@ -1,0 +1,128 @@
+:pp: {plus}{plus}
+
+= 全局原子管理：无锁链表与队列
+
+== 为什么要用 64 位原子操作？
+
+在早期的 Vulkan 中，原子操作仅限于 32 位整数。它们对简单计数器很有用，但不足以处理指针或复杂数据结构。到了 **Vulkan 1.4**，64 位原子操作成为核心特性，这为构建真正的无锁数据结构打开了大门。
+
+一个 64 位原子操作可以同时存储一个值和一个「标签」（用来避免 **ABA 问题**——即一个值从 A 变成 B 又变回 A，从而让某个线程误以为它从未改变），或者存储一个完整的 64 位**缓冲区设备地址**（一个指针）。
+
+== 「无锁」到底意味着什么？
+
+在传统的 CPU 编程中，如果两个线程想更新同一份数据，我们会用一个**互斥量**（mutex）把数据「锁」住、执行更新、再「解锁」。在 GPU 上这是灾难性的。因为成千上万个线程以锁步方式运行（**SIMT**——单指令多线程），如果一个线程拿了锁而其他线程等待，整个 GPU 可能陷入停顿——这种状况称为**死锁**。
+
+**无锁**算法指的是保证系统中至少有一个线程能在有限步数内取得进展的算法。我们不用加锁，而是使用**原子操作**。这些是特殊的硬件指令，在单个不可中断的步骤中完成一次「读取-修改-写入」序列。
+
+在我们的链表示例中，我们使用 `InterlockedExchange`（在 GLSL 中是 `atomicExchange`）。这条指令的含义是：「把这个新值放进内存，然后把原来在那里的东西给我——整个过程都不允许任何其他线程触碰该内存位置。」
+
+由于每个线程都成功完成了自己的「交换」并拿到了唯一的 `oldHead`，所以任何线程都不必等待其他线程。它们同时取得进展。这就是 GPU 上无锁的本质。
+
+== 构建无锁链表
+
+链表是许多 GPU 算法的基础，尤其是**顺序无关透明度（OIT）**。在逐像素链表中，帧缓冲区中的每个像素都存有一个「头」指针，指向命中该像素的透明片元列表。
+
+=== GPU 链表的构成
+
+驻留 GPU 的链表由三个主要部分组成：
+
+1.  **头缓冲区**：一个二维纹理或缓冲区（与屏幕分辨率一致），存储每个像素的第一个节点的下标。它被初始化为「空」值（例如 `0xFFFFFFFF`）。
+2.  **节点池**：一个大型线性缓冲区，存储每个片元的实际数据。
+3.  **原子计数器**：一个整数，用于从池中「分配」节点。
+
+[source,slang]
+----
+struct Node {
+    float4 color;      // Fragment color
+    float  depth;      // Fragment depth
+    uint   nextIdx;    // Index of the next node in the pool
+};
+
+RWStructuredBuffer<uint> headBuffer; // size: width * height
+RWStructuredBuffer<Node> nodePool;   // size: Max total fragments
+RWStructuredBuffer<uint> counter;    // size: 1
+----
+
+处理一个片元时：
+
+1.  线程原子地把 `counter` 加一，得到一个唯一的 `newNodeIdx`。
+2.  线程对自己的像素位置上的 `headBuffer` 执行 `InterlockedExchange`，写入 `newNodeIdx` 并收到 `oldHead`。
+3.  线程把自己的数据和 `oldHead`（作为 `nextIdx`）写入 `nodePool[newNodeIdx]`。
+
+这种结构让成千上万个片元可以同时加入数百万个不同的链表，而完全不需要全局锁。
+
+=== 不止于交换：比较并交换（CAS）
+
+虽然 `InterlockedExchange` 对简单链表很好用，但更复杂的结构（例如线程安全的队列）往往需要**比较并交换（CAS）**，在 Slang 中通过 `InterlockedCompareExchange` 暴露出来。
+
+CAS 的工作方式是这样的：「只有当该内存的当前值与我给出的『期望』值匹配时才更新它。」如果不匹配，说明另一个线程先改了数据。这时我们的线程必须用新值「重试」该操作。这种「循环直到成功」的模式在高级无锁编程中很常见，而且比传统锁高效得多，因为线程只有在存在真实竞争时才会等待，并且它们永远不会离开硬件调度器。
+
+=== GLSL：atomicAdd 与 64 位原子操作
+
+在 GLSL 中，你使用 `atomicAdd` 和 `atomicExchange` 函数。对于 64 位原子操作，必须启用 `GL_EXT_shader_atomic_int64` 扩展。
+
+[source,glsl]
+----
+#extension GL_EXT_shader_atomic_int64 : enable
+
+layout(binding = 0) buffer HeadBuffer { uint64_t heads[]; };
+layout(binding = 1) buffer Counter    { uint64_t count; };
+
+void addNode(uint pixelIdx, Node newNode) {
+    // 64-bit atomic add to a global counter
+    uint64_t newNodeIdx = atomicAdd(count, 1UL);
+
+    // 64-bit atomic exchange to update the head pointer
+    uint64_t oldHead = atomicExchange(heads[pixelIdx], newNodeIdx);
+
+    // ... update node and next pointer
+}
+----
+
+Slang 提供了更统一的 `InterlockedAdd`，可以跨不同的位宽工作，而 GLSL 则要求你显式写出扩展和类型（例如对 64 位字面量使用 `1UL`）。
+
+上面的示例为了简单起见用的是 32 位下标，而 64 位原子操作让你可以用裸指针跨不同缓冲区、甚至不同内存类型来做这件事。
+
+== 构建工作队列
+
+**工作队列**是 GPU 需要执行的任务列表。在 **GPU 驱动的管线**中，一次计算派发可能生成一批需要剔除的对象，随后另一次派发处理这个列表。
+
+=== 工作队列的构成
+
+工作队列本质上是一种**生产者-消费者**结构。在 GPU 上，它通常实现为一个带原子计数器的**线性缓冲区**，或者用于持久负载的**环形缓冲区**。
+
+[source,slang]
+----
+struct Task {
+    uint objectID;
+    uint drawCommandIdx;
+};
+
+struct WorkQueue {
+    RWStructuredBuffer<Task> data;    // Storage for pending tasks
+    RWStructuredBuffer<uint> counter; // Number of tasks currently in the queue
+};
+
+void pushTask(WorkQueue queue, Task myTask) {
+    uint slot;
+    // Atomic increment to claim a unique slot
+    InterlockedAdd(queue.counter[0], 1, slot);
+
+    // Check for buffer overflow!
+    if (slot < MAX_QUEUE_SIZE) {
+        queue.data[slot] = myTask;
+    }
+}
+----
+
+通过使用全局工作队列，你可以处理大小可变的工作负载，而完全不需要回到 CPU。
+
+== 用子组优化原子操作
+
+原子操作相对昂贵，因为它们必须在整个 GPU 范围内协调。如果成千上万个线程同时想对同一个计数器做加法，硬件会把它们串行化，导致性能大幅下降。
+
+正如我们在第 4 章讨论过的，你可以用**子组操作**来**合并**（把多次操作合成一次）这些原子操作。不必让每个线程都调用 `InterlockedAdd`，你可以让一个子组内的线程做一次**子组归约**，算出它们总共需要加多少，再选一个「领头」线程为整个子组执行一次原子加法，最后把得到的基础下标分发给其他线程。
+
+这个简单的优化可以把全局原子操作的吞吐量提升 32 倍或 64 倍，使复杂数据结构即使对最苛刻的实时应用也变得可行。
+
+xref:Advanced_Vulkan_Compute/06_Advanced_Data_Structures/02_gpu_resident_trees.adoc[上一节：驻留 GPU 的树结构：BVH 与八叉树] | xref:Advanced_Vulkan_Compute/06_Advanced_Data_Structures/04_device_addressable_buffers.adoc[下一节：设备可寻址缓冲区：类指针的灵活性]

@@ -1,0 +1,24 @@
+{
+  "id": "b052",
+  "words": 5447,
+  "files": [
+    {
+      "source": "en/Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc",
+      "target": "zh/Building_a_Simple_Engine/GUI/05_vulkan_integration.adoc",
+      "words": 4298,
+      "title": "GUI: Vulkan Integration"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/GUI/06_conclusion.adoc",
+      "target": "zh/Building_a_Simple_Engine/GUI/06_conclusion.adoc",
+      "words": 1131,
+      "title": "GUI: Conclusion"
+    },
+    {
+      "source": "en/Building_a_Simple_Engine/GUI/index.adoc",
+      "target": "zh/Building_a_Simple_Engine/GUI/index.adoc",
+      "words": 18,
+      "title": "GUI: Introduce working with a GUI and handling input"
+    }
+  ]
+}

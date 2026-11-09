@@ -1,0 +1,18 @@
+{
+  "id": "b012",
+  "words": 4415,
+  "files": [
+    {
+      "source": "en/08_Loading_models.adoc",
+      "target": "zh/08_Loading_models.adoc",
+      "words": 1866,
+      "title": "Loading Models"
+    },
+    {
+      "source": "en/09_Generating_Mipmaps.adoc",
+      "target": "zh/09_Generating_Mipmaps.adoc",
+      "words": 2549,
+      "title": "Generating Mipmaps"
+    }
+  ]
+}

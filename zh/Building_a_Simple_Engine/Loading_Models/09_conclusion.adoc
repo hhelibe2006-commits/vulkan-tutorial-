@@ -1,0 +1,28 @@
+:pp: {plus}{plus}
+
+= 加载模型：结语
+
+== 结语
+
+在本章中，我们把模型加载能力与前几章开发的架构、相机系统结合起来，从而完成了我们的简易引擎。基于从 xref:15_GLTF_KTX2_Migration.adoc[主教程]中获得的 glTF 知识，我们实现了：
+
+1. 用于组织 3D 对象的层级场景图
+2. 对 glTF 动画的支持
+3. 利用 glTF 材质属性的 PBR 材质系统
+4. 带独立变换的多对象渲染
+
+这种做法展示了如何把本教程系列中学到的概念组织成更可复用、更可扩展的引擎架构。通过结合引擎架构原则、相机变换系统，以及如今的模型加载能力，我们创建了一个你可以在此基础上构建自己项目的基础。
+
+随着你继续开发引擎，可以考虑探索以下高级主题：
+
+1. 更精密的材质系统
+2. 高级光照技术
+3. 后处理效果
+4. 物理集成
+5. 音频系统
+
+本章的代码位于 `simple_engine/20_loading_models.cpp` 文件。
+
+link:{attachmentsdir}/simple_engine/20_loading_models.cpp[C{pp} 代码]
+
+xref:Building_a_Simple_Engine/Loading_Models/08_animations.adoc[上一页：加载模型：更新动画] | xref:Building_a_Simple_Engine/Subsystems/01_introduction.adoc[下一页：子系统：简介] | xref:../index.adoc[返回：构建简易引擎：简介]

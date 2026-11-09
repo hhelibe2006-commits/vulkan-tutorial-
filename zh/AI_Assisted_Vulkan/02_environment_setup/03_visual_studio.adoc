@@ -1,0 +1,75 @@
+:pp: {plus}{plus}
+
+= Visual Studio：Windows 原生开发
+
+== 简介
+
+对 Windows 上的许多图形工程师来说，Visual Studio（MSVS）就是默认选择。它与 MSVC 的集成以及它的调试器，使其长期以来都是 Windows 上 Vulkan 开发的常见选择。
+
+不过，原装的 Visual Studio 本身并不做任何 AI 相关的事。值得搭建的是把调试器的实时状态与基于聊天的助手连接起来，这样你每次提问时就不必手动从 Locals 窗口里抄数值。
+
+== 从调试到对话
+
+Visual Studio 相对多数编辑器的优势在于，它在调试会话期间掌握着完整的执行状态，而不只是控制台里的一行文本。这份状态可以直接交给助手，而不必手工转录。
+
+例如：你遇到一个因偏移无效而报出的 `VUID-VkBufferMemoryBarrier-buffer-01191` 错误。通常你会暂停下来，在 Locals 窗口里查看 `VkBufferMemoryBarrier` 结构体，再手工把偏移与缓冲区大小对比。而用 **Copilot Chat**，你可以改为高亮这条错误并问它：为什么这个偏移对当前的 `stagingBuffer` 无效——Copilot 能直接从调试器状态中读取 `stagingBuffer.size` 和 `barrier.offset`，正是这一点让它能发现「硬编码的 16 字节对齐常量」这类问题，而不是去查询 `minStorageBufferOffsetAlignment`。
+
+== 配置工作流
+
+=== 第 1 步：用 Copilot 做解决方案级规划
+
+确保 **GitHub Copilot** 已安装并已索引你的 `.sln`。对跨整个项目的任务使用 `@workspace`。
+
+[source,text]
+----
+@workspace Create a new 'DescriptorBufferHandler' class.
+It must follow the naming conventions in 'DescriptorManager.cpp'
+and implement the 'VK_EXT_descriptor_buffer' extension.
+----
+
+=== 第 2 步：从调试到对话，处理实时错误
+
+当应用因 Vulkan 错误或验证层 VUID 而崩溃时，保持调试器处于活动状态，并使用 **Copilot Chat**。
+
+[source,text]
+----
+# Copy the VUID from the 'Output' window and ask:
+Why is this VUID-VkBufferMemoryBarrier-buffer-01191 occurring
+for our 'stagingBuffer'? Check the 'Locals' window for
+the current offset and buffer size.
+----
+
+=== 第 3 步：为敏感代码使用本地模型
+
+对于你不愿发送给云服务商的渲染逻辑，可以用本地 **Qwen 3-Coder** 模型和 Vulkan MCP 服务器来配置 **Continue** 扩展。这里假设你已经按照 xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc#_first_step_building_the_vulkan_mcp_server[环境搭建] 一章中的说明构建好了 `mcp-Vulkan`。
+
+[source,json]
+----
+{
+  "mcpServers": [
+    {
+      "name": "Vulkan-Registry",
+      "command": "node",
+      "args": ["/path/to/mcp-Vulkan/vulkan/build/index.js"]
+    }
+  ]
+}
+----
+
+== 取舍
+
+**资源开销。** Visual Studio 本身已经很重；再叠加 AI 扩展及其索引，会造成明显的界面卡顿，在内存不足 32GB 时尤其明显。如果你打开大型解决方案后看到索引图标转了好几分钟，可以考虑关掉 IntelliCode 这类较旧的功能，为 Copilot 和本地模型腾出余量。
+
+**它有用的地方：把样板代码当作描述。** 与其敲出 20 行的 `VkGraphicsPipelineCreateInfo`，你可以写一行注释描述想要的管线——`// wireframe overlay pipeline, no culling`——让助手基于你现有的管线代码把结构体填好，然后再检查它的工作。这个审阅步骤很重要；把输出当作草稿，而不是最终答案。
+
+=== 继续之前
+
+本教程余下部分假设你的 Visual Studio 环境既有解决方案级模型（Copilot，用于架构工作和跨文件规划），也有通过 Continue 接入的本地模型（用于对敏感代码做零成本迭代）。两者都接好之后，请继续阅读 xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[Goose：自主代理与本地智能]，搭建自主代理与本地推理。
+
+== 小结
+
+一个接上 AI 的 Visual Studio 环境，核心在于把调试器的状态接进对话，这样关于崩溃或 VUID 的问题会自动带上真实的运行时数值，而不是你凭记忆敲出的一段描述。
+
+下一章是 xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[Goose：自主代理与本地智能]。macOS 用户也可以对比阅读 xref:AI_Assisted_Vulkan/02_environment_setup/04_xcode_apple.adoc[Xcode 与 Apple Silicon] 一章。
+
+xref:AI_Assisted_Vulkan/02_environment_setup/01_introduction.adoc[上一篇：环境搭建] | xref:AI_Assisted_Vulkan/02_environment_setup/05_goose_native_agent.adoc[下一篇：Goose：自主代理与本地智能]

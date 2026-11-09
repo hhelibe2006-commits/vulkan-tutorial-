@@ -1,0 +1,36 @@
+{
+  "id": "b068",
+  "words": 5934,
+  "files": [
+    {
+      "source": "en/ML_Inference/Advanced_Topics/04_memory_management.adoc",
+      "target": "zh/ML_Inference/Advanced_Topics/04_memory_management.adoc",
+      "words": 1413,
+      "title": "Advanced Memory Management: Breaking the Memory Wall"
+    },
+    {
+      "source": "en/ML_Inference/Advanced_Topics/05_model_optimization.adoc",
+      "target": "zh/ML_Inference/Advanced_Topics/05_model_optimization.adoc",
+      "words": 1544,
+      "title": "Model Optimization Techniques: Beyond the Code"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/01_introduction.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/01_introduction.adoc",
+      "words": 736,
+      "title": "Introduction to Building an Inference Engine"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/02_hardcoded_forward_prop.adoc",
+      "words": 1224,
+      "title": "Hardcoded Forward Propagation"
+    },
+    {
+      "source": "en/ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc",
+      "target": "zh/ML_Inference/Building_the_Inference_Engine/03_from_hardcoded_to_flexible.adoc",
+      "words": 1017,
+      "title": "From Hardcoded to Flexible"
+    }
+  ]
+}

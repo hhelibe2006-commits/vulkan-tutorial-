@@ -1,0 +1,66 @@
+{
+  "id": "b101",
+  "words": 4105,
+  "files": [
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/03_viewport_swizzling.adoc",
+      "words": 315,
+      "title": "Optimizing Projections with Viewport Swizzling"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/11_Canted_Displays/04_incorporating_into_the_engine.adoc",
+      "words": 311,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/01_introduction.adoc",
+      "words": 435,
+      "title": "CAVE Architecture and Multi-GPU Synchronization: Introduction"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/02_projector_based_spatial_tech.adoc",
+      "words": 529,
+      "title": "Projector-Based Spatial Architecture"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/03_hardware_sync.adoc",
+      "words": 389,
+      "title": "Hardware Synchronization: Swap Groups and Barriers"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/12_CAVE_Architecture/04_incorporating_into_the_engine.adoc",
+      "words": 248,
+      "title": "Incorporating into the Engine"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/01_introduction.adoc",
+      "words": 394,
+      "title": "Warp and Blend using Vulkan Compute: Introduction"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/02_geometric_correction.adoc",
+      "words": 549,
+      "title": "Geometric Correction & Edge Blending"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/03_post_process_warping.adoc",
+      "words": 570,
+      "title": "Post-Process Warping and Lens Distortion"
+    },
+    {
+      "source": "en/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc",
+      "target": "zh/OpenXR_Vulkan_Spatial_Computing/13_Warp_and_Blend/04_incorporating_into_the_engine.adoc",
+      "words": 365,
+      "title": "Incorporating into the Engine"
+    }
+  ]
+}

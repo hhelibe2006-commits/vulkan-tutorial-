@@ -1,0 +1,18 @@
+{
+  "id": "b071",
+  "words": 2395,
+  "files": [
+    {
+      "source": "en/ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc",
+      "target": "zh/ML_Inference/Debugging_and_Performance/05_optimization_techniques.adoc",
+      "words": 1139,
+      "title": "Optimization Techniques: Squeezing the Silicon"
+    },
+    {
+      "source": "en/ML_Inference/Desktop_Applications/01_introduction.adoc",
+      "target": "zh/ML_Inference/Desktop_Applications/01_introduction.adoc",
+      "words": 1256,
+      "title": "Desktop Applications"
+    }
+  ]
+}

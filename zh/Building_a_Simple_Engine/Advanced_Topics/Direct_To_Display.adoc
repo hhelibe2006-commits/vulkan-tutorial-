@@ -1,0 +1,51 @@
+= 使用 VK_KHR_display 的直接显示渲染
+
+到目前为止，我们一直用 GLFW 创建一个可以渲染到其中的窗口。这意味着 GLFW 以及窗口管理器或合成器替我们悄悄做了大量工作，才让渲染成为可能：它决定窗口在屏幕上的位置、与显示器协商像素格式、把输入事件交给我们，并把我们的输出与机器上运行的其他一切合成在一起。`VK_KHR_display` 是 Vulkan 对另一种情形的回答：如果根本没有窗口管理器，而你的应用是唯一会接触这块屏幕的东西，那该怎么办？对于自助终端、嵌入式设备、数字标牌、工业控制面板，或者 VR 运行时在类似桌面的东西存在之前绘制的最初一帧，这都是常规情形。在这种情形下，你不想要窗口；你想直接与物理显示器对话，而 `VK_KHR_display` 与 `VK_KHR_display_swapchain` 正是 Vulkan 为此提供的机制。
+
+这种直接性的代价是：以前窗口管理器替你做的每件事，现在都成了你的问题。没有缩放，因为没有窗口可缩放。无法让两个应用并排运行，因为该扩展把显示器扫描输出硬件的独占控制权交给一个应用。而且，你稍后就会看到，你不能像平常那样先挑一个物理设备再向它要一个表面——显示器*就是*表面，这比窗口要字面得多。
+
+== 为什么引擎把它当作又一个 Platform 实现
+
+本章前面我们介绍了引擎的 `Platform` 抽象：一个接口、多个实现，每一种「把像素送上屏幕、把输入从键盘取出」的方式对应一个实现。`DesktopPlatform` 包装 GLFW。`AndroidPlatform` 包装 NDK 的窗口 API。直接显示（direct-to-display）符合同样的形状——它仍然需要把 `VkSurfaceKHR` 交给渲染器、仍然需要报告宽度和高度、仍然需要某种「我是否该继续运行」的概念——所以它成为第三个实现 `DirectDisplayPlatform`，而不是硬塞进渲染器的一个特例。这正是拥有这层抽象的意义所在：增加一种根本不同的把图像送上屏幕的方式，完全不需要改动渲染代码，只需改动 `CreatePlatform()`。
+
+由于这种模式必须与普通的窗口化构建共存而不是取代它，引擎在启动时而非编译时在两者之间选择。只要在启动二进制之前设置环境变量 `SIMPLE_ENGINE_DIRECT_DISPLAY=1` 就够了：`CreatePlatform()` 会检查它，并构造 `DirectDisplayPlatform` 而不是 `DesktopPlatform`。同一个标志还必须再检查一次，而且位置比你可能预想的更靠前——在创建 Vulkan 实例的时候。窗口化构建会问 GLFW 它需要哪些实例扩展（`glfwGetRequiredInstanceExtensions()`），在 Linux 上这通常意味着 `VK_KHR_surface` 加上 `VK_KHR_xcb_surface` 或 `VK_KHR_wayland_surface` 中与你所运行会话匹配的那一个。这些在这里都不适用，因为直接显示模式完全不涉及 GLFW。相应地，只要设置了该环境变量，`Renderer::createInstance()` 就直接请求 `VK_KHR_surface` 和 `VK_KHR_display`。
+
+== 让这个 Platform 实现与众不同的顺序问题
+
+你会写的其他每个 `Platform` 实现都遵循同样的顺序：创建窗口，把它的原生句柄交给窗口 API 的表面创建函数，拿回一个 `VkSurfaceKHR`，然后渲染器才*随后*枚举物理设备，并逐个询问「你能向这个表面呈现吗？」这种顺序之所以可行，是因为窗口表面属于窗口系统，而不属于任何特定的 GPU——任何总体上支持呈现的物理设备都是候选。
+
+`VK_KHR_display` 表面打破了这一假设，因为你的应用与 GPU 之间没有窗口系统。表面是根据某个特定物理设备自己对连到它上面的显示器的枚举、用 `vkGetPhysicalDeviceDisplayPropertiesKHR` 创建的。这意味着物理设备必须在创建表面时就被选定，而不是像其他所有后端那样在之后才选。`DirectDisplayPlatform::CreateVulkanSurface()` 必须做一件通常由渲染器替它做的事：遍历实例能看到的每个物理设备，对每一个询问它究竟有没有接任何显示器。大多数配置只会在一块设备上找到显示器——通常是那根线实际插着的 GPU——而直接显示模式会确定使用第一个给出非零显示器数量的设备。
+
+一旦找到至少带一台显示器的设备，代码在调用 `vkCreateDisplayPlaneSurfaceKHR` 之前还有三项决定要做，每一项都有实际理由，而不是 API 硬性要求的形式。
+
+第一项是以哪种*模式*驱动显示器。一块物理显示器可以通过 `vkGetDisplayModePropertiesKHR` 报告若干受支持的分辨率与刷新率组合，就像显示器的 OSD 让你在 1080p60 和 4K30 之间选择一样。`CreateVulkanSurface()` 遍历该列表，保留像素数最高的模式，实践中这意味着落在显示器的原生分辨率上——如果这里存在合成器，你也会期望它替你选同样的默认值。
+
+第二项是通过哪个*平面*呈现。显示硬件会暴露一个或多个叠加/扫描输出平面，而并非每个平面都接到每台显示器上——如果目标是主输出，一个为次输出准备的平面帮不上忙。`vkGetPhysicalDeviceDisplayPlanePropertiesKHR` 列出平面；`vkGetDisplayPlaneSupportedDisplaysKHR` 告诉你某个平面实际能驱动哪些显示器。代码在列表中检查它已经选定的那台显示器，跳过任何不支持它的平面，而不是假设平面零总是能用。
+
+第三项是*alpha 混合*。`vkGetDisplayPlaneCapabilitiesKHR` 报告给定的平面/模式组合实际支持不透明、全局和逐像素三种 alpha 模式中的哪些，而这些并非普遍可用——一个平面可能根本不支持不透明混合，此时请求它只会导致表面创建失败。代码先请求不透明，因为对一个背后什么都没有的全屏应用来说，这几乎总是你想要的；只有在确实不提供不透明时才回退到全局或逐像素 alpha。
+
+当显示器、模式、平面和 alpha 模式都确定下来，填写 `VkDisplaySurfaceCreateInfoKHR` 并调用 `vkCreateDisplayPlaneSurfaceKHR` 就是轻松的部分了——在它之前的一切，都是为了保证那次调用拥有一组驱动真正会接受的参数。
+
+还有一个值得指出的差别：`DesktopPlatform::ProcessEvents()` 每帧调用 `glfwPollEvents()`，因为 GLFW 需要被定期驱动才能投递窗口与输入事件。这里没有对应的东西——没有窗口系统可轮询——所以 `DirectDisplayPlatform::ProcessEvents()` 除了检查一个标志之外什么都不做。该标志由 `Initialize()` 中安装的 `SIGINT`/`SIGTERM` 处理函数设置，这是该模式被告知干净关闭的唯一途径，因为根本没有关闭按钮，也没有窗口管理器来发送关闭事件。
+
+== 为什么你在普通桌面上运行时它什么都不会呈现，以及为什么这是正确的
+
+`VK_KHR_display` 背后的原则在每个支持它的平台上都一样：使用它的应用是在请求成为显示器扫描输出硬件的唯一所有者，而操作系统一次只会把这种所有权授予一个进程。已经在绘制你桌面的东西——Linux 上的 Wayland 或 X11 合成器、Windows 上的桌面合成器、macOS 上的窗口服务器（如果支持的话）——已经持有该所有权，仅仅因为它是当前把像素送上你显示器的那个东西。没有任何操作系统会让第二个无关的应用走进来，从正在驱动显示器的那进程手里夺走显示器；如果那可行，任何应用都能把你正在做的事从屏幕上劫走，而这正是每个桌面操作系统的显示模型设计出来要防止的事情。
+
+Linux 让这套机制特别容易看清，所以值得具体点名，尽管底层原则并不专属于 Linux：内核的 DRM/KMS 子系统为每台显示器发放一个「master」租约，持有它的进程——正常情况下就是你的合成器——是唯一被允许更改显示模式或直接向硬件呈现的进程。在 Linux 上测试这个实现时，效果因驱动不同而以两种方式显现：当 Wayland 合成器持有会话时，专有的 NVIDIA 驱动甚至不导出 `vkGetPhysicalDeviceDisplayPropertiesKHR` 入口点；而 Mesa 的 Intel 驱动正常导出了该函数，却出于同样的底层原因报告零台显示器。无论哪种情况，枚举物理设备、显示器、模式和平面都不需要拥有显示器，通常仍然可以工作；失败的是表面创建调用本身，以及它之后的一切——交换链创建、呈现——因为坐在你面前的合成器不会仅仅因为你请求，就把显示器的控制权交给第二个应用。
+
+把这件事在 Windows 上具体如何工作也理解清楚同样重要，所以值得具体说明同一个故事在那里如何上演，因为机制看起来不同，结果却一样。自 Windows 8 起，Windows 不再允许禁用它的桌面合成器 DWM——不像 Windows 7 可以关掉 Aero，现在没有任何面向用户的方式能把标准的 Windows 桌面版、专业版或企业版会话降到「没有任何东西在合成这块显示器」的状态，而 Linux 控制台允许你完全切离合成器。在那些版本上，DWM 始终就是拥有你显示器的那个东西。正因如此，想要紧密控制显示器呈现的 Windows 开发者几乎总是转向 `VK_EXT_full_screen_exclusive` 而不是 `VK_KHR_display`：那是与 DWM 的协商，你的交换链请求独占全屏访问，DWM 为此让开，而不是像 `VK_KHR_display` 那样试图夺取原始扫描输出控制。`VK_KHR_display` 本身在 Vulkan 规范中并不绑定任何特定平台，所以 Windows 驱动可以自由地暴露它，但在普通的 Windows 桌面会话上，你会撞上这段代码上面撞到 Wayland 合成器时同样那堵墙——DWM 先到，它不会因为第二个应用好好请求就放弃对你屏幕的所有权。`VK_KHR_display` 在 Windows 上真正适用的地方，更接近那些根本不运行完整桌面 shell 的嵌入式和 IoT 部署，而那在 Windows 世界里只占很小的比例，远不如 Linux 无头故事那样常见。
+
+Android 值得为相反的理由点出来：并不是碰巧有个合成器在运行挡路，而是 Android 的显示模型压根就没有可切换的「无合成器」模式。任何 Android 应用产生的每个像素，无论是否全屏，在到达屏幕之前都由 SurfaceFlinger 合成，而 Android 暴露的唯一 Vulkan 表面类型是 `VK_KHR_android_surface`，绑定到由 SurfaceFlinger 端到端拥有的 `ANativeWindow`。在原生 Android 上，没有任何代码路径能让应用像本章的 `CreateVulkanSurface()` 那样请求原始显示平面访问。这正是为什么 `DirectDisplayPlatform` 与 `DesktopPlatform` 一起位于 `platform.h` 的同一个 `#else` 分支中，只在*未*定义 `PLATFORM_ANDROID` 时编译——这不是疏忽，也不是以后要补的缺失特性，而是反映了 `VK_KHR_display` 在那个平台上确实无处附着。
+
+这不是你该在引擎内部设法绕过的 bug。这是机制在设计上正常工作。要真正看到这段代码呈现一帧，你需要在一个没有别的东西持有显示器独占所有权的地方运行它。在 Linux 工作站上，这意味着一个没有运行合成器的裸虚拟终端。更常见的现实情形是那些本来就不会运行桌面环境的单板硬件——一块刷了精简无头 Linux 镜像、并被设置为在启动时直接拉起你的应用的 Raspberry Pi 或 NVIDIA Jetson，就是这种模式教科书式的目标，无论是 Pi 4 或 5 上 Mesa 的 V3D 驱动，还是 Jetson 上 NVIDIA 自己的 Tegra/L4T 驱动。在这种配置里，根本没有东西会去启动合成器，所以没有会话要争：这段代码对 `vkCreateDisplayPlaneSurfaceKHR` 的第一次调用，也是有史以来第一个向显示器提出请求的东西，而它得到了它所请求的。
+
+== 代码在哪里
+
+`DirectDisplayPlatform` 类以及选择它的运行时开关位于 `platform.h` 和 `platform.cpp`，与 `DesktopPlatform` 和 `AndroidPlatform` 放在一起。把 GLFW 的扩展列表换成 `VK_KHR_surface` 加 `VK_KHR_display` 的实例扩展分支位于 `renderer_core.cpp` 中的 `Renderer::createInstance()`。
+
+== 这里接下来可以往哪走
+
+引擎在表面创建之后的交换链设置目前是所有 `Platform` 实现共享的同一条通用路径；更完整的实现会增加一个感知 `VK_KHR_display_swapchain` 的呈现模式协商步骤，因为显示交换链的呈现模式取舍与窗口交换链不同。同样值得让环境变量开关携带的不只是一个开/关标志，这样多显示器自助终端机可以指定目标显示器和模式，而不是总取第一台被找到的显示器上的最高分辨率模式。另外，由于即使合成器拥有显示器时枚举步骤也能安全运行，它们可以成为一个合理的独立 CI 检查，与完整引擎二进制分开，至少确认 `VK_KHR_display` 的代码路径在构建所用硬件上仍能编译并运行而不崩溃——即使在那些永远不可能真正呈现一帧的机器上也是如此。
+
+关于这里所依托的 `Platform` 抽象的整体形态，参见 xref:Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.adoc[引擎架构：架构模式]；关于引擎适配非常不同的平台表面的另一个例子，参见 xref:Building_a_Simple_Engine/Mobile_Development/01_introduction.adoc[移动端开发：简介]。

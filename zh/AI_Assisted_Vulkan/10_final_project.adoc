@@ -1,0 +1,170 @@
+:pp: {plus}{plus}
+
+= 最终项目：AI 辅助图形实验室
+
+== 引言
+
+到这里，你已经搭好了环境、用过了不同的模型、走过了设计—实现—审阅的循环，也借助 AI 做过调试和部署。这个最终项目会在一个功能上把这些环节端到端地串起来。
+
+你将在 **Simple Engine**（来自「构建一个简单引擎」教程，位于 `attachments/simple_engine/`）中工作，用云端模型做设计、本地模型做实现，并用 RenderDoc/GFXReconstruct 驱动的审阅来验证结果。
+
+== 项目：双滤波模糊系统
+
+你要实现一个高性能的 **双滤波模糊** 系统（基于现代 3A 引擎中使用的技术）。它比标准高斯模糊更复杂：需要一串降采样与升采样通道、精细的同步屏障，以及精确的纹理采样逻辑。
+
+== 教程：搭建图形实验室
+
+开始最终项目之前，你需要准备好干净的工作区，并把必要的引擎上下文交给 AI 助手。按下面的步骤进入系统设计阶段。
+
+=== 第 1 步：载入引擎上下文
+把 **Simple Engine** 的核心文件交给你的 AI 助手（Goose 或 IDE 聊天）。这样 AI 才能理解你特定的 RAII 封装、资源管理逻辑和既有的编码模式。开始之前，确保配置中的 **mcp-Vulkan** 和 **GPUInfo** MCP 服务器已启动。这能让助手把你的代码与官方规范和硬件限制实时对照。
+
+[source,bash]
+----
+# Example: Loading context and MCP tools into Goose
+goose session --instruction "Analyze renderer.h and vulkan_device.h. We are implementing a Dual-Filtering Blur system. Use the 'vulkan' MCP to verify spec compliance for all synchronization logic."
+----
+
+=== 第 2 步：架构设计提示词
+用一个推理能力强的模型（如 **Claude 4.6** 或 **GPT-5.3**）来设计系统。要求它给出一份 **技术路线图**，包含资源生命周期和同步链，并专门针对引擎里使用的 `vk::raii`（Vulkan-HPP）封装。**让模型把回答整理成一份简洁的技术「契约」，并把这份输出保存为本地文件 `LLM_NOTES.md`。**
+
+[source,text]
+----
+We are implementing a Dual-Filtering Blur system in our
+Vulkan 1.4 engine (Simple Engine). Based on our
+'vk::raii::Image' and 'vk::raii::Buffer' usage in
+'renderer.h', design a roadmap for:
+
+1. Resource Lifecycle: How many downsample/upsample images
+   do we need for a 5-tap blur?
+2. Synchronization: Define the 'vk::ImageMemoryBarrier2'
+   transitions between each pass using the 'vulkan-raii'
+   paradigm. Use the 'search-vulkan-docs' MCP tool to confirm
+   the latest layout transition rules for Vulkan 1.4.
+3. Hardware Constraints: Use the 'query_gpu_limit' tool (via
+   the 'gpuinfo' MCP) to verify if 'maxDescriptorSetSampledImages'
+   on common mobile GPUs supports our proposed strategy.
+4. Shader Logic: Suggest a Slang/HLSL implementation
+   for the downsample tap.
+
+Format this entire response as a technical contract
+for an implementation model and save it to LLM_NOTES.md.
+----
+
+=== 第 3 步：实现与重构
+设计审阅完毕、`LLM_NOTES.md` 就绪后，让本地模型（如 **Qwen 3-Coder**）生成 `BlurRenderer` 的头文件和实现。把笔记作为直接上下文传进去，本地模型就能遵循已商定的设计，而不必在实现工作的大头上来回求助云端模型。
+
+[source,bash]
+----
+# Example: Using Goose with the local Qwen specialist and design notes
+goose session --instruction "Read LLM_NOTES.md. Based on this technical contract, implement the 'BlurRenderer' class. Ensure you use 'vk::raii' structures and follow the engine's modular pattern."
+----
+
+[source,cpp]
+----
+// Example: AI-generated pipeline creation based on the contract
+vk::raii::Pipeline BlurRenderer::createDownsamplePipeline() {
+    vk::GraphicsPipelineCreateInfo pipelineInfo = {};
+    // AI will fill in the shader stages, vertex input, etc.
+    // using the engine's existing resource managers.
+}
+----
+
+=== 第 4 步：性能审计
+最后，用一个自主代理（如 **Goose**）对新功能做一次性能扫描。
+
+[source,text]
+----
+Goose, audit 'BlurRenderer::recordCommands'.
+Look for redundant descriptor set updates or any
+barriers that are preventing GPU overlap between
+the downsample and upsample stages.
+----
+
+=== 第 5 步：自主 CI/CD 与单元测试
+为了让新功能在引擎后续更新中保持稳定，你必须把它接入持续集成流水线。让自主代理为 `BlurRenderer` 生成完整的单元测试，然后更新 CI 配置，让每次推送都执行这些测试。
+
+[source,text]
+----
+Goose, create a new unit test file 'tests/blur_renderer_test.cpp'.
+The test should verify the 'BlurRenderer' resource allocation
+and ensure that the downsample mip-chain dimensions are calculated
+correctly for a 1080p input. Once created, update our
+GitHub Actions workflow in '.github/workflows/main.yml' to
+include a new step that compiles and runs this test.
+----
+
+让 AI 在实现的同时写测试、更新 CI 配置，意味着测试覆盖不会落后于功能本身。
+
+=== 第 6 步：用 GFXReconstruct 做多帧分析
+要验证整条模糊通道链上的同步，通常得同时看若干帧，而不是只看一帧。用 **GFXReconstruct** 抓取一段 API 调用流，让你的代理检查这一整段里的布局转换。这样能抓到只在偶发情况下出现、或只在初始化最初几帧出现的竞态条件和错误的图像布局转换。
+
+[source,bash]
+----
+# 1. Capture the trace of your new blur implementation
+VK_INSTANCE_LAYERS=VK_LAYER_LUNARG_gfxreconstruct ./SimpleEngine
+
+# 2. Convert a specific frame range to JSON for the AI to reason about
+# We focus on a small range to stay within the model's context window
+gfxrecon-convert --to-json --frames 5-10 capture.gfxr blur_trace.json
+----
+
+[source,text]
+----
+Goose, I have provided 'blur_trace.json' which contains
+the API stream for our Dual-Filtering Blur system.
+Perform a 'Synchronization Audit':
+
+1. Identify all 'vkCmdPipelineBarrier2' calls related to
+   the 'Blur_Downsample_Mip' images.
+2. Verify that the 'oldLayout' in frame 6 matches the
+   'newLayout' set at the end of frame 5.
+3. Use the 'vulkan' MCP to confirm that we aren't
+   performing any redundant 'UNDEFINED' transitions
+   that would discard tile memory on mobile GPUs.
+
+If you find a hazard, suggest the specific line in
+'BlurRenderer.cpp' that needs adjustment.
+----
+
+这样审计完整的调用流，才能判断引擎是否真的符合规范，而不只是碰巧在你当前的驱动上能跑。
+
+=== 第 7 步：用 RenderDoc 做视觉帧检查
+GFXReconstruct 覆盖的是多帧时间线，而 **RenderDoc** 让你能细看单帧的视觉状态。把 **RenderDoc 命令行工具（`renderdoccmd`）** 和你的代理配合使用，验证每个降采样和升采样通道是否产生预期输出。这在排查黑纹理或采样器设置不当导致的采样瑕疵时尤其有用。
+
+[source,bash]
+----
+# 1. Capture a frame from your blur implementation
+# (Assuming RenderDoc is configured to capture on 'F12' or similar)
+./SimpleEngine --capture-frame 60
+
+# 2. Command Goose to perform a visual state audit
+# Note: We use rdc-cli to export the draw call list and pipeline state
+----
+
+[source,text]
+----
+Goose, analyze 'capture_frame_60.rdc' using 'renderdoccmd'.
+We are looking for the 'Blur_Downsample_Pass_2' draw call.
+
+1. List all draw calls and find the one that binds
+   the 'downsample_mip_1' texture as an input.
+2. Export the 'VkSampler' state for this draw call.
+3. Compare the 'minLod' and 'maxLod' settings in the
+   capture against our 'SamplerBuilder' in 'renderer_utils.cpp'.
+4. Check if the 'fragment shader' output is consistently zero.
+
+If you find a mismatch, explain how to refactor the
+'createSampler' logic to ensure we aren't sampling
+beyond the available mip-levels.
+----
+
+把 RenderDoc 抓帧交给代理，能把“这块纹理为什么是黑的”从猜谜变成直接追踪：AI 找出具体是哪个状态不匹配，比如配错了 LOD 钳制，并指出产生它的那行代码。
+
+== 小结
+
+完成这个实验，意味着你已在真实功能上走完了整个循环：云端模型做架构，本地模型做实现，RenderDoc/GFXReconstruct 做验证。
+
+AI 辅助并不能取代对 Vulkan 的理解；它减少的是花在样板代码和重复查阅上的时间，让你能专注于真正重要的决策。Vulkan 规范仍然是你的权威参考，你作为工程师的判断仍然是最关键的因素。改变的只是你翻阅规范、迭代实现的效率。
+
+下一篇：xref:conclusion.adoc[结语]

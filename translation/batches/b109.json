@@ -1,0 +1,36 @@
+{
+  "id": "b109",
+  "words": 5407,
+  "files": [
+    {
+      "source": "en/courses/18_Ray_tracing/01_Dynamic_rendering.adoc",
+      "target": "zh/courses/18_Ray_tracing/01_Dynamic_rendering.adoc",
+      "words": 528,
+      "title": "Dynamic Rendering"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/02_Acceleration_structures.adoc",
+      "target": "zh/courses/18_Ray_tracing/02_Acceleration_structures.adoc",
+      "words": 1444,
+      "title": "Acceleration Structures (BLAS/TLAS)"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/03_Ray_query_shadows.adoc",
+      "target": "zh/courses/18_Ray_tracing/03_Ray_query_shadows.adoc",
+      "words": 609,
+      "title": "Ray Query Shadows (Opaque Geometry)"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/04_TLAS_animation.adoc",
+      "target": "zh/courses/18_Ray_tracing/04_TLAS_animation.adoc",
+      "words": 1103,
+      "title": "TLAS Animation"
+    },
+    {
+      "source": "en/courses/18_Ray_tracing/05_Shadow_transparency.adoc",
+      "target": "zh/courses/18_Ray_tracing/05_Shadow_transparency.adoc",
+      "words": 1723,
+      "title": "Implementing Transparency in Shadows"
+    }
+  ]
+}
