@@ -46,8 +46,9 @@ void createCommandPool()
 
 [,c++]
 ----
-vk::CommandPoolCreateInfo poolInfo{.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                                   .queueFamilyIndex = queueIndex};
+vk::CommandPoolCreateInfo poolInfo{
+    .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+    .queueFamilyIndex = queueIndex};
 ----
 
 命令池有两个可用的标志：
@@ -105,8 +106,8 @@ void initVulkan()
 
 ...
 
-void createCommandBuffer()
-{
+void createCommandBuffer(){
+
 }
 ----
 
@@ -114,7 +115,11 @@ void createCommandBuffer()
 
 [,c++]
 ----
-vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1 };
+vk::CommandBufferAllocateInfo allocInfo{
+    .commandPool = commandPool,
+    .level = vk::CommandBufferLevel::ePrimary,
+    .commandBufferCount = 1
+};
 
 commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
 ----
@@ -136,8 +141,8 @@ commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
 
 [,c++]
 ----
-void recordCommandBuffer(uint32_t imageIndex)
-{
+void recordCommandBuffer(uint32_t imageIndex) {
+
 }
 ----
 
@@ -178,8 +183,7 @@ void transition_image_layout(
 	    vk::AccessFlags2        src_access_mask,
 	    vk::AccessFlags2        dst_access_mask,
 	    vk::PipelineStageFlags2 src_stage_mask,
-	    vk::PipelineStageFlags2 dst_stage_mask)
-{
+	    vk::PipelineStageFlags2 dst_stage_mask) {
 		vk::ImageMemoryBarrier2 barrier = {
 		    .srcStageMask        = src_stage_mask,
 		    .srcAccessMask       = src_access_mask,
@@ -228,7 +232,7 @@ transition_image_layout(
 
 [,c++]
 ----
-vk::ClearValue              clearColor     = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
 vk::RenderingAttachmentInfo attachmentInfo = {
     .imageView   = swapChainImageViews[imageIndex],
     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,

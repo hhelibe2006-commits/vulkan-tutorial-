@@ -1,6 +1,9 @@
 :pp: {plus}{plus}
 
 = 着色器模块
+:toc:
+:toclevels: 3
+:toc-title: 目录
 
 与早期的 API 不同，Vulkan 中的着色器代码必须以字节码格式提供，而不是
 https://en.wikipedia.org/wiki/OpenGL_Shading_Language[GLSL]、
@@ -47,12 +50,12 @@ Slang 是一种采用 C 风格语法的着色语言。用它编写的程序有�
 属性，例如颜色和纹理坐标。光栅化器随后会把这些值在片元之间插值，
 从而产生平滑的渐变。
 
-*裁剪坐标*是顶点着色器输出的四维向量，随后会被整个除以最后一个分量，
-转换成*规范化设备坐标*。这些规范化设备坐标是
+*裁剪坐标* 是顶点着色器输出的四维向量，随后会被整个除以最后一个分量，
+转换成 *规范化设备坐标*。这些规范化设备坐标是
 https://en.wikipedia.org/wiki/Homogeneous_coordinates[齐次坐标]，
 它们把帧缓冲区映射到 [-1, 1] × [-1, 1] 的坐标系，大致如下图所示：
 
-image::/images/normalized_device_coordinates.svg[]
+image::../../../images/normalized_device_coordinates.svg[]
 
 如果你以前接触过计算机图形学，应该已经熟悉这些概念了。如果你用过 OpenGL，
 会注意到 Y 坐标的符号现在翻转了。Z 坐标则采用与 Direct3D 相同的范围，从 0 到 1。
@@ -60,7 +63,7 @@ image::/images/normalized_device_coordinates.svg[]
 第一个三角形不做任何变换，我们直接把三个顶点的位置指定为规范化设备坐标，
 从而得到下面的形状：
 
-image::/images/triangle_coordinates.svg[]
+image::../../../images/triangle_coordinates.svg[]
 
 我们可以让顶点着色器直接输出规范化设备坐标：把最后一个分量设为 `1`，
 把这些坐标当作裁剪坐标输出即可。这样一来，从裁剪坐标转换到规范化设备坐标的
@@ -135,7 +138,7 @@ float4 fragMain() : SV_Target
 
 把整个三角形画成红色并不怎么有趣，像下面这样是不是好看得多？
 
-image::/images/triangle_coordinates_colors.png[]
+image::../../../images/triangle_coordinates_colors.png[]
 
 为此我们需要对两个着色器各做几处修改。首先，为三个顶点分别指定不同的颜色。
 现在顶点着色器要像保存位置那样，也包含一个颜色数组：
@@ -152,7 +155,7 @@ static float3 colors[3] = float3[](
 现在我们只需把这些逐顶点颜色传给片元着色器，让它把插值后的值输出到帧缓冲区。
 在顶点着色器中添加一个颜色输出，并在 `vertMain` 函数中写入它：
 
-[,glsl]
+[,hlsl]
 ----
 struct VertexOutput {
     float3 color;
@@ -170,7 +173,7 @@ VertexOutput vertMain(uint vid : SV_VertexID) {
 
 接下来，我们需要在片元着色器中添加一个对应的参数：
 
-[,glsl]
+[,hlsl]
 ----
 [shader("fragment")]
 float4 fragMain(VertexOutput inVert) : SV_Target
@@ -193,7 +196,7 @@ float4 fragMain(VertexOutput inVert) : SV_Target
 
 `shader.slang` 的内容应该是：
 
-[,slang]
+[,hlsl]
 ----
 static float2 positions[3] = float2[](
     float2(0.0, -0.5),
@@ -430,7 +433,7 @@ vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageF
 ----
 
 第一个参数是我们要操作的阶段。接下来两个参数指定包含着色器代码的模块，
-以及要调用的函数，也就是_入口点_。
+以及要调用的函数，也就是 _入口点_。
 这意味着可以把多个片元着色器合并到一个着色器模块中，用不同的入口点区分
 它们的行为。
 

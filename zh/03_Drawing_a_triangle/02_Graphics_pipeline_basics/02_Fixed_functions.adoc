@@ -8,7 +8,7 @@
 
 == 动态状态
 
-虽然管线状态中的*大部分*都需要固化进管线状态，但仍有少量状态*可以*
+虽然管线状态中的 *大部分* 都需要固化进管线状态，但仍有少量状态 *可以*
 在绘制时改变，而不必重建管线。例如视口大小、线宽和混合常量。
 如果你想使用动态状态、把这些属性排除在管线之外，就需要像这样填写
 `vk::PipelineDynamicStateCreateInfo` 结构体：
@@ -58,7 +58,7 @@ vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 * `vk::PrimitiveTopology::eTriangleList`：每三个顶点组成一个三角形，不复用
 * `vk::PrimitiveTopology::eTriangleStrip`：每个三角形的第二个和第三个顶点作为下一个三角形的前两个顶点
 
-通常顶点是按索引顺序从顶点缓冲区加载的，但使用_元素缓冲区_时，
+通常顶点是按索引顺序从顶点缓冲区加载的，但使用 _元素缓冲区_ 时，
 你可以自己指定要用的索引。
 这让你可以做一些优化，比如复用顶点。
 如果把 `primitiveRestartEnable` 成员设为 `vk::True`，就可以在 `Strip`
@@ -94,7 +94,7 @@ vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(swapChainExtent.width), sta
 二者的区别如下图所示。
 注意左侧的剪刀矩形只是能得到那张图的众多可能之一，只要它比视口大即可。
 
-image::/images/viewports_scissors.png[]
+image::../../../images/viewports_scissors.png[]
 
 所以如果我们想绘制到整个帧缓冲区，就应指定一个完全覆盖它的剪刀矩形：
 
@@ -153,13 +153,14 @@ https://en.wikipedia.org/wiki/Back-face_culling[面剔除] 和剪刀测试，
 
 [,c++]
 ----
-vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable        = vk::False,
-                                                    .rasterizerDiscardEnable = vk::False,
-                                                    .polygonMode             = vk::PolygonMode::eFill,
-                                                    .cullMode                = vk::CullModeFlagBits::eBack,
-                                                    .frontFace               = vk::FrontFace::eClockwise,
-                                                    .depthBiasEnable         = vk::False,
-                                                    .lineWidth               = 1.0f};
+vk::PipelineRasterizationStateCreateInfo rasterizer{
+    .depthClampEnable        = vk::False,
+    .rasterizerDiscardEnable = vk::False,
+    .polygonMode             = vk::PolygonMode::eFill,
+    .cullMode                = vk::CullModeFlagBits::eBack,
+    .frontFace               = vk::FrontFace::eClockwise,
+    .depthBiasEnable         = vk::False,
+    .lineWidth               = 1.0f};
 ----
 
 如果把 `depthClampEnable` 设为 `vk::True`，那么超出近平面和远平面的片元会被
@@ -205,7 +206,10 @@ https://en.wikipedia.org/wiki/Multisample_anti-aliasing[抗锯齿] 的方法之�
 
 [,c++]
 ----
-vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
+vk::PipelineMultisampleStateCreateInfo multisampling{
+    .rasterizationSamples = vk::SampleCountFlagBits::e1,
+    .sampleShadingEnable = vk::False
+};
 ----
 
 我们会在后面的章节重新讨论多重采样，现在先保持禁用。
@@ -227,15 +231,18 @@ vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = vk:
 
 配置颜色混合有两类结构体。
 第一个结构体 `vk::PipelineColorBlendAttachmentState` 包含每个附加帧缓冲区的
-配置，第二个结构体 `vk::PipelineColorBlendStateCreateInfo` 包含_全局_
-颜色混合设置。
+配置，第二个结构体 `vk::PipelineColorBlendStateCreateInfo` 包含 _全局_
+ 颜色混合设置。
 在我们的场景中只有一个帧缓冲区：
 
 [,c++]
 ----
 vk::PipelineColorBlendAttachmentState colorBlendAttachment{
     .blendEnable    = vk::False,	    
-    .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+    .colorWriteMask = vk::ColorComponentFlagBits::eR
+    | vk::ColorComponentFlagBits::eG
+    | vk::ColorComponentFlagBits::eB
+    | vk::ColorComponentFlagBits::eA};
 ----
 
 这个逐帧缓冲区的结构体让你可以配置第一种颜色混合方式。
@@ -278,7 +285,10 @@ vk::PipelineColorBlendAttachmentState colorBlendAttachment{
     .srcAlphaBlendFactor = vk::BlendFactor::eOne,
     .dstAlphaBlendFactor = vk::BlendFactor::eZero,
     .alphaBlendOp        = vk::BlendOp::eAdd,
-    .colorWriteMask      = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+    .colorWriteMask      = vk::ColorComponentFlagBits::eR
+    | vk::ColorComponentFlagBits::eG
+    | vk::ColorComponentFlagBits::eB
+    | vk::ColorComponentFlagBits::eA};
 ----
 
 你可以在规范里查阅 `vk::BlendFactor` 和 `vk::BlendOp` 枚举中所有可能的操作。
@@ -289,7 +299,10 @@ vk::PipelineColorBlendAttachmentState colorBlendAttachment{
 [,c++]
 ----
 vk::PipelineColorBlendStateCreateInfo colorBlending{
-    .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+    .logicOpEnable = vk::False,
+    .logicOp = vk::LogicOp::eCopy,
+    .attachmentCount = 1,
+    .pAttachments = &colorBlendAttachment};
 ----
 
 如果你想用第二种混合方式（按位组合），就应该把 `logicOpEnable` 设为 `vk::True`。
@@ -319,12 +332,15 @@ vk::raii::PipelineLayout pipelineLayout = nullptr;
 
 [,c++]
 ----
-vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 0, .pushConstantRangeCount = 0};
+vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+    .setLayoutCount = 0,
+    .pushConstantRangeCount = 0
+};
 
 pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 ----
 
-这个结构体还用于指定_推送常量_，这是把动态值传给着色器的另一种方式，
+这个结构体还用于指定 _推送常量_，这是把动态值传给着色器的另一种方式，
 我们可能会在以后的章节中介绍。
 
 == 结论

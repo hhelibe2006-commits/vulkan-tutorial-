@@ -8,8 +8,7 @@
 
 [,c++]
 ----
-void mainLoop()
-{
+void mainLoop() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         drawFrame();
@@ -18,8 +17,8 @@ void mainLoop()
 
 ...
 
-void drawFrame()
-{
+void drawFrame() {
+
 }
 ----
 
@@ -124,7 +123,7 @@ device.waitForFences(F) // blocks execution until A has finished executing
 save_screenshot_to_disk() // can't run until the transfer has finished
 ----
 
-与信号量的例子不同，这个例子_确实_会阻塞主机的执行。
+与信号量的例子不同，这个例子 _确实_ 会阻塞主机的执行。
 这意味着主机除了等待执行完成之外不会做任何事情。
 在这个场景中，我们必须确保传输完成，才能把截图保存到磁盘。
 
@@ -269,13 +268,14 @@ recordCommandBuffer(imageIndex);
 [,c++]
 ----
 vk::PipelineStageFlags waitDestinationStageMask( vk::PipelineStageFlagBits::eColorAttachmentOutput );
-const vk::SubmitInfo   submitInfo{.waitSemaphoreCount   = 1,
-                                  .pWaitSemaphores      = &*presentCompleteSemaphore,
-                                  .pWaitDstStageMask    = &waitDestinationStageMask,
-                                  .commandBufferCount   = 1,
-                                  .pCommandBuffers      = &*commandBuffer,
-                                  .signalSemaphoreCount = 1,
-                                  .pSignalSemaphores    = &*renderFinishedSemaphore};
+const vk::SubmitInfo   submitInfo{
+    .waitSemaphoreCount   = 1,
+    .pWaitSemaphores      = &*presentCompleteSemaphore,
+    .pWaitDstStageMask    = &waitDestinationStageMask,
+    .commandBufferCount   = 1,
+    .pCommandBuffers      = &*commandBuffer,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores    = &*renderFinishedSemaphore};
 ----
 
 前三个参数指定在执行开始前要等待哪些信号量，以及在管线的哪些阶段等待。
@@ -338,7 +338,7 @@ result = queue.presentKHR(presentInfoKHR);
 
 如果到目前为止你都做对了，那么运行程序时应该会看到类似下面的画面：
 
-image::/images/triangle.png[]
+image::../../../images/triangle.png[]
 
 ____
 这个彩色三角形看起来可能与你通常在图形教程中看到的不太一样。
@@ -349,7 +349,7 @@ ____
 不过遗憾的是，启用验证层后你会发现，程序一关闭就会崩溃。
 `debugCallback` 打印到终端的消息告诉了我们原因：
 
-image::/images/semaphore_in_use.png[]
+image::../../../images/semaphore_in_use.png[]
 
 记住，`drawFrame` 中的所有操作都是异步的。
 这意味着当我们退出 `mainLoop` 的循环时，绘制与呈现操作可能仍在进行。
