@@ -80,9 +80,8 @@ auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 auto extensionProperties = context.enumerateInstanceExtensionProperties();
 for (uint32_t i = 0; i < glfwExtensionCount; ++i) {
     if (std::ranges::none_of(extensionProperties,
-                             [glfwExtension = glfwExtensions[i]](auto const& extensionProperty)
-                             { return strcmp(extensionProperty.extensionName, glfwExtension) == 0; }))
-    {
+        [glfwExtension = glfwExtensions[i]](auto const& extensionProperty)
+        { return strcmp(extensionProperty.extensionName, glfwExtension) == 0; })) {
         throw std::runtime_error("Required GLFW extension not supported: " + std::string(glfwExtensions[i]));
     }
 }
@@ -97,7 +96,7 @@ vk::InstanceCreateInfo createInfo{
 它是任何项目中最有用也最重要、应当启用的层之一。
 我们会在下一章更深入地讨论，所以现在先留空。
 
-现在我们已经指定了 Vulkan 创建实例所需的一切，终于可以创建 vk::raii::Instance 了：
+现在我们已经指定了 Vulkan 创建实例所需的一切，终于可以创建 `vk::raii::Instance` 了：
 
 [,c++]
 ----
@@ -112,8 +111,8 @@ instance = vk::raii::Instance(context, createInfo);
 * 返回指向 RAII 构造出的对象的指针。
 
 如果一切顺利，就返回了实例的句柄。我们可以通过 C{pp} 异常来检查一切是否正常。
-如果你无法使用 C{pp} 异常，可以通过定义 VULKAN_HPP_NO_EXCEPTIONS 关闭它。
-这样调用会返回一个包含 VKResult 和所返回对象的 std::tuple。下面是一个检查 Vulkan 调用中错误的例子：
+如果你无法使用 C{pp} 异常，可以通过定义 `VULKAN_HPP_NO_EXCEPTIONS` 关闭它。
+这样调用会返回一个包含 `VKResult` 和所返回对象的 `std::tuple`。下面是一个检查 Vulkan 调用中错误的例子：
 
 [,c++]
 ----
@@ -139,7 +138,7 @@ instance = vk::raii::Instance(context, createInfo);
     }
 ----
 
-或者使用 tuple：
+或者使用 `tuple`：
 
 [,c++]
 ----
