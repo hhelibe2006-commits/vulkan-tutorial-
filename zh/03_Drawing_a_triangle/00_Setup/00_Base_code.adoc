@@ -1,6 +1,9 @@
 :pp: {plus}{plus}
 
 = 基础代码
+:toc:
+:toclevels: 3
+:toc-title: 目录
 
 == Vulkan-hpp 与指定初始化器
 
@@ -12,6 +15,7 @@ NOTE: 我们将使用 C++ 20 引入的指定初始化器。
 
 如果你使用不同的构建配置，或者想从头编写代码，就需要在包含 Vulkan-hpp 头文件之前
 像这样手动定义它：
+
 [,c++]
 ----
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
@@ -120,15 +124,15 @@ https://en.wikipedia.org/wiki/Resource_Acquisition_Is_Initialization[RAII]
 在合适的地方，我们会讨论释放资源时的资源管理问题。
 不过在本教程中，我们将演示用一个基本的析构函数就能走得很远，完成收尾工作。
 
-Vulkan 对象要么用 `vkCreateXXX` 这类函数直接创建，
-要么通过另一个对象用 `vkAllocateXXX` 这类函数分配。
-在确认某个对象不再被任何地方使用后，需要用对应的 `vkDestroyXXX` 和 `vkFreeXXX` 销毁它。
+Vulkan 对象要么用 `VkCreateXXX` 这类函数直接创建，
+要么通过另一个对象用 `VkAllocateXXX` 这类函数分配。
+在确认某个对象不再被任何地方使用后，需要用对应的 `VkDestroyXXX` 和 `VkFreeXXX` 销毁它。
 这些函数的参数通常因对象类型而异，但有一个参数是所有函数共有的：`pAllocator`。
 这是一个可选参数，允许你为自定义内存分配器指定回调。
 本教程将忽略这个参数，始终传入 `nullptr` 作为实参。
 
 使用 Vulkan_hpp 的 RAII 模块，我们可以依赖库来处理
-`vkCreateXXX` `vkAllocateXXX` `vkDestroyXXX` 和 `vkFreeXXX`，
+`VkCreateXXX` `VkAllocateXXX` `VkDestroyXXX` 和 `VkFreeXXX`，
 所以像这样的代码块：
 
 [,c++]
@@ -161,11 +165,12 @@ vkDestroyInstance(instance, nullptr);
 
 [,c++]
 ----
-constexpr vk::ApplicationInfo appInfo{.pApplicationName   = "Hello Triangle",
-                                      .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
-                                      .pEngineName        = "No Engine",
-                                      .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
-                                      .apiVersion         = vk::ApiVersion14};
+constexpr vk::ApplicationInfo appInfo{
+    .pApplicationName   = "Hello Triangle",
+    .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+    .pEngineName        = "No Engine",
+    .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+    .apiVersion         = vk::ApiVersion14};
 
 vk::InstanceCreateInfo createInfo{
     .pApplicationInfo = &appInfo

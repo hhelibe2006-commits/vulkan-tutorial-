@@ -1,10 +1,13 @@
 :pp: {plus}{plus}
 
 = 实例
+:toc:
+:toclevels: 3
+:toc-title: 目录
 
 == 创建实例
 
-你需要做的第一件事，是通过创建一个*实例*来初始化 Vulkan 库。
+你需要做的第一件事，是通过创建一个 *实例* 来初始化 Vulkan 库。
 实例是应用程序与 Vulkan 库之间的连接，创建它需要向驱动指定一些关于应用程序的细节。
 
 先添加一个 `createInstance` 函数，并在 `initVulkan` 函数中调用它。
@@ -31,13 +34,13 @@ vk::raii::Instance instance = nullptr;
 
 [,c++]
 ----
-void createInstance()
-{
-    constexpr vk::ApplicationInfo appInfo{.pApplicationName   = "Hello Triangle",
-                                          .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
-                                          .pEngineName        = "No Engine",
-                                          .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
-                                          .apiVersion         = vk::ApiVersion14};
+void createInstance() {
+    constexpr vk::ApplicationInfo appInfo{
+        .pApplicationName   = "Hello Triangle",
+        .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+        .pEngineName        = "No Engine",
+        .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+        .apiVersion         = vk::ApiVersion14};
 }
 ----
 
@@ -45,7 +48,7 @@ void createInstance()
 或者——正如我们
 xref:../../03_Drawing_a_triangle/02_Graphics_pipeline_basics/01_Shader_modules.adoc[稍后]
 会谈到的那样——与 Slang 语言配合得不好，所以我们以 1.4 作为基线。
-如果用 C 的 API，我们就得指定 stype 和 pnext，啰嗦过头。
+如果用 C 的 API，我们就得指定 `sType` 和 `pNext`，啰嗦过头。
 你在其它使用 C API 的 Vulkan 项目中很可能会看到这种写法。
 使用现代 c{pp} 模块后，这些都会替你处理。
 
@@ -61,8 +64,8 @@ vk::InstanceCreateInfo createInfo{
 };
 ----
 
-这个结构体有一个名为 flags 的成员，我们会在本章后面处理它。
-pApplicationInfo 成员指向我们刚创建的 appInfo。
+这个结构体有一个名为 `flags` 的成员，我们会在本章后面处理它。
+`pApplicationInfo` 成员指向我们刚创建的 `appInfo`。
 接下来是请求的层数组，最后是所需的全局扩展数组。
 正如概述章节提到的，Vulkan 是与平台无关的 API，这意味着你需要一个扩展来与窗口系统对接。
 GLFW 有一个方便的内置函数，返回它为此所需的扩展，我们可以把它传给结构体：
@@ -75,8 +78,7 @@ auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
 // Check if the required GLFW extensions are supported by the Vulkan implementation.
 auto extensionProperties = context.enumerateInstanceExtensionProperties();
-for (uint32_t i = 0; i < glfwExtensionCount; ++i)
-{
+for (uint32_t i = 0; i < glfwExtensionCount; ++i) {
     if (std::ranges::none_of(extensionProperties,
                              [glfwExtension = glfwExtensions[i]](auto const& extensionProperty)
                              { return strcmp(extensionProperty.extensionName, glfwExtension) == 0; }))
