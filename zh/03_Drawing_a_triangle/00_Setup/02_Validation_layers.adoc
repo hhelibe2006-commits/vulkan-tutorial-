@@ -83,12 +83,13 @@ void createInstance()
     // Check if the required layers are supported by the Vulkan implementation.
     auto layerProperties = context.enumerateInstanceLayerProperties();
     auto unsupportedLayerIt = std::ranges::find_if(requiredLayers,
-		                                               [&layerProperties](auto const &requiredLayer) {
-			                                               return std::ranges::none_of(layerProperties,
-                                                                [requiredLayer](auto const &layerProperty) { return strcmp(layerProperty.layerName, requiredLayer) == 0; });
-		                                               });
-    if (unsupportedLayerIt != requiredLayers.end())
-    {
+        [&layerProperties](auto const &requiredLayer) {
+            return std::ranges::none_of(layerProperties,
+                [requiredLayer](auto const &layerProperty) {
+                    return strcmp(layerProperty.layerName, requiredLayer) == 0;
+                });
+    });
+    if (unsupportedLayerIt != requiredLayers.end()) {
         throw std::runtime_error("Required layer not supported: " + std::string(*unsupportedLayerIt));
     }
 
@@ -104,8 +105,7 @@ void createInstance()
 
 [,c++]
 ----
-std::vector<const char*> getRequiredInstanceExtensions()
-{
+std::vector<const char*> getRequiredInstanceExtensions() {
     uint32_t glfwExtensionCount = 0;
     auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
@@ -132,12 +132,13 @@ void createInstance()
     auto extensionProperties = context.enumerateInstanceExtensionProperties();
     auto unsupportedPropertyIt =
         std::ranges::find_if(requiredExtensions,
-                                [&extensionProperties](auto const &requiredExtension) {
-                                    return std::ranges::none_of(extensionProperties,
-                                                                [requiredExtension](auto const &extensionProperty) { return strcmp(extensionProperty.extensionName, requiredExtension) == 0; });
-                                });
-    if (unsupportedPropertyIt != requiredExtensions.end())
-    {
+            [&extensionProperties](auto const &requiredExtension) {
+                return std::ranges::none_of(extensionProperties,
+                    [requiredExtension](auto const &extensionProperty) {
+                        return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
+                    });
+    });
+    if (unsupportedPropertyIt != requiredExtensions.end()) {
         throw std::runtime_error("Required extension not supported: " + std::string(*unsupportedPropertyIt));
     }    
 
@@ -145,21 +146,22 @@ void createInstance()
 }
 ----
 
-现在以调试模式运行程序，确保没有出现该错误。如果出现了，请查看常见问题解答（FAQ）。
+现在以调试模式运行程序，确保没有出现该错误。如果出现了，请查看 xref:../../90_FAQ.adoc[常见问题解答（FAQ）]。
 
 最后，修改 `vk::InstanceCreateInfo` 结构体的实例化，加入验证层名称和扩展名称：
 
 [,c++]
 ----
-void createInstance()
-{
+void createInstance() {
     ...
 
-    vk::InstanceCreateInfo createInfo{.pApplicationInfo        = &appInfo,
-                                      .enabledLayerCount       = static_cast<uint32_t>(requiredLayers.size()),
-                                      .ppEnabledLayerNames     = requiredLayers.data(),
-                                      .enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size()),
-                                      .ppEnabledExtensionNames = requiredExtensions.data()};
+    vk::InstanceCreateInfo createInfo{
+        .pApplicationInfo = &appInfo,
+        .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
+        .ppEnabledLayerNames = requiredLayers.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
+        .ppEnabledExtensionNames = requiredExtensions.data()};
+
     instance = vk::raii::Instance(context, createInfo);
 }
 ----
@@ -176,14 +178,12 @@ void createInstance()
 
 [,c++]
 ----
-std::vector<const char*> getRequiredInstanceExtensions()
-{
+std::vector<const char*> getRequiredInstanceExtensions() {
     uint32_t glfwExtensionCount = 0;
     auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    if (enableValidationLayers)
-    {
+    if (enableValidationLayers) {
         extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
 
@@ -197,12 +197,12 @@ std::vector<const char*> getRequiredInstanceExtensions()
 
 [,c++]
 ----
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT       severity,
-                                                      vk::DebugUtilsMessageTypeFlagsEXT              type,
-                                                      const vk::DebugUtilsMessengerCallbackDataEXT * pCallbackData,
-                                                      void *                                         pUserData)
-{
-  std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT type,
+    const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData) {
+    std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
 
   return vk::False;
 }
@@ -211,7 +211,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
 第一个参数指定消息的严重程度，取值为以下标志之一：
 
 * `vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose`: 来自加载器、层和驱动等 Vulkan 组件的诊断消息
-* `vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo`   : 资源创建之类的提示性消息
+* `vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo`: 资源创建之类的提示性消息
 * `vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning`: 关于某种行为的消息，该行为不一定是错误，但很可能是你应用中的缺陷
 * `vk::DebugUtilsMessageSeverityFlagBitsEXT::eError`  : 关于无效行为的消息，可能导致崩溃
 
@@ -228,15 +228,15 @@ if (severity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
 
 [,c++]
 ----
-static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT       severity,
-                                                      vk::DebugUtilsMessageTypeFlagsEXT              type,
-                                                      const vk::DebugUtilsMessengerCallbackDataEXT * pCallbackData,
-                                                      void *                                         pUserData)
-{
-  if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning ||
-      severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-    std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
-  }
+static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT type,
+    const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData) {
+    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+        || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
+        std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
+        }
 
   return vk::False;
 }
@@ -252,8 +252,8 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
 
 `pCallbackData` 参数指向一个 `vk::DebugUtilsMessengerCallbackDataEXT` 结构体，其中包含消息本身的细节，最重要的成员是：
 
-* `pMessage`   : 以空字符结尾的调试消息字符串
-* `pObjects`   : 与该消息相关的 Vulkan 对象句柄数组
+* `pMessage`: 以空字符结尾的调试消息字符串
+* `pObjects`: 与该消息相关的 Vulkan 对象句柄数组
 * `objectCount`: 数组中的对象数量
 
 最后，`pUserData` 参数包含在设置回调时指定的指针，让你可以向回调传入自己的数据。
@@ -288,16 +288,18 @@ void setupDebugMessenger()
 
 [,c++]
 ----
-void setupDebugMessenger()
-{
+void setupDebugMessenger() {
     ...
-    vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                                                        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
-    vk::DebugUtilsMessageTypeFlagsEXT     messageTypeFlags(
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
-    vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{.messageSeverity = severityFlags,
-                                                                          .messageType     = messageTypeFlags,
-                                                                          .pfnUserCallback = &debugCallback};
+    vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+        | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
+    vk::DebugUtilsMessageTypeFlagsEXT messageTypeFlags(
+        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral
+        | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+        | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
+    vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
+        .messageSeverity = severityFlags,
+        .messageType     = messageTypeFlags,
+        .pfnUserCallback = &debugCallback};
     debugMessenger = instance.createDebugUtilsMessengerEXT( debugUtilsMessengerCreateInfoEXT );
 }
 ----
@@ -314,30 +316,31 @@ void setupDebugMessenger()
 
 [,c++]
 ----
-void createInstance()
-{
-    constexpr vk::ApplicationInfo appInfo{ .pApplicationName   = "Hello Triangle",
-                .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
-                .pEngineName        = "No Engine",
-                .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
-                .apiVersion         = vk::ApiVersion14 };
+void createInstance() {
+    constexpr vk::ApplicationInfo appInfo{
+        .pApplicationName   = "Hello Triangle",
+        .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+        .pEngineName        = "No Engine",
+        .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+        .apiVersion         = vk::ApiVersion14 };
 
     // Get the required layers
     std::vector<char const*> requiredLayers;
-    if (enableValidationLayers)
-        {
-            requiredLayers.assign(validationLayers.begin(), validationLayers.end());
-        }
+    if (enableValidationLayers) {
+        requiredLayers.assign(validationLayers.begin(), validationLayers.end());
+    }
 
     // Check if the required layers are supported by the Vulkan implementation.
     auto layerProperties = context.enumerateInstanceLayerProperties();
     auto unsupportedLayerIt = std::ranges::find_if(requiredLayers,
-                                                   [&layerProperties](auto const &requiredLayer) {
-                                                       return std::ranges::none_of(layerProperties,
-                                                                                   [requiredLayer](auto const &layerProperty) { return strcmp(layerProperty.layerName, requiredLayer) == 0; });
-                                                   });
-    if (unsupportedLayerIt != requiredLayers.end())
-    {
+        [&layerProperties](auto const &requiredLayer) {
+            return std::ranges::none_of(layerProperties,
+                [requiredLayer](auto const &layerProperty) {
+                    return strcmp(layerProperty.layerName, requiredLayer) == 0;
+                });
+    });
+
+    if (unsupportedLayerIt != requiredLayers.end()) {
         throw std::runtime_error("Required layer not supported: " + std::string(*unsupportedLayerIt));
     }
 
@@ -348,20 +351,22 @@ void createInstance()
     auto extensionProperties = context.enumerateInstanceExtensionProperties();
 		auto unsupportedPropertyIt =
 		    std::ranges::find_if(requiredExtensions,
-		                         [&extensionProperties](auto const &requiredExtension) {
-			                         return std::ranges::none_of(extensionProperties,
-			                                                     [requiredExtension](auto const &extensionProperty) { return strcmp(extensionProperty.extensionName, requiredExtension) == 0; });
-		                         });
-		if (unsupportedPropertyIt != requiredExtensions.end())
-		{
+		        [&extensionProperties](auto const &requiredExtension) {
+		            return std::ranges::none_of(extensionProperties,
+		                [requiredExtension](auto const &extensionProperty) {
+		                    return strcmp(extensionProperty.extensionName, requiredExtension) == 0;
+		            });
+		});
+
+		if (unsupportedPropertyIt != requiredExtensions.end()) {
 			throw std::runtime_error("Required extension not supported: " + std::string(*unsupportedPropertyIt));
 		}
 
     vk::InstanceCreateInfo createInfo{
-        .pApplicationInfo        = &appInfo,
-        .enabledLayerCount       = static_cast<uint32_t>(requiredLayers.size()),
-        .ppEnabledLayerNames     = requiredLayers.data(),
-        .enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size()),
+        .pApplicationInfo = &appInfo,
+        .enabledLayerCount = static_cast<uint32_t>(requiredLayers.size()),
+        .ppEnabledLayerNames = requiredLayers.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
         .ppEnabledExtensionNames = requiredExtensions.data() };
     instance = vk::raii::Instance(context, createInfo);
 }

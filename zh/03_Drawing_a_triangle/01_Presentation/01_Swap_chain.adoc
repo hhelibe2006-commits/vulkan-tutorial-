@@ -2,7 +2,7 @@
 
 = 交换链
 
-Vulkan 没有「默认帧缓冲区」的概念，因此它需要一套基础设施来持有我们渲染所用的缓冲区，直到把这些图像显示到屏幕上。这套基础设施称为*交换链*，在 Vulkan 中必须显式创建。交换链本质上是一个图像队列，队列中的图像等待被呈现到屏幕。我们的应用程序会获取其中一张图像并在其上绘制，然后把这张图像归还到队列。队列的具体工作方式以及从队列中呈现图像的条件，取决于交换链是如何设置的。不过，交换链的总体用途是让图像的呈现与屏幕的刷新率同步。
+Vulkan 没有「默认帧缓冲区」的概念，因此它需要一套基础设施来持有我们渲染所用的缓冲区，直到把这些图像显示到屏幕上。这套基础设施称为 *交换链*，在 Vulkan 中必须显式创建。交换链本质上是一个图像队列，队列中的图像等待被呈现到屏幕。我们的应用程序会获取其中一张图像并在其上绘制，然后把这张图像归还到队列。队列的具体工作方式以及从队列中呈现图像的条件，取决于交换链是如何设置的。不过，交换链的总体用途是让图像的呈现与屏幕的刷新率同步。
 
 == 检查交换链支持
 
@@ -18,7 +18,7 @@ std::vector<const char*> requiredDeviceExtension = {
     vk::KHRSwapchainExtensionName};
 ----
 
-需要注意，正如我们在上一章检查过的，呈现队列可用就意味着交换链扩展一定受支持。我们在 xref:03_Drawing_a_triangle/00_Setup/04_Logical_device_and_queues.adoc[创建逻辑设备]时已经把 `requiredDeviceExtension` 传给了 `vk::DeviceCreateInfo`，因此该扩展已经启用，这里不需要再写额外的设备创建代码。
+需要注意，正如我们在上一章检查过的，呈现队列可用就意味着交换链扩展一定受支持。我们在 xref:../00_Setup/04_Logical_device_and_queues.adoc[创建逻辑设备]时已经把 `requiredDeviceExtension` 传给了 `vk::DeviceCreateInfo`，因此该扩展已经启用，这里不需要再写额外的设备创建代码。
 
 == 查询交换链支持详情
 
@@ -201,11 +201,11 @@ void initVulkan() {
 
 void createSwapChain() {
     vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR( *surface );
-    swapChainExtent                                = chooseSwapExtent(surfaceCapabilities);
-    uint32_t minImageCount                         = chooseSwapMinImageCount(surfaceCapabilities);
+    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+    uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
     
     std::vector<vk::SurfaceFormatKHR> availableFormats = physicalDevice.getSurfaceFormatsKHR(*surface);
-    swapChainSurfaceFormat                             = chooseSwapSurfaceFormat(availableFormats);
+    swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
 }
 ----
 

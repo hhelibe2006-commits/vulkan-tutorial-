@@ -1,10 +1,13 @@
 :pp: {plus}{plus}
 
 = 物理设备与队列族
+:toc:
+:toclevels: 3
+:toc-title: 目录
 
 == 选择物理设备
 
-通过 vk::raii::Instance 初始化 Vulkan 库之后，我们需要在系统中寻找并选择一块支持所需特性的显卡。实际上，你可以选择任意数量的显卡并同时使用它们，但本教程中我们只使用第一块满足需求的显卡。
+通过 `vk::raii::Instance` 初始化 Vulkan 库之后，我们需要在系统中寻找并选择一块支持所需特性的显卡。实际上，你可以选择任意数量的显卡并同时使用它们，但本教程中我们只使用第一块满足需求的显卡。
 
 我们添加一个 `pickPhysicalDevice` 函数，并在 `initVulkan` 函数中调用它。
 
@@ -22,7 +25,7 @@ void pickPhysicalDevice()
 }
 ----
 
-最终选中的显卡将保存在一个作为新类成员添加的 vk::raii::PhysicalDevice 中。
+最终选中的显卡将保存在一个作为新类成员添加的 `vk::raii::PhysicalDevice` 中。
 
 [,c++]
 ----
@@ -40,8 +43,7 @@ auto physicalDevices = instance.enumeratePhysicalDevices()
 
 [,c++]
 ----
-if (physicalDevices.empty())
-{
+if (physicalDevices.empty()) {
     throw std::runtime_error("failed to find GPUs with Vulkan support!");
 }
 ----
@@ -58,14 +60,14 @@ for (auto physicalDevice : physicalDevices)
 
 == 设备适用性的基础检查
 
-要评估设备的适用性，可以先查询一些细节。名称、类型和支持的 Vulkan 版本这类基本设备属性可以用 vk::raii::PhysicalDevice::getProperties 查询。
+要评估设备的适用性，可以先查询一些细节。名称、类型和支持的 Vulkan 版本这类基本设备属性可以用 `vk::raii::PhysicalDevice::getProperties` 查询。
 
 [,c++]
 ----
 auto deviceProperties = physicalDevice.getProperties();
 ----
 
-纹理压缩、64 位浮点数和多视口渲染（对 VR 很有用）这类可选特性的支持情况，可以用 vk::raii::PhysicalDevice::getFeatures 查询：
+纹理压缩、64 位浮点数和多视口渲染（对 VR 很有用）这类可选特性的支持情况，可以用 `vk::raii::PhysicalDevice::getFeatures` 查询：
 
 [,c++]
 ----
@@ -78,8 +80,7 @@ auto deviceFeatures = physicalDevice.getFeatures();
 
 [,c++]
 ----
-bool isDeviceSuitable(vk::raii::PhysicalDevice const & physicalDevice)
-{
+bool isDeviceSuitable(vk::raii::PhysicalDevice const & physicalDevice) {
     auto deviceProperties = physicalDevice.getProperties();
     auto deviceFeatures = physicalDevice.getFeatures();
 
@@ -147,14 +148,15 @@ void pickPhysicalDevice()
 本教程并不需要你实现这一整套，这只是让你了解可以如何设计设备选择流程。当然，你也可以列出可选项的名称让用户自己选择。
 
 本教程中，我们使用四个标准，物理设备必须全部满足才会被选中：
+
 - 支持 Vulkan 1.3，
 - 有一个支持图形操作的队列族，
-- 支持所有必需的扩展（这里我们只需要 vk::KHRSwapchainExtensionName），以及
+- 支持所有必需的扩展（这里我们只需要 `vk::KHRSwapchainExtensionName`）
 - 支持所有必需的特性。
 
 === API 版本检查
 
-要检查是否支持 Vulkan 1.3，可以查看物理设备属性的 apiVersion：
+要检查是否支持 Vulkan 1.3，可以查看物理设备属性的 `apiVersion`：
 
 [,c++]
 ----
@@ -176,7 +178,7 @@ bool supportsGraphics =
 
 === 必需扩展检查
 
-目前我们只需要一个扩展：vk::KHRSwapchainExtensionName。但无论需要多少个扩展，我们都必须验证每个必需的设备扩展确实被该物理设备支持：
+目前我们只需要一个扩展：`vk::KHRSwapchainExtensionName`。但无论需要多少个扩展，我们都必须验证每个必需的设备扩展确实被该物理设备支持：
 [,c++]
 ----
 std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
@@ -184,12 +186,12 @@ std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionNam
 auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 bool supportsAllRequiredExtensions =
   std::ranges::all_of( requiredDeviceExtension,
-                       [&availableDeviceExtensions]( auto const & requiredDeviceExtension )
-                       {
-                           return std::ranges::any_of( availableDeviceExtensions,
-                                                       [requiredDeviceExtension]( auto const & availableDeviceExtension )
-                                                       { return strcmp( availableDeviceExtension.extensionName, requiredDeviceExtension ) == 0; } );
-                       } );
+      [&availableDeviceExtensions]( auto const & requiredDeviceExtension ) {
+          return std::ranges::any_of( availableDeviceExtensions,
+              [requiredDeviceExtension]( auto const & availableDeviceExtension ) {
+                  return strcmp( availableDeviceExtension.extensionName, requiredDeviceExtension ) == 0;
+              });
+});
 ----
 
 === 必需特性检查
@@ -198,13 +200,14 @@ bool supportsAllRequiredExtensions =
 
 [,c++]
 ----
-auto features                 = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2,
-                                                                     vk::PhysicalDeviceVulkan11Features,
-                                                                     vk::PhysicalDeviceVulkan13Features,
-                                                                     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
-                                features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-                                features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+auto features = physicalDevice.getFeatures2<vk::PhysicalDeviceFeatures2,
+vk::PhysicalDeviceVulkan11Features,
+vk::PhysicalDeviceVulkan13Features,
+vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+
+bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+&& features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
+&& features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 ----
 
 == 完整函数
@@ -215,8 +218,7 @@ bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11
 ----
 std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
 
-bool isDeviceSuitable( vk::raii::PhysicalDevice const & physicalDevice )
-{
+bool isDeviceSuitable( vk::raii::PhysicalDevice const & physicalDevice ) {
   // Check if the physicalDevice supports the Vulkan 1.3 API version
   bool supportsVulkan1_3 = physicalDevice.getProperties().apiVersion >= vk::ApiVersion13;
 
@@ -228,32 +230,30 @@ bool isDeviceSuitable( vk::raii::PhysicalDevice const & physicalDevice )
   auto availableDeviceExtensions = physicalDevice.enumerateDeviceExtensionProperties();
   bool supportsAllRequiredExtensions =
     std::ranges::all_of( requiredDeviceExtension,
-                         [&availableDeviceExtensions]( auto const & requiredDeviceExtension )
-                         {
-                           return std::ranges::any_of( availableDeviceExtensions,
-                                                       [requiredDeviceExtension]( auto const & availableDeviceExtension )
-                                                       { return strcmp( availableDeviceExtension.extensionName, requiredDeviceExtension ) == 0; } );
-                         } );
+        [&availableDeviceExtensions]( auto const & requiredDeviceExtension ) {
+            return std::ranges::any_of( availableDeviceExtensions,
+                [requiredDeviceExtension]( auto const & availableDeviceExtension ) {
+                    return strcmp( availableDeviceExtension.extensionName, requiredDeviceExtension ) == 0;
+            });
+  });
 
   // Check if the physicalDevice supports the required features (shader draw parameters, dynamic rendering and extended dynamic state)
-  auto features                 = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2,
-                                                                       vk::PhysicalDeviceVulkan11Features,
-                                                                       vk::PhysicalDeviceVulkan13Features,
-                                                                       vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-  bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
-                                  features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-                                  features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+  auto features = physicalDevice.getFeatures2<vk::PhysicalDeviceFeatures2,
+    vk::PhysicalDeviceVulkan11Features,
+    vk::PhysicalDeviceVulkan13Features,
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
+    && features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
+    && features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
   // Return true if the physicalDevice meets all the criteria
-  return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
+    return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
 }
 
-void pickPhysicalDevice()
-{
+void pickPhysicalDevice() {
   std::vector<vk::raii::PhysicalDevice> physicalDevices = instance.enumeratePhysicalDevices();
   auto const devIter = std::ranges::find_if( physicalDevices, [&]( auto const & physicalDevice ) { return isDeviceSuitable( physicalDevice ); } );
-  if ( devIter == physicalDevices.end() )
-  {
+  if ( devIter == physicalDevices.end() ) {
     throw std::runtime_error( "failed to find a suitable GPU!" );
   }
   physicalDevice = *devIter;

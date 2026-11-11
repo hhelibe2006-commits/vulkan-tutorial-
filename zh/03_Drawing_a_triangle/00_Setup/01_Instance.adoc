@@ -166,7 +166,7 @@ instance = vk::raii::Instance(context, createInfo);
 
 == 遇到 vk::Result::eErrorIncompatibleDriver：
 如果在 macOS 上使用最新的 MoltenVK SDK，你可能会遇到 `vk::Result::eErrorIncompatibleDriver`，
-它从 `vk::raii::createInstance` 或 vk::raii::Instance 构造函数中抛出。根据
+它从 `vk::raii::createInstance` 或 `vk::raii::Instance` 构造函数中抛出。根据
 https://vulkan.lunarg.com/doc/sdk/1.3.216.0/mac/getting_started.html[入门说明]，
 从 1.3.216 版 Vulkan SDK 开始，`VK_KHR_PORTABILITY_subset` 扩展是必需的。
 
@@ -178,11 +178,13 @@ https://vulkan.lunarg.com/doc/sdk/1.3.216.0/mac/getting_started.html[入门说�
 
 [,c++]
 ----
-constexpr vk::ApplicationInfo appInfo{.pApplicationName   = "Hello Triangle",
-                                      .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
-                                      .pEngineName        = "No Engine",
-                                      .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
-                                      .apiVersion         = vk::ApiVersion14};
+constexpr vk::ApplicationInfo appInfo{
+    .pApplicationName   = "Hello Triangle",
+    .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+    .pEngineName        = "No Engine",
+    .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+    .apiVersion         = vk::ApiVersion14};
+
 vk::InstanceCreateInfo createInfo{
     .flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
     .pApplicationInfo = &appInfo,
@@ -199,7 +201,7 @@ instance = vk::raii::Instance(m_context, createInfo);
 
 要在创建实例之前获取受支持扩展的列表，可以使用
 `vk::raii::Context::enumerateInstanceExtensionProperties` 函数。
-它返回一个可用扩展的 vector，让我们可以按特定的验证层筛选扩展，这一点我们暂时忽略。
+它返回一个可用扩展的 `vector`，让我们可以按特定的验证层筛选扩展，这一点我们暂时忽略。
 
 [,c++]
 ----

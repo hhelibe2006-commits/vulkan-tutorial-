@@ -65,6 +65,7 @@ vk::PhysicalDeviceFeatures deviceFeatures;
 Vulkan 在设计上保持向后兼容，这意味着默认情况下你只能访问 Vulkan 1.0 就已具备的基础特性。要使用更新的特性，你需要在创建设备时显式请求它们。
 
 在 Vulkan 中，特性按引入时间或所属功能被组织到不同的结构体中。例如：
+
 - 基础特性在 `vk::PhysicalDeviceFeatures` 中
 - Vulkan 1.3 特性在 `vk::PhysicalDeviceVulkan13Features` 中
 - 扩展专属特性位于各自的结构体中（如 `vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT`）
@@ -173,6 +174,6 @@ vk::raii::Queue graphicsQueue = nullptr;
 graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
 ----
 
-有了逻辑设备和队列句柄，我们现在真的可以开始用显卡做事了！在 xref:/03_Drawing_a_triangle/01_Presentation/00_Window_surface.adoc[接下来的几章] 中，我们会设置资源，把结果呈现到窗口系统。
+有了逻辑设备和队列句柄，我们现在真的可以开始用显卡做事了！在 xref:../01_Presentation/00_Window_surface.adoc[接下来的几章] 中，我们会设置资源，把结果呈现到窗口系统。
 
-link:/attachments/04_logical_device.cpp[C{pp} 代码]
+link:../../../attachments/04_logical_device.cpp[C{pp} 代码]
