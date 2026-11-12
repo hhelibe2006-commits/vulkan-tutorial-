@@ -15,12 +15,12 @@ mipmap 被用作一种_细节层次_（_Level of Detail_，LOD）。
 使用较小的图像可以提升渲染速度，并避免 https://en.wikipedia.org/wiki/Moir%C3%A9_pattern[摩尔纹] 之类的瑕疵。
 下面是 mipmap 的一个示例：
 
-image::/images/mipmaps_example.jpg[]
+image::../images/mipmaps_example.jpg[]
 
 == 创建图像
 
 在 Vulkan 中，每一张 mip 图像都存储在 `vk::Image` 的不同_mip 层级_中。
-mip 层级 0 是原始图像，层级 0 之后的 mip 层级通常被称为_mip 链_。
+mip 层级 0 是原始图像，层级 0 之后的 mip 层级通常被称为 _mip 链_。
 
 mip 层级的数量在创建 `vk::Image` 时指定。
 到目前为止，我们一直把这个值设为 1。
@@ -63,12 +63,12 @@ std::pair<vk::raii::Image, vk::raii::DeviceMemory>
                 vk::Format              format,
                 vk::ImageTiling         tiling,
                 vk::ImageUsageFlags     usage,
-                vk::MemoryPropertyFlags properties)
-{
-    vk::ImageCreateInfo imageInfo{.imageType     = vk::ImageType::e2D,
-                                  .format        = format,
-                                  .extent        = {width, height, 1},
-                                  .mipLevels     = mipLevels,
+                vk::MemoryPropertyFlags properties) {
+    vk::ImageCreateInfo imageInfo{
+        .imageType     = vk::ImageType::e2D,
+        .format        = format,
+        .extent        = {width, height, 1},
+        .mipLevels     = mipLevels,
     ...
 }
 ----
@@ -91,12 +91,13 @@ vk::raii::ImageView createImageView(vk::Image const &image, vk::Format format, v
 void transitionImageLayout(
     vk::raii::CommandBuffer &commandBuffer, vk::raii::Image const &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels)
 {
-		vk::ImageMemoryBarrier barrier{.oldLayout           = oldLayout,
-		                               .newLayout           = newLayout,
-		                               .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-		                               .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-		                               .image               = image,
-		                               .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = mipLevels, .layerCount = 1}};
+		vk::ImageMemoryBarrier barrier{
+		    .oldLayout           = oldLayout,
+		    .newLayout           = newLayout,
+		    .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+		    .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+		    .image               = image,
+		    .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = mipLevels, .layerCount = 1}};
     ...
 ----
 
@@ -197,16 +198,16 @@ void generateMipmaps(vk::raii::CommandBuffer &commandBuffer,
                      vk::raii::Image         &image,
                      int32_t                  texWidth,
                      int32_t                  texHeight,
-                     uint32_t                 mipLevels)
-{
-		vk::ImageMemoryBarrier barrier = {.srcAccessMask       = vk::AccessFlagBits::eTransferWrite,
-		                                  .dstAccessMask       = vk::AccessFlagBits::eTransferRead,
-		                                  .oldLayout           = vk::ImageLayout::eTransferDstOptimal,
-		                                  .newLayout           = vk::ImageLayout::eTransferSrcOptimal,
-		                                  .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-		                                  .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-		                                  .image               = image,
-										  .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1}};
+                     uint32_t                 mipLevels) {
+    vk::ImageMemoryBarrier barrier = {
+        .srcAccessMask       = vk::AccessFlagBits::eTransferWrite,
+        .dstAccessMask       = vk::AccessFlagBits::eTransferRead,
+        .oldLayout           = vk::ImageLayout::eTransferDstOptimal,
+        .newLayout           = vk::ImageLayout::eTransferSrcOptimal,
+        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .image               = image,
+        .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1}};
 }
 ----
 
@@ -477,12 +478,12 @@ void createTextureSampler()
 
 现在运行程序，你应该会看到：
 
-image::/images/mipmaps.png[]
+image::../images/mipmaps.png[]
 
 由于我们的场景非常简单，差别并不明显。
 但仔细看的话，会有细微的差别。
 
-image::/images/mipmaps_comparison.png[]
+image::../images/mipmaps_comparison.png[]
 
 最明显的差别是纸张上的文字。
 使用 mipmap 时，文字变得平滑了。
@@ -498,7 +499,7 @@ samplerInfo.minLod = static_cast<float>(mipLevels / 2);
 
 这些设置会产生下面这张图像：
 
-image::/images/highmipmaps.png[]
+image::../images/highmipmaps.png[]
 
 当对象离相机更远时，就会这样使用更高的 mip 层级。
 

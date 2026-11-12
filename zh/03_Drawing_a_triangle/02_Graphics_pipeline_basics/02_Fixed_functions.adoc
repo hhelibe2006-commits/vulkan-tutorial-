@@ -1,6 +1,9 @@
 :pp: {plus}{plus}
 
 = 固定功能
+:toc:
+:toclevels: 3
+:toc-title: 目录
 
 较早的图形 API 会为图形管线的多数阶段提供默认状态。在 Vulkan 中，大多数管线状态
 都必须由你显式指定，因为它们会被固化到一个不可变的管线状态对象中。本章我们会
@@ -17,7 +20,10 @@
 ----
 std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 
-vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+vk::PipelineDynamicStateCreateInfo dynamicState{
+    .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+    .pDynamicStates = dynamicStates.data()
+};
 ----
 
 这样这些值的配置会被忽略，而你就能（也必须）在绘制时指定数据。
@@ -68,7 +74,9 @@ vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 
 [,c++]
 ----
-vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::PrimitiveTopology::eTriangleList};
+vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+    .topology = vk::PrimitiveTopology::eTriangleList
+};
 ----
 
 == 视口与剪刀矩形
@@ -78,7 +86,11 @@ vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::Primitive
 
 [,c++]
 ----
-vk::Viewport viewport{0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f};
+vk::Viewport viewport{
+    0.0f, 0.0f,
+    static_cast<float>(swapChainExtent.width),
+    static_cast<float>(swapChainExtent.height),
+    0.0f, 1.0f};
 ----
 
 记住，交换链及其图像的大小可能与窗口的 `WIDTH` 和 `HEIGHT` 不同。
@@ -114,19 +126,25 @@ vk::Rect2D scissor{vk::Offset2D{ 0, 0 }, swapChainExtent};
 ----
 std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 
-vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+vk::PipelineDynamicStateCreateInfo dynamicState{
+    .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+    .pDynamicStates = dynamicStates.data()
+};
 ----
 
 然后在创建管线时只需指定它们的数量：
 
 [,c++]
 ----
-vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+vk::PipelineViewportStateCreateInfo viewportState{
+    .viewportCount = 1,
+    .scissorCount = 1
+};
 ----
 
 实际的视口和剪刀矩形稍后会在绘制时设置。
 
-使用动态状态，甚至可以在单个命令缓冲区中指定不同的视口和/或剪刀矩形。
+使用动态状态，甚至可以在单个命令缓冲区中指定不同的视口和剪刀矩形。
 
 如果不使用动态状态，就需要通过 `vk::PipelineViewportStateCreateInfo`
 结构体在管线中设置视口和剪刀矩形。
@@ -135,7 +153,12 @@ vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCo
 
 [,c++]
 ----
-vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .pViewports = &viewport, .scissorCount = 1, .pScissors = &scissor};
+vk::PipelineViewportStateCreateInfo viewportState{
+    .viewportCount = 1,
+    .pViewports = &viewport,
+    .scissorCount = 1,
+    .pScissors = &scissor
+};
 ----
 
 无论用哪种方式设置，某些显卡都支持使用多个视口和剪刀矩形，所以这些结构体成员
@@ -175,9 +198,9 @@ vk::PipelineRasterizationStateCreateInfo rasterizer{
 `polygonMode` 决定几何体如何生成片元。
 可用的模式有：
 
-* `vk::PolygonMode::eFill`：用片元填充多边形的区域
-* `vk::PolygonMode::eLine`：多边形边缘绘制为线
-* `vk::PolygonMode::ePoint`：多边形顶点绘制为点
+* `vk::PolygonMode::eFill`：用片元填充多边形的区域(把整个三角形都画了)
+* `vk::PolygonMode::eLine`：多边形边缘绘制为线(只画边)
+* `vk::PolygonMode::ePoint`：多边形顶点绘制为点(只画点)
 
 使用除填充之外的任何模式都需要启用一项 GPU 特性。
 
@@ -216,7 +239,7 @@ vk::PipelineMultisampleStateCreateInfo multisampling{
 
 == 深度与模板测试
 
-如果你使用深度缓冲和/或模板缓冲区，还需要通过
+如果你使用深度缓冲和模板缓冲区，还需要通过
 `vk::PipelineDepthStencilStateCreateInfo` 配置深度测试和模板测试。
 我们现在还没有，所以可以直接传 `nullptr` 而不是这类结构体的指针。
 我们会在深度缓冲那一章再回来讨论。
@@ -318,7 +341,7 @@ vk::PipelineColorBlendStateCreateInfo colorBlending{
 可以在绘制时修改，从而改变着色器的行为而无需重新创建着色器。
 它们通常用于把变换矩阵传给顶点着色器，或者在片元着色器中创建纹理采样器。
 
-这些 uniform 值需要在创建管线时通过创建 `vk::PipelineLayout` 对象来指定。
+这些 `uniform` 值需要在创建管线时通过创建 `vk::PipelineLayout` 对象来指定。
 虽然我们到以后的章节才会用到它们，但仍然必须创建一个空的管线布局。
 
 创建一个类成员来保存这个对象，因为稍后我们会从其他函数中引用它：

@@ -92,6 +92,7 @@ Vulkan Configurator 工具（所有平台上可执行文件都叫 `vkconfig`）�
    - 这样可确保各开发机器上的 Vulkan 环境一致
 
 在以下情况下使用 Vulkan Configurator 尤其有帮助：
+
 - 用不同验证层配置调试 Vulkan 应用
 - 在不修改代码的情况下用不同 Vulkan 设置测试应用
 - 搭建具有特定 Vulkan 要求的开发环境

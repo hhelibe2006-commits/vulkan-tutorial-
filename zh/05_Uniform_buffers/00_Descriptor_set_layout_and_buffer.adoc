@@ -133,8 +133,12 @@ void createDescriptorSetLayout()
 [,c++]
 ----
 void createDescriptorSetLayout() {
-		vk::DescriptorSetLayoutBinding uboLayoutBinding{
-		    .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex};
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex
+    };
 }
 ----
 
@@ -335,7 +339,7 @@ GLM 最初是为 OpenGL 设计的，OpenGL 中裁剪坐标的 Y 坐标与 Vulkan
 一种常见的补偿方式是把投影矩阵中 Y 缩放因子的符号取反（`ubo.proj[1][1] *= -1;`）。
 这样做可行，但它同时会翻转投影矩阵的手性，于是凡是启用背面剔除的地方都需要翻转 `frontFace`，还可能让下游任何假定标准右手投影的代码出错。
 作为替代，我们在视口阶段做同样的修正，那里完全不会碰投影矩阵。
-回到你在 xref:03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc[命令缓冲区] 中设置的 `vk::Viewport`，给它一个负的高度：
+回到你在 xref:../03_Drawing_a_triangle/03_Drawing/01_Command_buffers.adoc[命令缓冲区] 中设置的 `vk::Viewport`，给它一个负的高度：
 
 [,c++]
 ----

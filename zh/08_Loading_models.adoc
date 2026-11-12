@@ -44,8 +44,8 @@ return texture.Sample(vertIn.fragTexCoord);
 对本教程而言，我选择的是 https://sketchfab.com/3d-models/viking-room-a49f1b8e4f5c4ecf9e1fe7d81915ad38[Viking room] 模型，作者是 https://sketchfab.com/nigelgoh[nigelgoh]（https://web.archive.org/web/20200428202538/https://sketchfab.com/3d-models/viking-room-a49f1b8e4f5c4ecf9e1fe7d81915ad38[CC BY 4.0]）。
 我调整了模型的尺寸和朝向，让它可以直接替换当前的几何体：
 
-* xref:attachment$assets/viking_room.obj[viking_room.obj]
-* xref:attachment$assets/viking_room.png[viking_room.png]
+* xref:../attachment$assets/viking_room.obj[viking_room.obj]
+* xref:../attachment$assets/viking_room.png[viking_room.png]
 
 你也可以随意用自己的模型，但要确保它只包含一种材质，且尺寸大约为 1.5 x 1.5 x 1.5 单位。
 如果比这更大，你就得修改视图矩阵。
@@ -204,7 +204,7 @@ vertex.color = {1.0f, 1.0f, 1.0f};
 
 现在运行程序，你应该会看到类似下面的结果：
 
-image::/images/inverted_texture_coordinates.png[]
+image::../images/inverted_texture_coordinates.png[]
 
 很好，几何体看起来是正确的，但纹理出了什么问题？
 OBJ 格式假设的坐标系中，垂直坐标 `0` 表示图像底部，而我们上传到 Vulkan 的图像采用的是从上到下的方向，其中 `0` 表示图像顶部。
@@ -220,7 +220,7 @@ vertex.texCoord = {
 
 再次运行程序，现在你应该能看到正确的结果：
 
-image::/images/drawing_model.png[]
+image::../images/drawing_model.png[]
 
 有了这样的演示，之前所有的辛苦终于开始有回报了！
 
@@ -252,13 +252,12 @@ for (const auto& shape : shapes)
 
         ...
 
-				auto [it, inserted] = uniqueVertices.insert({vertex, static_cast<uint32_t>(vertices.size())});
-				if (inserted)
-				{
+        auto [it, inserted] = uniqueVertices.insert({vertex, static_cast<uint32_t>(vertices.size())});
+        if (inserted) {
             vertices.push_back(vertex);
-				}
+        }
 
-				indices.push_back(it->second);
+        indices.push_back(it->second);
     }
 }
 ----

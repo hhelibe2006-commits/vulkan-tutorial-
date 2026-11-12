@@ -8,21 +8,21 @@
 现在图像平滑了许多；但仔细观察，你会注意到绘制的几何图形边缘有锯齿状的图案。
 在我们早期渲染一个四边形时，这一点尤其明显：
 
-image::/images/texcoord_visualization.png[]
+image::../images/texcoord_visualization.png[]
 
 这种不想要的效果叫做「走样」（aliasing），它是可用于渲染的像素数量有限造成的。
 由于目前还不存在分辨率无限的显示器，所以它在某种程度上总是可见的。
-有很多方法可以解决它，本章我们将聚焦其中比较流行的一种：https://en.wikipedia.org/wiki/Multisample_anti-aliasing[多重采样抗锯齿]（MSAA）。
+有很多方法可以解决它，本章我们将聚焦其中比较流行的一种： https://en.wikipedia.org/wiki/Multisample_anti-aliasing[多重采样抗锯齿]（MSAA）。
 
 在普通渲染中，像素颜色基于单个采样点确定，这个点大多数情况下是屏幕上目标像素的中心。
 如果绘制的线条有一部分穿过某个像素，但没有覆盖到采样点，该像素就会保持空白，从而产生锯齿状的「阶梯」效果。
 
-image::/images/aliasing.png[]
+image::../images/aliasing.png[]
 
 MSAA 的做法是对每个像素使用多个采样点（名字由此而来）来确定它的最终颜色。
 可以想见，采样点越多结果越好，但计算开销也越大。
 
-image::/images/antialiasing.png[]
+image::../images/antialiasing.png[]
 
 在我们的实现中，我们将使用可用的最大采样数。
 具体到你的应用，这未必总是最佳方案；如果最终结果满足你的质量要求，那么为了更高的性能而使用更少的采样数可能更好。
@@ -48,8 +48,7 @@ vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1;
 
 [,c++]
 ----
-vk::SampleCountFlagBits getMaxUsableSampleCount()
-{
+vk::SampleCountFlagBits getMaxUsableSampleCount() {
   vk::PhysicalDeviceProperties physicalDeviceProperties = physicalDevice->getProperties();
 
   vk::SampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
@@ -279,16 +278,16 @@ void recordCommandBuffer(uint32_t imageIndex)
 
 现在运行程序，你应该会看到下面的结果：
 
-image::/images/multisampling.png[]
+image::../images/multisampling.png[]
 
 与 mipmap 生成时一样，差异可能不会立刻显现。
 仔细观察，你会发现边缘不再那么锯齿分明，整幅图像相比原来也平滑了一些。
 
-image::/images/multisampling_comparison.png[]
+image::../images/multisampling_comparison.png[]
 
 近距离观察某条边缘时，差异更加明显：
 
-image::/images/multisampling_comparison2.png[]
+image::../images/multisampling_comparison2.png[]
 
 == 质量改进
 
@@ -322,7 +321,7 @@ void createGraphicsPipeline()
 
 在这个例子里，我们让采样着色保持关闭，但在某些场景下质量提升会很明显：
 
-image::/images/sample_shading.png[]
+image::../images/sample_shading.png[]
 
 == 下一步
 

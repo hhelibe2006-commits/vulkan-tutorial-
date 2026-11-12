@@ -235,18 +235,19 @@ uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const &surfaceCapabi
 
 [,c++]
 ----
-vk::SwapchainCreateInfoKHR swapChainCreateInfo{.surface          = *surface,
-                                               .minImageCount    = minImageCount,
-                                               .imageFormat      = swapChainSurfaceFormat.format,
-                                               .imageColorSpace  = swapChainSurfaceFormat.colorSpace,
-                                               .imageExtent      = swapChainExtent,
-                                               .imageArrayLayers = 1,
-                                               .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
-                                               .imageSharingMode = vk::SharingMode::eExclusive,
-                                               .preTransform     = surfaceCapabilities.currentTransform,
-                                               .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                               .presentMode      = chooseSwapPresentMode(availablePresentModes),
-                                               .clipped          = true};
+vk::SwapchainCreateInfoKHR swapChainCreateInfo{
+    .surface          = *surface,
+    .minImageCount    = minImageCount,
+    .imageFormat      = swapChainSurfaceFormat.format,
+    .imageColorSpace  = swapChainSurfaceFormat.colorSpace,
+    .imageExtent      = swapChainExtent,
+    .imageArrayLayers = 1,
+    .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
+    .imageSharingMode = vk::SharingMode::eExclusive,
+    .preTransform     = surfaceCapabilities.currentTransform,
+    .compositeAlpha   = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+    .presentMode      = chooseSwapPresentMode(availablePresentModes),
+    .clipped          = true};
 };
 ----
 
@@ -303,7 +304,7 @@ vk::SwapchainCreateInfoKHR swapChainCreateInfo{.surface          = *surface,
 swapChainCreateInfo.oldSwapchain = nullptr;
 ----
 
-只剩下最后一个字段 `oldSwapChain`。在 Vulkan 中，交换链可能在应用程序运行期间变得无效或不再最优，例如窗口被调整了大小时。这种情况下，交换链实际上需要从头重建，并且必须在这个字段中指定对旧交换链的引用。这是一个复杂的主题，我们将在 xref:03_Drawing_a_triangle/04_Swap_chain_recreation.adoc[后续章节]中进一步了解。目前我们假设只会创建一个交换链，因此可以让该成员保持默认的 `nullptr`。
+只剩下最后一个字段 `oldSwapChain`。在 Vulkan 中，交换链可能在应用程序运行期间变得无效或不再最优，例如窗口被调整了大小时。这种情况下，交换链实际上需要从头重建，并且必须在这个字段中指定对旧交换链的引用。这是一个复杂的主题，我们将在 xref:../04_Swap_chain_recreation.adoc[后续章节]中进一步了解。目前我们假设只会创建一个交换链，因此可以让该成员保持默认的 `nullptr`。
 
 现在添加类成员来保存 `vk::SwapchainKHR` 对象及其图像：
 
@@ -323,11 +324,11 @@ swapChainImages = swapChain.getImages();
 
 参数是逻辑设备和交换链创建信息。
 
-现在运行应用程序，确认交换链能成功创建！如果此时在 `vkCreateSwapchainKHR` 中遇到访问违规错误，或者看到类似 `Failed to find 'vkGetInstanceProcAddress' in layer SteamOverlayVulkanLayer.dll` 的消息，请查看 xref:90_FAQ.adoc[常见问题解答]中关于 Steam 覆盖层的条目。
+现在运行应用程序，确认交换链能成功创建！如果此时在 `vkCreateSwapchainKHR` 中遇到访问违规错误，或者看到类似 `Failed to find 'vkGetInstanceProcAddress' in layer SteamOverlayVulkanLayer.dll` 的消息，请查看 xref:../../90_FAQ.adoc[常见问题解答]中关于 Steam 覆盖层的条目。
 
 在启用验证层的情况下，试着删掉 `swapChainCreateInfo.imageExtent = extent;` 这一行。你会看到某个验证层立刻发现了这个错误，并打印出有用的提示信息：
 
-image::/images/swap_chain_validation_layer.png[]
+image::../../../images/swap_chain_validation_layer.png[]
 
 == 获取交换链图像
 

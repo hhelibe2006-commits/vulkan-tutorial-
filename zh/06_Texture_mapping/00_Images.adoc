@@ -80,7 +80,7 @@ void createTextureImage()
 我选用的是下面这张 https://pixabay.com/en/statue-sculpture-fig-historically-1275469/[CC0 许可的图像]，并调整到 512 x 512 像素，但你也可以随意选择任何图像。
 该库支持大多数常见的图像文件格式，比如 JPEG、PNG、BMP 和 GIF。
 
-image::/images/texture.jpg[]
+image::../../images/texture.jpg[]
 
 用这个库加载图像非常简单：
 
@@ -111,7 +111,7 @@ void createTextureImage()
 
 NOTE: 图像应始终驻留在 GPU 内存中。把它们留在仅主机可见的内存里，会迫使 GPU 每帧都通过 PCI 接口读取数据，而这条通路的带宽远小于 GPU 自身的内存。这会造成很大的性能影响。暂存就是把图像数据送入 GPU 内存的过程。它并非总是必需，因为某些设备可能提供同时属于主机可见和设备本地的内存类型。在这类配置上可以跳过暂存。
 
-该缓冲区应位于主机可见内存（`eHostVisible`）中，这样我们才能映射它。它还应当是主机一致的（`eHostCoherent`），以确保写入其中的数据立即可用（而不是被以某种方式缓存）。此外它应当能用作传输源（'eTransferSrc'），以便之后复制到图像中：
+该缓冲区应位于主机可见内存（`eHostVisible`）中，这样我们才能映射它。它还应当是主机一致的（`eHostCoherent`），以确保写入其中的数据立即可用（而不是被以某种方式缓存）。此外它应当能用作传输源（`eTransferSrc`），以便之后复制到图像中：
 自动推导出的返回类型分别是 `vk::raii::Buffer` 和 `vk::raii::DeviceMemory`。
 
 [,c++]

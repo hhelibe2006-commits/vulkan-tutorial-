@@ -261,7 +261,7 @@ C:/VulkanSDK/x.x.x.x/bin/slangc.exe shader.slang -target spirv -profile spirv_1_
 这两条命令让编译器读取 Slang 源文件，并通过 `-o`（output）标志直接输出
 SPIR-V 1.4 字节码文件。
 
-Note: SlangC 原生支持 SPIR-V 1.3 及以上版本，无需先输出 GLSL 再转成 SPIR-V。
+NOTE: SlangC 原生支持 SPIR-V 1.3 及以上版本，无需先输出 GLSL 再转成 SPIR-V。
 虽然本教程的一切都能在 SPIR-V 1.0 下工作，但那需要我们把 Slang 着色器
 拆成多个文件，这就引出一个问题：意义何在？面向 SPIR-V 1.4 意味着你使用的是
 一个功能更完备的标准版本，而不是更老旧、限制更多的版本。
