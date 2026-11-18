@@ -42,9 +42,10 @@ void createVertexBuffer()
 
 [,c++]
 ----
-vk::BufferCreateInfo bufferInfo{.size        = sizeof(vertices[0]) * vertices.size(),
-                                .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
-                                .sharingMode = vk::SharingMode::eExclusive};
+vk::BufferCreateInfo bufferInfo{
+    .size        = sizeof(vertices[0]) * vertices.size(),
+    .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
+    .sharingMode = vk::SharingMode::eExclusive};
 ----
 
 `size` 字段指定缓冲区的大小（以字节为单位）。
@@ -70,9 +71,10 @@ vk::raii::Buffer vertexBuffer = nullptr;
 ...
 
 void createVertexBuffer() {
-		vk::BufferCreateInfo bufferInfo{.size        = sizeof(vertices[0]) * vertices.size(),
-		                                .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
-		                                .sharingMode = vk::SharingMode::eExclusive};
+    vk::BufferCreateInfo bufferInfo{
+        .size        = sizeof(vertices[0]) * vertices.size(),
+        .usage       = vk::BufferUsageFlagBits::eVertexBuffer,
+        .sharingMode = vk::SharingMode::eExclusive};
     vertexBuffer = vk::raii::Buffer(device, bufferInfo);
 }
 ----

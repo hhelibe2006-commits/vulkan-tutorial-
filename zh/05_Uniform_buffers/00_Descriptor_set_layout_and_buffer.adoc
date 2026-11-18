@@ -169,8 +169,15 @@ vk::raii::PipelineLayout      pipelineLayout      = nullptr;
 [,c++]
 ----
 vk::DescriptorSetLayoutBinding uboLayoutBinding{
-    .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex};
-vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = 1, .pBindings = &uboLayoutBinding};
+    .binding = 0,
+    .descriptorType = vk::DescriptorType::eUniformBuffer,
+    .descriptorCount = 1,
+    .stageFlags = vk::ShaderStageFlagBits::eVertex
+};
+vk::DescriptorSetLayoutCreateInfo layoutInfo{
+    .bindingCount = 1,
+    .pBindings = &uboLayoutBinding
+};
 descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 ----
 
@@ -180,7 +187,11 @@ descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 
 [,c++]
 ----
-vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*descriptorSetLayout, .pushConstantRangeCount = 0 };
+vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+    .setLayoutCount = 1,
+    .pSetLayouts = &*descriptorSetLayout,
+    .pushConstantRangeCount = 0
+};
 ----
 
 你可能会疑惑，为什么这里可以指定多个描述符集布局，毕竟单个布局已经包含所有绑定。
@@ -199,12 +210,12 @@ vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayou
 
 [,c++]
 ----
-vk::raii::Buffer       indexBuffer        = nullptr;
-vk::raii::DeviceMemory indexBufferMemory  = nullptr;
+vk::raii::Buffer indexBuffer = nullptr;
+vk::raii::DeviceMemory indexBufferMemory = nullptr;
 
-std::vector<vk::raii::Buffer>       uniformBuffers;
+std::vector<vk::raii::Buffer> uniformBuffers;
 std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
-std::vector<void *>                 uniformBuffersMapped;
+std::vector<void *> uniformBuffersMapped;
 ----
 
 同样地，新建 `createUniformBuffers` 函数，在 `createIndexBuffer` 之后调用并分配这些缓冲区：
@@ -228,10 +239,14 @@ void createUniformBuffers()
     {
         vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
         auto [buffer, bufferMem]  = createBuffer(
-            bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+            bufferSize,
+            vk::BufferUsageFlagBits::eUniformBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible
+            | vk::MemoryPropertyFlagBits::eHostCoherent);
+
         uniformBuffers.emplace_back(std::move(buffer));
         uniformBuffersMemory.emplace_back(std::move(bufferMem));
-        uniformBuffersMapped.emplace_back( uniformBuffersMemory.back().mapMemory(0, bufferSize));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory.back().mapMemory(0, bufferSize));
     }
 }
 ----
@@ -254,14 +269,14 @@ void drawFrame()
     updateUniformBuffer(frameIndex);
 
     ...
-
-		const vk::SubmitInfo   submitInfo{.waitSemaphoreCount   = 1,
-		                                  .pWaitSemaphores      = &*presentCompleteSemaphores[frameIndex],
-		                                  .pWaitDstStageMask    = &waitDestinationStageMask,
-		                                  .commandBufferCount   = 1,
-		                                  .pCommandBuffers      = &*commandBuffers[frameIndex],
-		                                  .signalSemaphoreCount = 1,
-		                                  .pSignalSemaphores    = &*renderFinishedSemaphores[imageIndex]};
+    const vk::SubmitInfo   submitInfo{
+        .waitSemaphoreCount   = 1,
+        .pWaitSemaphores      = &*presentCompleteSemaphores[frameIndex],
+        .pWaitDstStageMask    = &waitDestinationStageMask,
+        .commandBufferCount   = 1,
+        .pCommandBuffers      = &*commandBuffers[frameIndex],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores    = &*renderFinishedSemaphores[imageIndex]};
 
     ...
 }

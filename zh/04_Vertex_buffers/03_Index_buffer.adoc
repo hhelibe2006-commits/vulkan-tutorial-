@@ -7,7 +7,7 @@
 在真实应用中渲染的 3D 网格，常常会在多个三角形之间共享顶点。
 即使只是绘制一个矩形这样简单的事情，就已经出现这种情况了：
 
-image::/images/vertex_vs_index.svg[]
+image::../../images/vertex_vs_index.svg[]
 
 绘制一个矩形需要两个三角形，也就是说我们需要一个包含六个顶点的顶点缓冲区。
 问题在于有两个顶点的数据需要重复，造成 50% 的冗余。
@@ -63,29 +63,28 @@ vk::raii::DeviceMemory indexBufferMemory  = nullptr;
 
 [,c++]
 ----
-void initVulkan()
-{
+void initVulkan() {
     ...
     createVertexBuffer();
     createIndexBuffer();
     ...
 }
 
-void createIndexBuffer()
-{
-		vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+void createIndexBuffer() {
+    vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
-		auto [stagingBuffer, stagingBufferMemory] =
-		    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+    auto [stagingBuffer, stagingBufferMemory] =
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
-		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, indices.data(), (size_t) bufferSize);
-		stagingBufferMemory.unmapMemory();
+    void *data = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(data, indices.data(), (size_t) bufferSize);
+    stagingBufferMemory.unmapMemory();
 
-		std::tie(indexBuffer, indexBufferMemory) =
-		    createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    std::tie(indexBuffer, indexBufferMemory) =
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer
+            | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 ----
 
@@ -129,7 +128,7 @@ commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 现在运行程序，你应该会看到：
 
-image::/images/indexed_rectangle.png[]
+image::../../images/indexed_rectangle.png[]
 
 你现在知道如何通过索引缓冲区复用顶点来节省内存了。
 在将来加载复杂 3D 模型的章节中，这一点会尤为重要。
@@ -140,7 +139,7 @@ https://developer.nvidia.com/vulkan-memory-management[驱动开发者建议] 把
 如果多个资源不在同一次渲染操作中使用，甚至可以复用同一块内存，当然前提是它们的数据会被刷新。
 这被称为 _别名（aliasing）_，一些 Vulkan 函数有显式标志来表明你想这么做。
 
-在 xref:05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc[下一章] 中，我们将学习如何把频繁变化的参数传给 GPU。
+在 xref:../05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.adoc[下一章] 中，我们将学习如何把频繁变化的参数传给 GPU。
 
 link:/attachments/21_index_buffer.cpp[C{pp} 代码] /
 link:/attachments/19_shader_vertexbuffer.slang[slang 着色器] /

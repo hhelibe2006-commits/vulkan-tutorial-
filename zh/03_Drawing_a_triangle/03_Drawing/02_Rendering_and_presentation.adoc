@@ -209,14 +209,12 @@ void createSyncObjects()
 
 [,c++]
 ----
-void drawFrame()
-{
+void drawFrame() {
     auto fenceResult = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
-		if (fenceResult != vk::Result::eSuccess)
-		{
-			throw std::runtime_error("failed to wait for fence!");
-		}
-		device.resetFences(*drawFence);
+    if (fenceResult != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to wait for fence!");
+    }
+    device.resetFences(*drawFence);
 }
 ----
 

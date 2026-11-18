@@ -82,20 +82,19 @@ void cleanup()
 
 * `vk::Result::eErrorOutOfDateKHR`：交换链已与表面不兼容，无法再用于渲染。
 通常发生在窗口尺寸改变之后。
-注意，“vk::Result::eErrorOutOfDateKHR” 实际上是一个错误码，默认会触发异常。通过定义 “VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS”，它会被当作成功码处理，因此可以由 “vk::raii::SwapchainKHR::acquireNextImage” 和 “vk::raii::Queue::presentKHR” 返回。
+注意， “vk::Result::eErrorOutOfDateKHR” 实际上是一个错误码，默认会触发异常。通过定义 “VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS”，它会被当作成功码处理，因此可以由 “vk::raii::SwapchainKHR::acquireNextImage” 和 “vk::raii::Queue::presentKHR” 返回。
 * `vk::Result::eSuboptimalKHR`：交换链仍可用于成功向表面呈现，但表面属性已不再完全匹配。
 
 [,c++]
 ----
 auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[frameIndex], nullptr);
 
-if (result == vk::Result::eErrorOutOfDateKHR)
-{
+if (result == vk::Result::eErrorOutOfDateKHR) {
   recreateSwapChain();
   return;
 }
-if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
-{
+
+if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
   assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
   throw std::runtime_error("failed to acquire swap chain image!");
 }
@@ -112,11 +111,13 @@ if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
 
 [,c++]
 ----
-const vk::PresentInfoKHR presentInfoKHR{.waitSemaphoreCount = 1,
-                                        .pWaitSemaphores    = &*renderFinishedSemaphores[imageIndex],
-                                        .swapchainCount     = 1,
-                                        .pSwapchains        = &*swapChain,
-                                        .pImageIndices      = &imageIndex};
+const vk::PresentInfoKHR presentInfoKHR{
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores    = &*renderFinishedSemaphores[imageIndex],
+    .swapchainCount     = 1,
+    .pSwapchains        = &*swapChain,
+    .pImageIndices      = &imageIndex
+};
 result = queue.presentKHR(presentInfoKHR);
 if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR))
 {
@@ -131,7 +132,7 @@ else
 
 == 修复死锁
 
-回想 xref:03_Drawing_a_triangle/03_Drawing/03_Frames_in_flight.adoc[飞行帧] 一章，`drawFrame` 开头会等待当前帧的栅栏，然后立即重置它：
+回想 xref:../03_Drawing/03_Frames_in_flight.adoc[飞行帧] 一章，`drawFrame` 开头会等待当前帧的栅栏，然后立即重置它：
 
 [,c++]
 ----
@@ -281,7 +282,7 @@ void recreateSwapChain() {
 `glfwWindowShouldClose` 检查则处理窗口在仍处于最小化时被关闭的情况——没有它，循环会一直空转，等待一个再也不会变成非零的帧缓冲区尺寸。
 
 恭喜，你已经完成了第一个规范的 Vulkan 程序！
-在 xref:04_Vertex_buffers/00_Vertex_input_description.adoc[顶点输入描述] 一章中，我们要去掉顶点着色器里硬编码的顶点，真正使用顶点缓冲区。
+在 xref:../04_Vertex_buffers/00_Vertex_input_description.adoc[顶点输入描述] 一章中，我们要去掉顶点着色器里硬编码的顶点，真正使用顶点缓冲区。
 
 link:/attachments/17_swap_chain_recreation.cpp[C{pp} 代码] /
 link:/attachments/09_shader_base.slang[Slang 着色器] /

@@ -19,8 +19,7 @@ struct VSInput {
     float3 inColor;
 };
 
-struct VSOutput
-{
+struct VSOutput {
     float4 pos : SV_Position;
     float3 color;
 };
@@ -122,10 +121,19 @@ struct Vertex {
 
 ...
 
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
-    {
-      return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
-               {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)}}};
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
+      return {{
+          {
+              .location = 0,
+              .binding = 0,
+              .format = vk::Format::eR32G32Sfloat,
+              .offset = offsetof(Vertex, pos)
+          }, {
+              .location = 1,
+              .binding = 0,
+              .format = vk::Format::eR32G32B32Sfloat,
+              .offset = offsetof(Vertex, color)
+          }}};
     }
 }
 ----
@@ -170,12 +178,13 @@ struct Vertex {
 
 [,c++]
 ----
-auto                                     bindingDescription    = Vertex::getBindingDescription();
-auto                                     attributeDescriptions = Vertex::getAttributeDescriptions();
-vk::PipelineVertexInputStateCreateInfo   vertexInputInfo{.vertexBindingDescriptionCount   = 1,
-                                                         .pVertexBindingDescriptions      = &bindingDescription,
-                                                         .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-                                                         .pVertexAttributeDescriptions    = attributeDescriptions.data()};
+auto bindingDescription = Vertex::getBindingDescription();
+auto attributeDescriptions = Vertex::getAttributeDescriptions();
+vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+    .vertexBindingDescriptionCount   = 1,
+    .pVertexBindingDescriptions      = &bindingDescription,
+    .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+    .pVertexAttributeDescriptions    = attributeDescriptions.data()};
 ----
 
 现在管线已经可以接受 `vertices` 容器这种格式的顶点数据，并把它传给顶点着色器。

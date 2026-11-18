@@ -141,28 +141,25 @@ KTX2 的关键特性包括：
 
 [,c{pp}]
 ----
-void loadModel()
-{
+void loadModel() {
     // Use tinygltf to load the model instead of tinyobjloader
-    tinygltf::Model    model;
+
+    tinygltf::Model model;
     tinygltf::TinyGLTF loader;
-    std::string        err;
-    std::string        warn;
+    std::string err;
+    std::string warn;
 
     bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, MODEL_PATH);
 
-    if (!warn.empty())
-    {
+    if (!warn.empty()) {
         std::cout << "glTF warning: " << warn << std::endl;
     }
 
-    if (!err.empty())
-    {
+    if (!err.empty()) {
         std::cout << "glTF error: " << err << std::endl;
     }
 
-    if (!ret)
-    {
+    if (!ret) {
         throw std::runtime_error("Failed to load glTF model");
     }
 
@@ -170,14 +167,12 @@ void loadModel()
     indices.clear();
 
     // Process all meshes in the model
-    for (const auto &mesh : model.meshes)
-    {
-        for (const auto &primitive : mesh.primitives)
-        {
+    for (const auto &mesh : model.meshes) {
+        for (const auto &primitive : mesh.primitives) {
             // Get indices
-            const tinygltf::Accessor   &indexAccessor   = model.accessors[primitive.indices];
+            const tinygltf::Accessor &indexAccessor = model.accessors[primitive.indices];
             const tinygltf::BufferView &indexBufferView = model.bufferViews[indexAccessor.bufferView];
-            const tinygltf::Buffer     &indexBuffer     = model.buffers[indexBufferView.buffer];
+            const tinygltf::Buffer &indexBuffer = model.buffers[indexBufferView.buffer];
 
             // Get vertex positions
             const tinygltf::Accessor   &posAccessor   = model.accessors[primitive.attributes.at("POSITION")];

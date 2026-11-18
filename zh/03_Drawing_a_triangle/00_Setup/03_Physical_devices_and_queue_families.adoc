@@ -207,6 +207,7 @@ vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 
 bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
 && features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
+&& features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2
 && features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 ----
 
@@ -244,6 +245,7 @@ bool isDeviceSuitable( vk::raii::PhysicalDevice const & physicalDevice ) {
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     bool supportsRequiredFeatures = features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters
     && features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
+    && features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2
     && features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
   // Return true if the physicalDevice meets all the criteria
