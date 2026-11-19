@@ -8,7 +8,7 @@
 本章我们会看一种新的描述符类型：_组合图像采样器_。
 这种描述符让着色器可以通过采样器对象访问图像资源，就像我们在上一章创建的那个采样器。
 
-值得一提的是，Vulkan 通过不同的描述符类型，为着色器中访问纹理的方式提供了灵活性。虽然本教程使用的是_组合图像采样器_，但 Vulkan 也支持为采样器（`vk::DescriptorType::eSampler`）和采样图像（`vk::DescriptorType::eSampledImage`）使用独立的描述符。使用独立描述符可以把同一个采样器复用到多张图像上，也可以用不同的采样参数访问同一张图像。当你有很多使用相同采样配置的纹理时，这样做会更高效。不过，组合图像采样器通常更方便，而且由于缓存使用经过优化，在某些硬件上性能更好。
+值得一提的是，Vulkan 通过不同的描述符类型，为着色器中访问纹理的方式提供了灵活性。虽然本教程使用的是 _组合图像采样器_，但 Vulkan 也支持为采样器（`vk::DescriptorType::eSampler`）和采样图像（`vk::DescriptorType::eSampledImage`）使用独立的描述符。使用独立描述符可以把同一个采样器复用到多张图像上，也可以用不同的采样参数访问同一张图像。当你有很多使用相同采样配置的纹理时，这样做会更高效。不过，组合图像采样器通常更方便，而且由于缓存使用经过优化，在某些硬件上性能更好。
 
 我们先修改描述符集布局、描述符池和描述符集，把这样的组合图像采样器描述符包含进去。
 之后，我们会给 `Vertex` 添加纹理坐标来替换颜色值，并修改片元着色器，让它从纹理读取颜色，而不是只对顶点颜色做插值。
@@ -36,12 +36,16 @@ vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_
 
 [,c++]
 ----
-std::array<vk::DescriptorPoolSize, 2> poolSize{{{.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-                                                {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT}}};
-vk::DescriptorPoolCreateInfo          poolInfo{.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                                               .maxSets       = MAX_FRAMES_IN_FLIGHT,
-                                               .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
-                                               .pPoolSizes    = poolSize.data()};
+std::array<vk::DescriptorPoolSize, 2> poolSize{{
+    {
+        .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT
+    }, {
+        .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT}}};
+vk::DescriptorPoolCreateInfo poolInfo{
+    .flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+    .maxSets       = MAX_FRAMES_IN_FLIGHT,
+    .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
+    .pPoolSizes    = poolSize.data()};
 ----
 
 描述符池不足是验证层抓不到的一类问题的好例子：从 Vulkan 1.1 起，如果池不够大，`vk::raii::Device::allocateDescriptorSets` 可能失败并抛出 `vk::OutOfPoolMemoryError` 异常，但驱动也可能在内部尝试解决这个问题。
@@ -59,8 +63,16 @@ vk::DescriptorPoolCreateInfo          poolInfo{.flags         = vk::DescriptorPo
 ----
 for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 {
-    vk::DescriptorBufferInfo bufferInfo{.buffer = uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject)};
-    vk::DescriptorImageInfo  imageInfo{.sampler = textureSampler, .imageView = textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+    vk::DescriptorBufferInfo bufferInfo{
+        .buffer = uniformBuffers[i],
+        .offset = 0,
+        .range = sizeof(UniformBufferObject)
+    };
+    vk::DescriptorImageInfo  imageInfo{
+        .sampler = textureSampler,
+        .imageView = textureImageView,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
 
     ...
 }
@@ -71,18 +83,19 @@ for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 
 [,c++]
 ----
-std::array<vk::WriteDescriptorSet, 2> descriptorWrites{{{.dstSet          = descriptorSets[i],
-                                                         .dstBinding      = 0,
-                                                         .dstArrayElement = 0,
-                                                         .descriptorCount = 1,
-                                                         .descriptorType  = vk::DescriptorType::eUniformBuffer,
-                                                         .pBufferInfo     = &bufferInfo},
-                                                        {.dstSet          = descriptorSets[i],
-                                                         .dstBinding      = 1,
-                                                         .dstArrayElement = 0,
-                                                         .descriptorCount = 1,
-                                                         .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
-                                                         .pImageInfo      = &imageInfo}}};
+std::array<vk::WriteDescriptorSet, 2> descriptorWrites{{{
+    .dstSet          = descriptorSets[i],
+    .dstBinding      = 0,
+    .dstArrayElement = 0,
+    .descriptorCount = 1,
+    .descriptorType  = vk::DescriptorType::eUniformBuffer,
+    .pBufferInfo     = &bufferInfo}, {
+        .dstSet          = descriptorSets[i],
+        .dstBinding      = 1,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+        .pImageInfo      = &imageInfo}}};
 device.updateDescriptorSets(descriptorWrites, {});
 ----
 
@@ -110,9 +123,24 @@ struct Vertex
 
     static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
     {
-        return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, pos)},
-		         {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)},
-		         {.location = 2, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, texCoord)}}};
+        return {{
+            {
+                .location = 0,
+                .binding = 0,
+                .format = vk::Format::eR32G32Sfloat,
+                .offset = offsetof(Vertex, pos)
+            }, {
+                .location = 1,
+                .binding = 0,
+                .format = vk::Format::eR32G32B32Sfloat,
+                .offset = offsetof(Vertex, color)
+            }, {
+                .location = 2,
+                .binding = 0,
+                .format = vk::Format::eR32G32Sfloat,
+                .offset = offsetof(Vertex, texCoord)
+            }
+        }};
     }
 };
 ----
@@ -182,7 +210,7 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
 你应该会看到类似下图的结果。
 记得重新编译着色器！
 
-image::/images/texcoord_visualization.png[]
+image::../../images/texcoord_visualization.png[]
 
 绿色通道表示水平坐标，红色通道表示垂直坐标。
 黑色和黄色的角证实了纹理坐标在正方形上从 `0, 0` 到 `1, 1` 正确插值。
@@ -212,12 +240,12 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
 采样器会自动在后台处理过滤与变换。
 现在运行程序，你应该能在正方形上看到纹理：
 
-image::/images/texture_on_square.png[]
+image::../../images/texture_on_square.png[]
 
 试着把纹理坐标放大到大于 `1` 的值，来试验寻址模式。
 例如，在使用 `VK_SAMPLER_ADDRESS_MODE_REPEAT` 时，下面的片元着色器会产生下图中的结果：
 
-[,glsl]
+[,slang]
 ----
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn) : SV_TARGET {
@@ -225,7 +253,7 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
 }
 ----
 
-image::/images/texture_on_square_repeated.png[]
+image::../../images/texture_on_square_repeated.png[]
 
 你也可以用顶点颜色来调整纹理颜色：
 
@@ -239,13 +267,13 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
 
 我在这里把 RGB 和 alpha 通道分开处理，以免缩放 alpha 通道。
 
-image::/images/texture_on_square_colorized.png[]
+image::../../images/texture_on_square_colorized.png[]
 
 现在你知道如何在着色器中访问图像了！
 如果与同样会在帧缓冲区中被写入的图像结合使用，这是一项非常强大的技术。
 你可以把这些图像作为输入，实现后处理、3D 世界中的相机画面之类的酷炫效果。
 
-在 xref:07_Depth_buffering.adoc[下一章] 中，我们会学习如何添加深度缓冲，以便正确地排序物体。
+在 xref:../07_Depth_buffering.adoc[下一章] 中，我们会学习如何添加深度缓冲，以便正确地排序物体。
 
 link:/attachments/26_texture_mapping.cpp[C{pp} 代码] /
 link:/attachments/26_shader_textures.slang[slang 着色器] /

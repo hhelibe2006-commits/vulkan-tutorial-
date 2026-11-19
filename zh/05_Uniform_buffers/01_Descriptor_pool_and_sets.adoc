@@ -10,13 +10,12 @@
 == 描述符池
 
 描述符集不能直接创建，必须像命令缓冲区那样从池中分配。
-描述符集对应的这个池，不出所料地叫做_描述符池_。
+描述符集对应的这个池，不出所料地叫做 _描述符池_。
 我们写一个新函数 `createDescriptorPool` 来创建它。
 
 [,c++]
 ----
-void initVulkan()
-{
+void initVulkan() {
     ...
     createUniformBuffers();
     createDescriptorPool();
@@ -25,8 +24,8 @@ void initVulkan()
 
 ...
 
-void createDescriptorPool()
-{
+void createDescriptorPool() {
+
 }
 ----
 
@@ -89,9 +88,10 @@ void createDescriptorSets()
 [,c++]
 ----
 std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
-vk::DescriptorSetAllocateInfo        allocInfo{.descriptorPool     = descriptorPool,
-                                               .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-                                               .pSetLayouts        = layouts.data()};
+vk::DescriptorSetAllocateInfo allocInfo{
+    .descriptorPool     = descriptorPool,
+    .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+    .pSetLayouts        = layouts.data()};
 ----
 
 在我们的例子中，会为每个飞行帧创建一个描述符集，它们都使用相同的布局。
@@ -114,8 +114,8 @@ descriptorSets = device.allocateDescriptorSets(allocInfo);
 
 [,c++]
 ----
-for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-{
+for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+
 }
 ----
 
@@ -124,8 +124,7 @@ for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 
 [,c++]
 ----
-for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-{
+for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vk::DescriptorBufferInfo bufferInfo{ .buffer = uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject) };
 }
 ----
@@ -194,18 +193,19 @@ commandBuffer.drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 [,c++]
 ----
-vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable        = vk::False,
-                                                    .rasterizerDiscardEnable = vk::False,
-                                                    .polygonMode             = vk::PolygonMode::eFill,
-                                                    .cullMode                = vk::CullModeFlagBits::eBack,
-                                                    .frontFace               = vk::FrontFace::eCounterClockwise,
-                                                    .depthBiasEnable         = vk::False,
-                                                    .lineWidth               = 1.0f};
+vk::PipelineRasterizationStateCreateInfo rasterizer{
+    .depthClampEnable        = vk::False,
+    .rasterizerDiscardEnable = vk::False,
+    .polygonMode             = vk::PolygonMode::eFill,
+    .cullMode                = vk::CullModeFlagBits::eBack,
+    .frontFace               = vk::FrontFace::eCounterClockwise,
+    .depthBiasEnable         = vk::False,
+    .lineWidth               = 1.0f};
 ----
 
 再次运行程序，现在应该能看到下面的画面：
 
-image::/images/spinning_quad.png[]
+image::../../images/spinning_quad.png[]
 
 矩形变成了正方形，因为投影矩阵现在会做宽高比校正。
 `updateUniformBuffer` 会处理窗口尺寸变化，所以我们不需要在 `recreateSwapChain` 中重新创建描述符集。
@@ -379,7 +379,7 @@ ConstantBuffer<UniformBuffer> ubo;
 你可以利用这个特性，把每个对象各不相同的描述符和共享的描述符放进不同的描述符集。
 这样就能避免在多次绘制调用之间重新绑定大部分描述符，可能更高效。
 
-在 xref:06_Texture_mapping/00_Images.adoc[接下来的章节] 中，我们会在此基础之上为场景添加纹理。
+在 xref:../06_Texture_mapping/00_Images.adoc[接下来的章节] 中，我们会在此基础之上为场景添加纹理。
 
 link:/attachments/23_descriptor_sets.cpp[C{pp} 代码]  /
 link:/attachments/22_shader_ubo.slang[slang 着色器] /

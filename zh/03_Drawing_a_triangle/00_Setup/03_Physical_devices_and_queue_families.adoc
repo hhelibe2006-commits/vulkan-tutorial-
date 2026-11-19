@@ -264,4 +264,4 @@ void pickPhysicalDevice() {
 
 很好，这就是目前找到合适物理设备所需的全部内容！下一步是 xref:./04_Logical_device_and_queues.adoc[逻辑设备与队列]：创建一个逻辑设备来与它交互。
 
-link:/attachments/03_physical_device_selection.cpp[C{pp} 代码]
+link:../../../attachments/03_physical_device_selection.cpp[C{pp} 代码]

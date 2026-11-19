@@ -74,15 +74,18 @@ void createIndexBuffer() {
     vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
     auto [stagingBuffer, stagingBufferMemory] =
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible
+            | vk::MemoryPropertyFlagBits::eHostCoherent);
 
     void *data = stagingBufferMemory.mapMemory(0, bufferSize);
     memcpy(data, indices.data(), (size_t) bufferSize);
     stagingBufferMemory.unmapMemory();
 
-    std::tie(indexBuffer, indexBufferMemory) =
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer
-            | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    std::tie(indexBuffer, indexBufferMemory) = createBuffer(bufferSize,
+            vk::BufferUsageFlagBits::eIndexBuffer
+            | vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }

@@ -104,7 +104,7 @@ void createImageViews()
 设想一张纹理被映射到图元上，而片元的数量多于纹素。
 如果你只是为每个片元的纹理坐标取最近的纹素，就会得到第一张图那样的结果：
 
-image::/images/texture_filtering.png[]
+image::../../images/texture_filtering.png[]
 
 如果你通过线性插值把最近的 4 个纹素组合起来，就会得到右侧那样更平滑的结果。
 当然，你的应用可能有美术风格上的要求，更偏向左边的样式（想想 Minecraft），但在常规图形应用中，右边才是首选。
@@ -113,7 +113,7 @@ image::/images/texture_filtering.png[]
 欠采样是相反的问题：纹素比片元多。
 当以锐利的角度采样棋盘格这类高频图案时，这会导致走样：
 
-image::/images/anisotropic_filtering.png[]
+image::../../images/anisotropic_filtering.png[]
 
 如左图所示，纹理在远处变成一团模糊。
 解决方案是 https://en.wikipedia.org/wiki/Anisotropic_filtering[各向异性过滤]，采样器同样可以自动施加。
@@ -122,7 +122,7 @@ image::/images/anisotropic_filtering.png[]
 它通过 _寻址模式_ 决定当你尝试读取图像之外的纹素时会发生什么。
 下图展示了其中一些可能性：
 
-image::/images/texture_addressing.png[]
+image::../../images/texture_addressing.png[]
 
 我们现在要新建 `createTextureSampler` 函数来设置这样一个采样器对象。
 稍后我们会用这个采样器在着色器中从纹理读取颜色。
@@ -149,7 +149,10 @@ void createTextureSampler()
 
 [,c++]
 ----
-vk::SamplerCreateInfo samplerInfo{.magFilter = vk::Filter::eLinear, .minFilter = vk::Filter::eLinear};
+vk::SamplerCreateInfo samplerInfo{
+    .magFilter = vk::Filter::eLinear,
+    .minFilter = vk::Filter::eLinear
+};
 ----
 
 `magFilter` 和 `minFilter` 字段指定如何对放大或缩小的纹素进行插值。
@@ -158,12 +161,13 @@ vk::SamplerCreateInfo samplerInfo{.magFilter = vk::Filter::eLinear, .minFilter =
 
 [,c++]
 ----
-vk::SamplerCreateInfo samplerInfo{.magFilter    = vk::Filter::eLinear,
-                                  .minFilter    = vk::Filter::eLinear,
-                                  .mipmapMode   = vk::SamplerMipmapMode::eLinear,
-                                  .addressModeU = vk::SamplerAddressMode::eRepeat,
-                                  .addressModeV = vk::SamplerAddressMode::eRepeat,
-                                  .addressModeW = vk::SamplerAddressMode::eRepeat};
+vk::SamplerCreateInfo samplerInfo{
+    .magFilter    = vk::Filter::eLinear,
+    .minFilter    = vk::Filter::eLinear,
+    .mipmapMode   = vk::SamplerMipmapMode::eLinear,
+    .addressModeU = vk::SamplerAddressMode::eRepeat,
+    .addressModeV = vk::SamplerAddressMode::eRepeat,
+    .addressModeW = vk::SamplerAddressMode::eRepeat};
 ----
 
 寻址模式可以用 `addressMode` 字段按轴分别指定。
@@ -184,14 +188,15 @@ vk::SamplerCreateInfo samplerInfo{.magFilter    = vk::Filter::eLinear,
 [,c++]
 ----
 vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
-vk::SamplerCreateInfo        samplerInfo{.magFilter        = vk::Filter::eLinear,
-                                         .minFilter        = vk::Filter::eLinear,
-                                         .mipmapMode       = vk::SamplerMipmapMode::eLinear,
-                                         .addressModeU     = vk::SamplerAddressMode::eRepeat,
-                                         .addressModeV     = vk::SamplerAddressMode::eRepeat,
-                                         .addressModeW     = vk::SamplerAddressMode::eRepeat,
-                                         .anisotropyEnable = vk::True,
-                                         .maxAnisotropy    = properties.limits.maxSamplerAnisotropy};
+vk::SamplerCreateInfo        samplerInfo{
+    .magFilter        = vk::Filter::eLinear,
+    .minFilter        = vk::Filter::eLinear,
+    .mipmapMode       = vk::SamplerMipmapMode::eLinear,
+    .addressModeU     = vk::SamplerAddressMode::eRepeat,
+    .addressModeV     = vk::SamplerAddressMode::eRepeat,
+    .addressModeW     = vk::SamplerAddressMode::eRepeat,
+    .anisotropyEnable = vk::True,
+    .maxAnisotropy    = properties.limits.maxSamplerAnisotropy};
 ----
 
 `anisotropyEnable` 字段指定是否启用各向异性过滤。
@@ -213,16 +218,17 @@ vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
 [,c++]
 ----
 vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
-vk::SamplerCreateInfo        samplerInfo{.magFilter        = vk::Filter::eLinear,
-                                         .minFilter        = vk::Filter::eLinear,
-                                         .mipmapMode       = vk::SamplerMipmapMode::eLinear,
-                                         .addressModeU     = vk::SamplerAddressMode::eRepeat,
-                                         .addressModeV     = vk::SamplerAddressMode::eRepeat,
-                                         .addressModeW     = vk::SamplerAddressMode::eRepeat,
-                                         .anisotropyEnable = vk::True,
-                                         .maxAnisotropy    = properties.limits.maxSamplerAnisotropy,
-                                         .compareEnable    = vk::False,
-                                         .compareOp        = vk::CompareOp::eAlways};
+vk::SamplerCreateInfo        samplerInfo{
+    .magFilter        = vk::Filter::eLinear,
+    .minFilter        = vk::Filter::eLinear,
+    .mipmapMode       = vk::SamplerMipmapMode::eLinear,
+    .addressModeU     = vk::SamplerAddressMode::eRepeat,
+    .addressModeV     = vk::SamplerAddressMode::eRepeat,
+    .addressModeW     = vk::SamplerAddressMode::eRepeat,
+    .anisotropyEnable = vk::True,
+    .maxAnisotropy    = properties.limits.maxSamplerAnisotropy,
+    .compareEnable    = vk::False,
+    .compareOp        = vk::CompareOp::eAlways};
 ----
 
 [,c++]
@@ -292,7 +298,7 @@ void createTextureSampler()
 
 如果现在就运行程序，你会看到类似这样的验证层消息：
 
-image::/images/validation_layer_anisotropy.png[]
+image::../../images/validation_layer_anisotropy.png[]
 
 这是因为各向异性过滤实际上是一个可选的设备特性。
 我们需要修改 `createLogicalDevice` 函数来请求它：
@@ -314,16 +320,18 @@ bool isDeviceSuitable(VkPhysicalDevice device)
 {
     ...
 
-		auto features                 = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2,
-		                                                                     vk::PhysicalDeviceVulkan13Features,
-		                                                                     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-		bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
-		                                features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-		                                features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
-		                                features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+    auto features                 = physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2,
 
-		// Return true if the physicalDevice meets all the criteria
-		return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
+    vk::PhysicalDeviceVulkan13Features,
+
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy
+    && features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
+    && features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2
+    && features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+
+    // Return true if the physicalDevice meets all the criteria
+    return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
 }
 ----
 

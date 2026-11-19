@@ -36,7 +36,7 @@
 * `vk::ImageLayout::eTransferDstOptimal`：最适合作为传输操作中的目标，例如 `vk::raii::CommandBuffer::copyBufferToImage`
 * `vk::ImageLayout::eShaderReadOnlyOptimal`：最适合在着色器中采样
 
-转换图像布局最常见的方式之一是_管线屏障_。
+转换图像布局最常见的方式之一是 _管线屏障_。
 管线屏障主要用于同步对资源的访问，比如确保图像在被读取之前已经写入，但它们也可以用来转换布局。
 本章中我们会看到管线屏障如何用于这个目的。
 在使用 `vk::SharingMode::eExclusive` 时，屏障还可以用来转移队列族所有权。
@@ -86,14 +86,12 @@ image::../../images/texture.jpg[]
 
 [,c++]
 ----
-void createTextureImage()
-{
-    int            texWidth, texHeight, texChannels;
-    stbi_uc       *pixels    = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+void createTextureImage() {
+    int texWidth, texHeight, texChannels;
+    stbi_uc *pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
-    if (!pixels)
-    {
+    if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
 }
@@ -282,12 +280,14 @@ void createTextureImage()
 
   stbi_image_free(pixels);
 
-  std::tie(textureImage, textureImageMemory) = createImage(texWidth,
-                                                           texHeight,
-                                                           vk::Format::eR8G8B8A8Srgb,
-                                                           vk::ImageTiling::eOptimal,
-                                                           vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-                                                           vk::MemoryPropertyFlagBits::eDeviceLocal);
+  std::tie(textureImage, textureImageMemory) = createImage(
+      texWidth,
+      texHeight,
+      vk::Format::eR8G8B8A8Srgb,
+      vk::ImageTiling::eOptimal,
+      vk::ImageUsageFlagBits::eTransferDst
+      | vk::ImageUsageFlagBits::eSampled,
+      vk::MemoryPropertyFlagBits::eDeviceLocal);
 }
 ----
 
@@ -298,6 +298,7 @@ void createTextureImage()
 布局转换是 Vulkan 设计中的一个关键方面，它让你能显式控制这些内存组织方式。与某些由驱动自动处理这些转换的图形 API 不同，Vulkan 要求你显式管理它们。这种方式能带来更好的性能优化空间，因为你可以精确地在需要时安排转换，并高效地批量执行操作。
 
 对于纹理图像，我们需要执行几次转换：
+
 1. 从初始的未定义布局转换到适合接收数据的布局（传输目标）
 2. 从传输目标转换到适合着色器读取的布局，这样片元着色器就能从中采样
 
@@ -309,10 +310,16 @@ void createTextureImage()
 ----
 vk::raii::CommandBuffer beginSingleTimeCommands()
 {
-  vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-  vk::raii::CommandBuffer       commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+  vk::CommandBufferAllocateInfo allocInfo{
+      .commandPool = commandPool,
+      .level = vk::CommandBufferLevel::ePrimary,
+      .commandBufferCount = 1
+  };
+  vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
 
-  vk::CommandBufferBeginInfo beginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
+  vk::CommandBufferBeginInfo beginInfo{
+      .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+  };
   commandBuffer.begin(beginInfo);
 
   return std::move(commandBuffer);
@@ -346,14 +353,14 @@ void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer, vk::De
 
 [,c++]
 ----
-void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
-{
+void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+
 }
 ----
 
-执行布局转换最常见的方式之一是使用_图像内存屏障_。
+执行布局转换最常见的方式之一是使用 _图像内存屏障_。
 这类管线屏障通常用于同步对资源的访问，比如确保对缓冲区的写入在读取之前完成，但它也可以用来转换图像布局，并在使用 `vk::SharingMode::eExclusive` 时转移队列族所有权。
-缓冲区有与之对应的_缓冲区内存屏障_。
+缓冲区有与之对应的 _缓冲区内存屏障_。
 
 [,c++]
 ----
@@ -511,7 +518,7 @@ commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, ba
 
 从前面提到的那张表可以看到，传输写入必须发生在管线的传输阶段。
 由于这些写入不必等待任何东西，你可以为屏障前的操作指定空的访问掩码，以及尽可能早的管线阶段 `vk::PipelineStageFlagBits::eTopOfPipe`。
-需要注意的是，`vk::PipelineStageFlagBits::eTransfer` 并不是图形管线和计算管线中_真正_的阶段。
+需要注意的是，`vk::PipelineStageFlagBits::eTransfer` 并不是图形管线和计算管线中 _真正_ 的阶段。
 它更像是传输发生的一个伪阶段。
 更多信息以及其他伪阶段的例子请参阅 https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VkPipelineStageFlagBits[文档]。
 

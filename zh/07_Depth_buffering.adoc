@@ -1,6 +1,6 @@
 :pp: {plus}{plus}
 
-= 深度缓冲
+ = 深度缓冲
 
 == 简介
 
@@ -72,7 +72,7 @@ const std::vector<Vertex> vertices = {
 是时候添加一些额外的几何体，让场景更有意思，并演示本章要解决的问题了。
 复制这些顶点，在当前正方形正下方再定义一个正方形的位置，像这样：
 
-image::/images/extra_square.svg[]
+image::../images/extra_square.svg[]
 
 使用 `-0.5f` 的 Z 坐标，并为多出来的正方形添加合适的索引：
 
@@ -98,7 +98,7 @@ const std::vector<uint16_t> indices = {
 
 现在运行程序，你会看到类似埃舍尔风格插画的效果：
 
-image::/images/depth_issues.png[]
+image::../images/depth_issues.png[]
 
 问题在于下方正方形的片元被绘制到了上方正方形的片元之上，只是因为它在索引数组中排在后面。
 有两种方法可以解决：
@@ -107,7 +107,7 @@ image::/images/depth_issues.png[]
 * 使用深度缓冲区进行深度测试
 
 第一种方法常用于绘制透明物体，因为顺序无关的透明是个难题。
-不过，按深度排序片元的问题更常见的解法是使用_深度缓冲区_。
+不过，按深度排序片元的问题更常见的解法是使用 _深度缓冲区_。
 深度缓冲区是一个额外的附件，它像颜色附件存储每个位置的颜色那样，存储每个位置的深度。
 每次光栅化器产生一个片元，深度测试都会检查新片元是否比之前的更近。
 如果不是，新片元就会被丢弃。
@@ -179,8 +179,8 @@ void createDepthResources()
 
 [,c++]
 ----
-vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features)
-{
+vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features) {
+
 }
 ----
 
@@ -204,9 +204,8 @@ for (const auto format : candidates) {
 
 [,c++]
 ----
-if (((tiling == vk::ImageTiling::eLinear) && ((props.linearTilingFeatures & features) == features)) ||
-    ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features) == features)))
-{
+if (((tiling == vk::ImageTiling::eLinear) && ((props.linearTilingFeatures & features) == features))
+    || ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features) == features))) {
     return format;
 }
 ----
@@ -220,8 +219,7 @@ vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::Im
         vk::FormatProperties props = physicalDevice.getFormatProperties(format);
 
         if (((tiling == vk::ImageTiling::eLinear) && ((props.linearTilingFeatures & features) == features)) ||
-            ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features) == features)))
-        {
+            ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features) == features))) {
           return format;
         }
     }
@@ -234,11 +232,10 @@ vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::Im
 
 [,c++]
 ----
-vk::Format findDepthFormat()
-{
+vk::Format findDepthFormat() {
     return findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint},
-                               vk::ImageTiling::eOptimal,
-                               vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment);
 }
 ----
 
@@ -259,19 +256,19 @@ vk::Format depthFormat = findDepthFormat();
 [,c++]
 ----
 std::tie(depthImage, depthImageMemory) = createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal);
-depthImageView                         = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+
+depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 ----
 
 不过，`createImageView` 函数目前假定子资源总是 `vk::ImageAspectFlagBits::eColor`，所以我们需要把该字段改成参数：
 
 [,c++]
 ----
-vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
-{
+vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) {
     ...
-		vk::ImageViewCreateInfo viewInfo{
+    vk::ImageViewCreateInfo viewInfo{
         ...
-		    .subresourceRange = {.aspectMask = aspectFlags, ...}};
+        .subresourceRange = {.aspectMask = aspectFlags, ...}};
     ...
 }
 ----
@@ -335,7 +332,7 @@ vk::RenderingInfo renderingInfo = {
 === 显式转换深度图像布局
 
 与颜色附件一样，深度附件也需要处于适合目标用途的正确布局。为此我们需要额外发出一个屏障，确保渲染期间深度图像可以被用作深度附件。
-深度图像首次访问发生在早期片元测试管线阶段，而且因为我们有一个会_清除_内容的加载操作，所以应该指定写入的访问掩码。
+深度图像首次访问发生在早期片元测试管线阶段，而且因为我们有一个会 _清除_ 内容的加载操作，所以应该指定写入的访问掩码。
 
 由于现在多了一种图像类型（深度），先给 `transition_image_layout` 函数添加一个图像 aspect 的新参数：
 
@@ -343,8 +340,7 @@ vk::RenderingInfo renderingInfo = {
 ----
 void transition_image_layout(
     ...
-    vk::ImageAspectFlags    image_aspect_flags)
-{
+    vk::ImageAspectFlags    image_aspect_flags) {
     vk::ImageMemoryBarrier2 barrier = {
         ...
         .subresourceRange    = {
@@ -410,7 +406,7 @@ vk::PipelineDepthStencilStateCreateInfo depthStencil{
 `depthWriteEnable` 字段指定通过深度测试的片元的新深度是否应真正写入深度缓冲区。
 
 `depthCompareOp` 字段指定用于保留或丢弃片元的比较方式。
-我们沿用深度越小越近的惯例，所以新片元的深度应当_更小_。
+我们沿用深度越小越近的惯例，所以新片元的深度应当 _更小_。
 
 `depthBoundsTestEnable`、`minDepthBounds` 和 `maxDepthBounds` 字段用于可选的深度边界测试。
 简单说，它让你只保留落在指定深度范围内的片元。
@@ -426,16 +422,20 @@ vk::PipelineDepthStencilStateCreateInfo depthStencil{
 [,c++]
 ----
 vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-    {.stageCount          = 2,
-     ...
-     .pDepthStencilState  = &depthStencil,
-     ...},
-    {.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChainSurfaceFormat.format, .depthAttachmentFormat = depthFormat}};
+    {
+        .stageCount          = 2,
+        ...
+        .pDepthStencilState  = &depthStencil,
+        ...}, {
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &swapChainSurfaceFormat.format,
+            .depthAttachmentFormat = depthFormat
+        }};
 ----
 
 如果现在运行程序，你应该会看到几何体的片元已经正确排序：
 
-image::/images/depth_correct.png[]
+image::../images/depth_correct.png[]
 
 == 处理窗口尺寸变化
 
@@ -447,11 +447,10 @@ image::/images/depth_correct.png[]
 void recreateSwapChain()
 {
     int width = 0, height = 0;
-		while (width == 0 || height == 0)
-		{
+    while (width == 0 || height == 0) {
         glfwGetFramebufferSize(window, &width, &height);
         glfwWaitEvents();
-		}
+    }
 
     device.waitIdle(device);
 

@@ -136,15 +136,17 @@ std::tie(depthImage, depthImageMemory) = createImage(swapChainExtent.width,
                                                      vk::ImageUsageFlagBits::eDepthStencilAttachment,
                                                      vk::MemoryPropertyFlagBits::eDeviceLocal);
 ...
-std::tie(textureImage, textureImageMemory) =
-    createImage(texWidth,
-                texHeight,
-                mipLevels,
-                vk::SampleCountFlagBits::e1,
-                vk::Format::eR8G8B8A8Srgb,
-                vk::ImageTiling::eOptimal,
-                vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
+std::tie(textureImage, textureImageMemory) = createImage(
+    texWidth,
+    texHeight,
+    mipLevels,
+    vk::SampleCountFlagBits::e1,
+    vk::Format::eR8G8B8A8Srgb,
+    vk::ImageTiling::eOptimal,
+    vk::ImageUsageFlagBits::eTransferSrc
+    | vk::ImageUsageFlagBits::eTransferDst
+    | vk::ImageUsageFlagBits::eSampled,
+    vk::MemoryPropertyFlagBits::eDeviceLocal);
 ----
 
 现在我们创建一个多重采样的颜色缓冲区。
@@ -154,19 +156,20 @@ std::tie(textureImage, textureImageMemory) =
 
 [,c++]
 ----
-void createColorResources()
-{
-  vk::Format colorFormat = swapChainSurfaceFormat.format;
+void createColorResources() {
+    vk::Format colorFormat = swapChainSurfaceFormat.format;
 
-  std::tie(colorImage, colorImageMemory) = createImage(swapChainExtent.width,
-                                                       swapChainExtent.height,
-                                                       1,
-                                                       msaaSamples,
-                                                       colorFormat,
-                                                       vk::ImageTiling::eOptimal,
-                                                       vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal);
-  colorImageView                         = createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+    std::tie(colorImage, colorImageMemory) = createImage(
+        swapChainExtent.width,
+        swapChainExtent.height,
+        1,
+        msaaSamples,
+        colorFormat,
+        vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransientAttachment
+        | vk::ImageUsageFlagBits::eColorAttachment,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    colorImageView = createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
 }
 ----
 
@@ -174,8 +177,7 @@ void createColorResources()
 
 [,c++]
 ----
-void initVulkan()
-{
+void initVulkan() {
   ...
   createColorResources();
   createDepthResources();
@@ -188,18 +190,18 @@ void initVulkan()
 
 [,c++]
 ----
-void createDepthResources()
-{
-  ...
-  std::tie(depthImage, depthImageMemory) = createImage(swapChainExtent.width,
-                                                       swapChainExtent.height,
-                                                       1,
-                                                       msaaSamples,
-                                                       depthFormat,
-                                                       vk::ImageTiling::eOptimal,
-                                                       vk::ImageUsageFlagBits::eDepthStencilAttachment,
-                                                       vk::MemoryPropertyFlagBits::eDeviceLocal);
-  ...
+void createDepthResources() {
+    ...
+    std::tie(depthImage, depthImageMemory) = createImage(
+        swapChainExtent.width,
+        swapChainExtent.height,
+        1,
+        msaaSamples,
+        depthFormat,
+        vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eDepthStencilAttachment,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    ...
 }
 ----
 
@@ -207,13 +209,12 @@ void createDepthResources()
 
 [,c++]
 ----
-void recreateSwapChain()
-{
-  ...
-  createImageViews();
-  createColorResources();
-  createDepthResources();
-  ...
+void recreateSwapChain() {
+    ...
+    createImageViews();
+    createColorResources();
+    createDepthResources();
+    ...
 }
 ----
 
@@ -225,11 +226,10 @@ void recreateSwapChain()
 
 [,c++]
 ----
-void createGraphicsPipeline()
-{
-  ...
-  vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = msaaSamples};
-  ...
+void createGraphicsPipeline() {
+    ...
+    vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = msaaSamples};
+    ...
 }
 ----
 
@@ -238,20 +238,19 @@ void createGraphicsPipeline()
 
 [,c++]
 ----
-void recordCommandBuffer(uint32_t imageIndex)
-{
-  ...
-  // Transition the multisampled color image to vk::ImageLayout::eColorAttachmentOptimal
-  transition_image_layout(
-      *colorImage,
-      vk::ImageLayout::eUndefined,
-      vk::ImageLayout::eColorAttachmentOptimal,
-      vk::AccessFlagBits2::eColorAttachmentWrite,
-      vk::AccessFlagBits2::eColorAttachmentWrite,
-      vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-      vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-      vk::ImageAspectFlagBits::eColor);
-  ...
+void recordCommandBuffer(uint32_t imageIndex) {
+    ...
+    // Transition the multisampled color image to vk::ImageLayout::eColorAttachmentOptimal
+    transition_image_layout(
+        *colorImage,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
+    ...
 }
 ----
 
@@ -259,19 +258,18 @@ void recordCommandBuffer(uint32_t imageIndex)
 
 [,c++]
 ----
-void recordCommandBuffer(uint32_t imageIndex)
-{
-  ...
-  // Color attachment (multisampled) with resolve attachment
-  vk::RenderingAttachmentInfo colorAttachment = {
-      .imageView          = colorImageView,
-      .imageLayout        = vk::ImageLayout::eColorAttachmentOptimal,
-      .resolveMode        = vk::ResolveModeFlagBits::eAverage,
-      .resolveImageView   = swapChainImageViews[imageIndex],
-      .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-      .loadOp             = vk::AttachmentLoadOp::eClear,
-      .storeOp            = vk::AttachmentStoreOp::eStore,
-      .clearValue         = clearColor};
+void recordCommandBuffer(uint32_t imageIndex) {
+    ...
+    // Color attachment (multisampled) with resolve attachment
+    vk::RenderingAttachmentInfo colorAttachment = {
+        .imageView          = colorImageView,
+        .imageLayout        = vk::ImageLayout::eColorAttachmentOptimal,
+        .resolveMode        = vk::ResolveModeFlagBits::eAverage,
+        .resolveImageView   = swapChainImageViews[imageIndex],
+        .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp             = vk::AttachmentLoadOp::eClear,
+        .storeOp            = vk::AttachmentStoreOp::eStore,
+        .clearValue         = clearColor};
   ...
 }
 ----
@@ -299,24 +297,22 @@ MSAA 只让几何图形的边缘变平滑，而不处理内部填充。
 
 [,c++]
 ----
-void createLogicalDevice()
-{
-  ...
-  vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-      {.features = {.sampleRateShading = vk::True, .samplerAnisotropy = vk::True}},        // vk::PhysicalDeviceFeatures2
-  ...
+void createLogicalDevice() {
+    ...
+    vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
+        {.features = {.sampleRateShading = vk::True, .samplerAnisotropy = vk::True}},        // vk::PhysicalDeviceFeatures2
+    ...
 }
 
-void createGraphicsPipeline()
-{
-  ...
-  vk::PipelineMultisampleStateCreateInfo multisampling{
-      .rasterizationSamples = msaaSamples,
-      .sampleShadingEnable  = vk::True,        // enable sample shading in the pipeline
-      .minSampleShading     = 0.2f             // min fraction for sample shading; closer to one is smoother
-  };
-  ...
-}
+void createGraphicsPipeline() {
+        ...
+        vk::PipelineMultisampleStateCreateInfo multisampling{
+            .rasterizationSamples = msaaSamples,
+            .sampleShadingEnable  = vk::True,        // enable sample shading in the pipeline
+            .minSampleShading     = 0.2f             // min fraction for sample shading; closer to one is smoother
+            };
+        ...
+    }
 ----
 
 在这个例子里，我们让采样着色保持关闭，但在某些场景下质量提升会很明显：

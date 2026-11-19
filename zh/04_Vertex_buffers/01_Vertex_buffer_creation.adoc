@@ -253,7 +253,7 @@ commandBuffer.draw(static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
 现在运行程序，你应该会再次看到熟悉的三角形：
 
-image::/images/triangle.png[]
+image::../../images/triangle.png[]
 
 试着修改 `vertices` 数组，把顶部顶点的颜色改成白色：
 
@@ -268,7 +268,7 @@ const std::vector<Vertex> vertices = {
 
 再次运行程序，你应该会看到：
 
-image::/images/triangle_white.png[]
+image::../../images/triangle_white.png[]
 
 在 xref:./02_Staging_buffer.adoc[暂存缓冲区] 一章中，我们会介绍另一种把顶点数据拷贝到顶点缓冲区的方法，它性能更好，但需要多做一些工作。
 
